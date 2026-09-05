@@ -1,0 +1,281 @@
+cubes:
+  - name: sale_payments
+    title: Sale payments (tender)
+    public: false
+    description: >
+      One row per tender event on a sale: how the customer paid (cash, card, gift
+      card, on account), how much, and any tip. Refund tenders are negative.
+      Parent sale state (completed, voided, complete_time, shop) is projected onto
+      each payment. Tombstoned rows are excluded.
+    meta:
+      ai_context: >
+        Use this cube for payment-mix, tender and tips questions. Payment amounts
+        are tax inclusive tender, not merchandise revenue; total tender can differ
+        from takings because of change, tips and rounding. Business date is
+        completed_at (projected from the parent sale). The eCom tender is how the
+        web-store integration settles online orders: "online sales" by tender =
+        payment_types.name equals eCom (the same sales are sales_channel = Online
+        in the sales cube). Card processing fees and card charge outcomes
+        (processing_fees, cc_charges) are empty for this tenant, which does not
+        use Lightspeed Payments: say fees are not available rather than
+        reporting zero.
+    sql: >
+      WITH parent_sales AS (
+        SELECT s.tenant_id, s.sale_id, s.completed, s.voided, s.complete_time, s.shop_id
+        FROM source_lightspeed_official.ls_sales s
+        WHERE NOT s.tombstone
+      ),
+      payments AS (
+        SELECT t.* FROM source_lightspeed_official.ls_sale_payments t
+        WHERE NOT t.tombstone
+      )
+      SELECT c.*,
+             COALESCE(c.completed, p.completed) AS effective_completed,
+             COALESCE(c.voided, p.voided) AS effective_voided,
+             COALESCE(c.complete_time, p.complete_time) AS effective_complete_time,
+             COALESCE(c.shop_id, p.shop_id) AS effective_shop_id
+      FROM payments c
+      LEFT JOIN parent_sales p
+        ON p.tenant_id = c.tenant_id AND p.sale_id = c.sale_id
+
+    joins:
+      - name: sales
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sales}.tenant_id
+          AND {CUBE}.sale_id = {sales}.sale_id
+      - name: payment_types
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {payment_types}.tenant_id
+          AND {CUBE}.payment_type_id = {payment_types}.payment_type_id
+      - name: registers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {registers}.tenant_id
+          AND {CUBE}.register_id = {registers}.register_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.effective_shop_id = {shops}.shop_id
+      - name: cc_charges
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {cc_charges}.tenant_id
+          AND {CUBE}.cc_charge_id = {cc_charges}.cc_charge_id
+      - name: credit_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {credit_accounts}.tenant_id
+          AND {CUBE}.credit_account_id = {credit_accounts}.credit_account_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: sale_payment_id
+        sql: sale_payment_id
+        type: number
+        description: Lightspeed's identifier for this payment.
+      - name: sale_id
+        sql: sale_id
+        type: number
+        description: Sale this payment was applied to.
+      - name: created_at
+        sql: create_time
+        type: time
+        description: When the payment was taken at the register.
+      - name: completed_at
+        sql: effective_complete_time
+        type: time
+        title: Completed at (business date)
+        description: Parent sale completion time projected onto the payment.
+      - name: sale_completed
+        sql: effective_completed
+        type: boolean
+        description: Projected from the parent sale, true when the sale finalised.
+      - name: sale_voided
+        sql: effective_voided
+        type: boolean
+        description: Projected from the parent sale, true when the sale was voided.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the payment record was archived (for example replaced or reversed).
+      - name: remote_reference
+        sql: remote_reference
+        type: string
+        description: Processor-side reference for the payment, when present.
+      - name: external_payment_id
+        sql: payment_id
+        type: string
+        public: false
+        description: External payment identifier from the payment provider.
+      - name: payment_type_id
+        sql: payment_type_id
+        type: number
+        public: false
+      - name: register_id
+        sql: register_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: effective_shop_id
+        type: number
+        public: false
+      - name: cc_charge_id
+        sql: cc_charge_id
+        type: number
+        public: false
+      - name: credit_account_id
+        sql: credit_account_id
+        type: number
+        public: false
+        description: Credit/gift-card account involved, for on-account or gift-card tenders.
+      - name: ref_payment_id
+        sql: ref_payment_id
+        type: number
+        public: false
+        description: The original payment this one references (for refunds against a prior payment).
+      - name: is_refund_tender
+        type: boolean
+        sql: "(COALESCE({CUBE}.amount, 0) < 0)"
+        title: Is refund tender
+        description: True when money moved back to the customer.
+
+    measures:
+      - name: payment_count
+        type: count
+        title: Payment count
+        description: Number of tender events on completed, non-voided sales (excluding archived payments).
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND COALESCE({CUBE}.archived, false) = false"
+      - name: tender_total
+        type: sum
+        sql: amount
+        format: currency
+        title: Tender total
+        description: >
+          Net tender received on completed, non-voided sales (refund tenders
+          subtract, archived payments excluded). Tax inclusive.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND COALESCE({CUBE}.archived, false) = false"
+      - name: tips_total
+        type: sum
+        sql: tip_amount
+        format: currency
+        title: Tips total
+        description: Tips collected through payments on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND COALESCE({CUBE}.archived, false) = false"
+      - name: refund_tender_total
+        type: sum
+        sql: amount
+        format: currency
+        title: Refund tender total
+        description: Tender returned to customers (negative by construction).
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND COALESCE({CUBE}.archived, false) = false AND COALESCE({CUBE}.amount, 0) < 0"
+      - name: average_payment_amount
+        type: number
+        sql: "{tender_total} / NULLIF({payment_count}, 0)"
+        format: currency
+        description: Average tender amount per payment event.
+
+    segments:
+      - name: active_payments
+        sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND COALESCE({CUBE}.archived, false) = false"
+        description: Payments on completed, non-voided sales, excluding archived payment records.
+      - name: refund_tenders
+        sql: "COALESCE({CUBE}.amount, 0) < 0"
+        description: Tender flowing back to the customer.
+
+  - name: payment_types
+    title: Payment types
+    public: false
+    description: >
+      Reference list of tender types configured in Lightspeed (Cash, Credit Card,
+      Gift Card, On Account and custom types). Joined from sale payments to name
+      each tender.
+    meta:
+      ai_context: >
+        Group sale_payments by payment_types.name for payment-mix questions.
+        The type column is Lightspeed's system category (cash, credit card, gift
+        card, credit account, ecom, adjustment, user defined). Do NOT drop
+        tenders on internal_reserved: Lightspeed flags Cash, Gift Card, Credit
+        Account and eCom as reserved even though they are real customer tenders.
+        The only non-customer tender is Adjustment (type = adjustment), an
+        internal balancing entry: exclude it with is_customer_tender.
+    sql: >
+      SELECT t.* FROM source_lightspeed_official.ls_payment_types t
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: payment_type_id
+        sql: payment_type_id
+        type: number
+        description: Lightspeed's identifier for the payment type.
+      - name: name
+        sql: name
+        type: string
+        title: Payment type
+        description: Display name of the tender (Cash, Credit Card, Gift Card, On Account, custom names).
+      - name: type
+        sql: type
+        type: string
+        description: Lightspeed's system category for the tender (for example user defined vs system).
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the payment type has been archived.
+      - name: internal_reserved
+        sql: internal_reserved
+        type: boolean
+        description: >
+          True for tender types Lightspeed manages itself (here Cash, Gift Card,
+          Credit Account, eCom and Adjustment). Not a customer-facing versus
+          internal split: see is_customer_tender for that.
+      - name: is_customer_tender
+        type: boolean
+        sql: "(LOWER(COALESCE({CUBE}.type, '')) <> 'adjustment')"
+        title: Customer tender
+        description: True for every tender customers actually pay with; false only for Lightspeed's internal Adjustment tender.
+      - name: requires_customer
+        sql: require_customer
+        type: boolean
+        description: Whether this tender requires a customer attached to the sale (for example on-account payments).
+      - name: refund_as_payment_type_id
+        sql: refund_as_payment_type_id
+        type: number
+        public: false
+        description: Payment type used when refunding tender originally taken with this type.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of payment types configured.

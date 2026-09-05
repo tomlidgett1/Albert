@@ -1,0 +1,266 @@
+views:
+  - name: sales_analytics
+    title: Sales analytics
+    description: >
+      The main surface for revenue, refunds, discounts, tax, quotes, voids and
+      store/staff performance at whole-transaction grain. Revenue measures cover
+      completed, non-voided sales; refunds are negative-total sales and subtract
+      from revenue. For product/category/brand questions use
+      product_sales_analytics instead; for tender/payment-mix questions use
+      payments_analytics.
+    meta:
+      ai_context: >
+        Default time dimension: completed_at. "Revenue" / "sales" / "takings" =
+        gross_takings (tax inclusive); "net sales" / "ex GST" = net_sales_ex_tax,
+        which is AFTER discounts (net_sales_before_discounts is the pre-discount
+        list value; the difference is discounts_given - never subtract discounts
+        again). Profitability = gross_profit / gross_margin_pct (post-discount, gross margin only, no
+        operating expenses). "Busiest day" / "best day of the week" / "peak
+        hours": group transactions or gross_takings by completed_weekday
+        (ordered by completed_weekday_number) or completed_hour_of_day in ONE
+        query; never add up daily rows by hand. Online sales = sales_channel
+        equals Online (the sale carries the eCom tender; online_transactions /
+        online_gross_takings are the ready-made measures), or the eCom tender in
+        payments_analytics; everything else is In store. open_tickets and the
+        open_sales segment are parked or abandoned register tickets, not
+        layaways: layaways in progress are open_layaways / layaway_balance
+        (negative = deposits held) and outstanding_balance covers only tickets
+        that took a payment. Quotes: converted means the linked sale completed
+        (quotes_conversion_rate_pct); a sale_id alone does not. Customer
+        lifetime fields describe the customer on the sale. Quote members
+        (quotes_*) and void members (voids_*) are event grains: combine them
+        with store/staff/sale dimensions, not with each other.
+
+    cubes:
+      - join_path: sales
+        includes:
+          - tenant_id
+          - sale_id
+          - completed
+          - voided
+          - archived
+          - sale_type
+          - completed_at
+          - created_at
+          - updated_at
+          - reference_number
+          - reference_number_source
+          - tax1_rate
+          - tax2_rate
+          - tip_enabled
+          - promotions_enabled
+          - discount_percent
+          - total_due
+          - balance
+          - quote_id
+          - has_customer
+          - completed_weekday
+          - completed_weekday_number
+          - completed_hour_of_day
+          - sales_channel
+          - is_online_sale
+          - transactions
+          - purchase_transactions
+          - identified_transactions
+          - anonymous_transactions
+          - identified_transaction_coverage_pct
+          - anonymous_transaction_coverage_pct
+          - gross_takings
+          - identified_gross_takings
+          - anonymous_gross_takings
+          - identified_revenue_coverage_pct
+          - anonymous_revenue_coverage_pct
+          - net_sales_ex_tax
+          - net_sales_before_discounts
+          - tax_collected
+          - tax1_collected
+          - tax2_collected
+          - taxable_amount
+          - non_taxable_amount
+          - discounts_given
+          - tips_collected
+          - payments_received
+          - change_given
+          - cost_of_goods
+          - gross_profit
+          - gross_margin_pct
+          - average_sale_value
+          - refund_transactions
+          - refund_value
+          - voided_transactions
+          - open_tickets
+          - outstanding_balance
+          - open_layaways
+          - layaway_balance
+          - online_transactions
+          - online_gross_takings
+          - purchasing_customers
+          - completed_sales
+          - refunds
+          - voided_sales
+          - open_sales
+          - layaway_sales
+          - online_sales
+          - customer_attached_sales
+      - join_path: sales.customers
+        prefix: true
+        includes:
+          - full_name
+          - company
+          - first_purchase_at
+          - last_purchase_at
+          - purchase_count
+          - refund_count
+          - lifetime_net_spend
+          - lifetime_revenue
+          - lifetime_transactions
+          - is_repeat_customer
+      - join_path: sales.customers.customer_types
+        prefix: true
+        includes:
+          - name
+      - join_path: sales.employees
+        prefix: true
+        includes:
+          - full_name
+          - archived
+      - join_path: sales.shops
+        prefix: true
+        includes:
+          - name
+          - time_zone
+      - join_path: sales.registers
+        prefix: true
+        includes:
+          - name
+      - join_path: sales.discounts
+        prefix: true
+        includes:
+          - name
+      - join_path: sales.tax_categories
+        prefix: true
+        includes:
+          - is_tax_inclusive
+          - tax1_name
+          - tax2_name
+      - join_path: quotes
+        prefix: true
+        includes:
+          - quote_id
+          - issued_at
+          - archived
+          - is_converted
+          - quote_status
+          - converted_at
+          - quote_count
+          - converted_quotes
+          - open_ticket_quotes
+          - conversion_rate_pct
+          - converted_value
+      - join_path: sale_voids
+        prefix: true
+        includes:
+          - voided_at
+          - reason
+          - void_count
+
+    folders:
+      - name: Revenue
+        includes:
+          - transactions
+          - purchase_transactions
+          - gross_takings
+          - net_sales_ex_tax
+          - net_sales_before_discounts
+          - average_sale_value
+          - payments_received
+          - tips_collected
+          - change_given
+      - name: Trading pattern and channel
+        includes:
+          - completed_weekday
+          - completed_weekday_number
+          - completed_hour_of_day
+          - sales_channel
+          - is_online_sale
+          - online_transactions
+          - online_gross_takings
+      - name: Profitability
+        includes:
+          - cost_of_goods
+          - gross_profit
+          - gross_margin_pct
+      - name: Refunds, discounts and voids
+        includes:
+          - refund_transactions
+          - refund_value
+          - discounts_given
+          - voided_transactions
+          - sale_voids_void_count
+          - sale_voids_reason
+          - sale_voids_voided_at
+      - name: Tax
+        includes:
+          - tax_collected
+          - tax1_collected
+          - tax2_collected
+          - taxable_amount
+          - non_taxable_amount
+          - tax_categories_is_tax_inclusive
+          - tax_categories_tax1_name
+          - tax_categories_tax2_name
+      - name: Quotes pipeline
+        includes:
+          - quotes_quote_id
+          - quotes_issued_at
+          - quotes_is_converted
+          - quotes_quote_status
+          - quotes_converted_at
+          - quotes_quote_count
+          - quotes_converted_quotes
+          - quotes_open_ticket_quotes
+          - quotes_conversion_rate_pct
+          - quotes_converted_value
+      - name: Customer on the sale
+        includes:
+          - has_customer
+          - purchasing_customers
+          - identified_transactions
+          - anonymous_transactions
+          - identified_transaction_coverage_pct
+          - anonymous_transaction_coverage_pct
+          - identified_gross_takings
+          - anonymous_gross_takings
+          - identified_revenue_coverage_pct
+          - anonymous_revenue_coverage_pct
+          - customers_full_name
+          - customers_company
+          - customers_first_purchase_at
+          - customers_last_purchase_at
+          - customers_purchase_count
+          - customers_refund_count
+          - customers_lifetime_net_spend
+          - customers_lifetime_revenue
+          - customers_lifetime_transactions
+          - customers_is_repeat_customer
+          - customer_types_name
+      - name: Stores and staff
+        includes:
+          - shops_name
+          - shops_time_zone
+          - registers_name
+          - employees_full_name
+      - name: Sale state and timing
+        includes:
+          - sale_type
+          - completed
+          - voided
+          - archived
+          - completed_at
+          - created_at
+          - open_tickets
+          - open_layaways
+          - layaway_balance
+          - outstanding_balance
+          - total_due
+          - balance

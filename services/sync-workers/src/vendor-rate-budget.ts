@@ -70,9 +70,14 @@ function reservationPolicies(
         !interval.allowedLimits.includes(configuredLimit)) {
       throw new Error(`vendor_rate_budget_option_invalid:${manifest.id}:${interval.option}`);
     }
+    const headroom = interval.headroomRequests ?? 0;
+    if (!Number.isSafeInteger(headroom) || headroom < 0 || headroom >= configuredLimit) {
+      throw new Error(`vendor_rate_budget_headroom_invalid:${manifest.id}:${interval.option}`);
+    }
+    const executableLimit = configuredLimit - headroom;
     return Object.freeze({
       key: reservation.key,
-      emissionIntervalMs: Math.ceil(interval.windowMilliseconds / configuredLimit),
+      emissionIntervalMs: Math.ceil(interval.windowMilliseconds / executableLimit),
       burstCapacity: reservation.burstCapacity,
     });
   });
@@ -86,6 +91,45 @@ function asRetryAfter(value: string | number | null | undefined): number {
 
 /** Wait inline for short budget delays so multipage claims do not thrash. */
 const INLINE_BUDGET_WAIT_MS = 30_000;
+/**
+ * A slow pacer (Xero's 1,000/day = one call per 86s) emits tokens further
+ * apart than the flat inline ceiling. Kicking a claim out at 30s made every
+ * winner spend its token and lose the slot before the next call, so no page
+ * ever completed and the freed slot just fed the herd. Let a claim ride out
+ * one emission interval of the policy that denied it (bounded) instead.
+ */
+const MAX_INLINE_BUDGET_WAIT_MS = 180_000;
+
+/**
+ * How long a claim bounced by the budget should stay off the queue. Under a
+ * slow pacer the herd of waiting jobs otherwise wakes at the pacer's cadence
+ * and snipes the token from the claim that is mid-walk. Backing off by
+ * several emission intervals thins the herd; the slot holder keeps walking.
+ */
+const MIN_SLOW_PACER_DEFERRAL_MS = 5 * 60_000;
+
+function deferralMs(policies: readonly RatePolicy[], denied: VendorRateReservationDenied): number {
+  const policy = policies.find((candidate) => candidate.key === denied.budgetKey);
+  const emission = policy?.emissionIntervalMs ?? 0;
+  if (emission <= INLINE_BUDGET_WAIT_MS) return denied.retryAfterMs;
+  return Math.max(denied.retryAfterMs, MIN_SLOW_PACER_DEFERRAL_MS);
+}
+
+function inlineWaitCeilingMs(policies: readonly RatePolicy[], budgetKey: string): number {
+  const policy = policies.find((candidate) => candidate.key === budgetKey);
+  const emission = policy?.emissionIntervalMs ?? 0;
+  return Math.min(MAX_INLINE_BUDGET_WAIT_MS, Math.max(INLINE_BUDGET_WAIT_MS, emission + 5_000));
+}
+
+class VendorRateReservationDenied extends Error {
+  constructor(
+    readonly budgetKey: string,
+    readonly retryAfterMs: number,
+  ) {
+    super("vendor_rate_reservation_denied");
+    this.name = "VendorRateReservationDenied";
+  }
+}
 
 function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -121,40 +165,62 @@ export class PostgresVendorRateBudget implements VendorRateBudget {
 
   async beforeRequest(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
-    for (const policy of this.policies) {
-      const deadline = Date.now() + INLINE_BUDGET_WAIT_MS;
-      while (true) {
-        const result = await this.db.query<{
-          allowed: boolean;
-          retry_after_ms: string | number;
-        }>(
-          `select allowed, retry_after_ms
-             from control_plane.reserve_vendor_api_request($1, $2, $3, $4, $5)`,
-          [
-            this.tenantId,
-            this.connectionId,
-            policy.key,
-            policy.emissionIntervalMs,
-            policy.burstCapacity,
-          ],
-        );
-        signal?.throwIfAborted();
-        const reservation = result.rows[0];
-        if (reservation?.allowed) break;
-        const retryAfterMs = asRetryAfter(reservation?.retry_after_ms);
-        if (Date.now() + retryAfterMs > deadline) {
-          throw new ConnectorError(
-            "RATE_LIMITED",
-            "The shared vendor request budget is temporarily exhausted.",
-            {
-              retryable: true,
-              retryAfterMs,
-              details: { budgetKey: policy.key },
-            },
-          );
-        }
-        await sleep(retryAfterMs, signal);
+    // Total inline budget for one request: the slowest policy's ceiling, so a
+    // request may ride out one emission interval but never accumulate more.
+    const deadline = Date.now() + this.policies.reduce(
+      (maximum, policy) => Math.max(maximum, inlineWaitCeilingMs(this.policies, policy.key)),
+      INLINE_BUDGET_WAIT_MS,
+    );
+    while (true) {
+      let denied: VendorRateReservationDenied | null = null;
+      try {
+        await this.db.transaction(async (client) => {
+          for (const policy of this.policies) {
+            const result = await client.query<{
+              allowed: boolean;
+              retry_after_ms: string | number;
+            }>(
+              `select allowed, retry_after_ms
+                 from control_plane.reserve_vendor_api_request($1, $2, $3, $4, $5)`,
+              [
+                this.tenantId,
+                this.connectionId,
+                policy.key,
+                policy.emissionIntervalMs,
+                policy.burstCapacity,
+              ],
+            );
+            signal?.throwIfAborted();
+            const reservation = result.rows[0];
+            if (!reservation?.allowed) {
+              // Throwing rolls the transaction back, including reservations
+              // made for earlier policies. One outbound request must consume
+              // either every declared budget or none of them.
+              throw new VendorRateReservationDenied(
+                policy.key,
+                asRetryAfter(reservation?.retry_after_ms),
+              );
+            }
+          }
+        });
+      } catch (error) {
+        if (!(error instanceof VendorRateReservationDenied)) throw error;
+        denied = error;
       }
+      if (!denied) return;
+      const ceiling = inlineWaitCeilingMs(this.policies, denied.budgetKey);
+      if (denied.retryAfterMs > ceiling || Date.now() + denied.retryAfterMs > deadline) {
+        throw new ConnectorError(
+          "RATE_LIMITED",
+          "The shared vendor request budget is temporarily exhausted.",
+          {
+            retryable: true,
+            retryAfterMs: deferralMs(this.policies, denied),
+            details: { budgetKey: denied.budgetKey },
+          },
+        );
+      }
+      await sleep(denied.retryAfterMs, signal);
     }
   }
 
@@ -175,17 +241,19 @@ export class PostgresVendorRateBudget implements VendorRateBudget {
     );
     if (cooldownMs === 0 && Object.keys(observedHeaders).length === 0) return;
 
-    for (const policy of this.policies) {
-      await this.db.query(
-        `select control_plane.observe_vendor_api_response($1, $2, $3, $4, $5::jsonb)`,
-        [
-          this.tenantId,
-          this.connectionId,
-          policy.key,
-          cooldownMs,
-          JSON.stringify(observedHeaders),
-        ],
-      );
-    }
+    await this.db.transaction(async (client) => {
+      for (const policy of this.policies) {
+        await client.query(
+          `select control_plane.observe_vendor_api_response($1, $2, $3, $4, $5::jsonb)`,
+          [
+            this.tenantId,
+            this.connectionId,
+            policy.key,
+            cooldownMs,
+            JSON.stringify(observedHeaders),
+          ],
+        );
+      }
+    });
   }
 }

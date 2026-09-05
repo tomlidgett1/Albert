@@ -6,7 +6,7 @@ kill_signal = "SIGTERM"
 kill_timeout = 30
 
 [build]
-  dockerfile = "Dockerfile.capacity-attestor"
+  dockerfile = "../../Dockerfile.capacity-attestor"
 
 [env]
   ALBERT_CAPACITY_ATTESTOR_HOST = "0.0.0.0"

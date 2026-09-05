@@ -27,9 +27,23 @@ export type PiiClass =
 
 export type FieldCoverage = Readonly<{
   stream: string;
+  /** Native field name or complete native JSON path represented by this entry. */
   field: string;
   disposition: FieldDisposition;
+  /** Logical leaf type exposed through the governed catalogue. */
   stagingType: StagingFieldType;
+  /**
+   * Physical projection field when many native paths share one typed index.
+   * This keeps exhaustive, evolving APIs queryable without manufacturing a
+   * fragile SQL column for every nested array/map leaf.
+   */
+  storageField?: string;
+  /** Physical type of storageField; required when it differs from the leaf. */
+  storageType?: StagingFieldType;
+  /** Path within storageField used by semantic discovery and query planning. */
+  queryPath?: string;
+  /** Explicitly override whether this governed source field can be queried. */
+  queryable?: boolean;
   target?: string;
   reason?: string;
   pii: PiiClass;
@@ -86,11 +100,25 @@ export type StreamContract = Readonly<{
     | "soft_delete"
     | "verified_delete_feed"
     | "authoritative_identity_scan"
+    /** Mutable source state is reconciled, but absence from a scan never proves deletion. */
+    | "no_absence_deletes"
     | "immutable_append_only";
   /** How terminal reconciliation proves the source population observed by the scan. */
-  sourceTotalStrategy: "provider_reported" | "count_distinct_complete_scan";
+  sourceTotalStrategy:
+    | "provider_reported"
+    | "count_distinct_complete_scan"
+    /** A distinct count for a declared bounded scan population, never assumed to be all history. */
+    | "count_distinct_bounded_scan";
   /** Optional streams may be durably unavailable without retrying forever. */
   availability?: "required" | "optional";
+  /**
+   * Streams whose extraction cost is a call per source record (attachments,
+   * history, per-contact detail) are declared but not walked by backfill or
+   * scheduled sync; they wait for an explicit operator request. Under a daily
+   * vendor allowance a per-record fan-out would consume the whole budget for
+   * data no product surface reads.
+   */
+  ingestionMode?: "backfill" | "on_demand";
   /**
    * Streams whose complete current phase must be durably transformed before
    * this stream may materialise canonical rows. Dependencies are connector
@@ -118,11 +146,13 @@ const DELETION_STRATEGIES = new Set([
   "soft_delete",
   "verified_delete_feed",
   "authoritative_identity_scan",
+  "no_absence_deletes",
   "immutable_append_only",
 ]);
 const SOURCE_TOTAL_STRATEGIES = new Set([
   "provider_reported",
   "count_distinct_complete_scan",
+  "count_distinct_bounded_scan",
 ]);
 const SOURCE_AUTHORITY_CONCEPT_SET = new Set<string>(SOURCE_AUTHORITY_CONCEPTS);
 const CONNECTOR_EMITTED_TARGET_SET = new Set<string>(CONNECTOR_EMITTED_TARGETS);
@@ -144,6 +174,8 @@ export type RateLimitReservationPolicy = Readonly<{
       option: string;
       defaultLimit: number;
       allowedLimits: readonly number[];
+      /** Requests deliberately left unused in each vendor window. */
+      headroomRequests?: number;
     }>;
 }>;
 
@@ -189,6 +221,13 @@ export type ConnectorManifest = Readonly<{
   apiVersion: string;
   releasedAt: string;
   documentation: readonly string[];
+  /**
+   * Connection-level ingestion policy owned by the connector pack. OAuth can
+   * establish and refresh a grant without implying that data movement started.
+   */
+  ingestion: Readonly<{
+    initialStart: "automatic" | "manual";
+  }>;
   oauth: Readonly<{
     scopes: readonly string[];
     /**
@@ -235,7 +274,7 @@ export function assertFixtureFieldCoverage(
   const covered = new Set(
     manifest.fieldCoverage
       .filter((entry) => entry.stream === stream)
-      .map((entry) => entry.field),
+      .flatMap((entry) => [entry.field, entry.storageField].filter((field): field is string => Boolean(field))),
   );
   for (const record of records) {
     for (const field of Object.keys(record)) {
@@ -252,6 +291,9 @@ export function assertFixtureFieldCoverage(
 export function assertConnectorManifestReconciliationPolicy(manifest: ConnectorManifest): void {
   if (!isConnectorPackVersion(manifest.packVersion)) {
     throw new Error(`${manifest.id} packVersion must be a release-grade semantic version.`);
+  }
+  if (manifest.ingestion.initialStart !== "automatic" && manifest.ingestion.initialStart !== "manual") {
+    throw new Error(`${manifest.id} has an invalid initial ingestion policy.`);
   }
   const ids = new Set<string>();
   for (const stream of manifest.streams) {
@@ -277,6 +319,12 @@ export function assertConnectorManifestReconciliationPolicy(manifest: ConnectorM
       stream.lateEditStrategy !== "append_only"
     ) {
       throw new Error(`${manifest.id}.${stream.id} immutable deletion policy requires append_only late edits.`);
+    }
+    if (
+      stream.deletionStrategy === "authoritative_identity_scan" &&
+      stream.sourceTotalStrategy === "count_distinct_bounded_scan"
+    ) {
+      throw new Error(`${manifest.id}.${stream.id} cannot infer deletion from a bounded source population.`);
     }
     if (!stream.productDomains.length || new Set(stream.productDomains).size !== stream.productDomains.length) {
       throw new Error(`${manifest.id}.${stream.id} must declare unique product readiness domains.`);

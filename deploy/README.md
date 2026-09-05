@@ -1,5 +1,12 @@
 # Albert production runbook
 
+> **V2 authority:** ADR 0078 supersedes the web-platform and launch-evidence
+> portions of this V1 runbook. The production web runtime is Vercel and the V2
+> cutover is gated by the reviewed Lightspeed/Xero publication, deterministic
+> qualification, the sealed 200-case Luna Max evaluation, active-publication
+> receipt, and exact Vercel/Fly readiness. Sections describing ChatGPT Sites or
+> a mandatory Deputy dogfood connection apply only to the V1 rollback path.
+
 This is a desired-state provisioning and release runbook. The repository does
 not prove that any Supabase project, Fly app, Sites release, GitHub environment,
 attestor, or production cell currently exists or is live. Only a passing remote
@@ -14,7 +21,9 @@ at the end passes.
 Record these decisions in the protected deployment environment before provisioning:
 
 1. A new Supabase project in Sydney (`ap-southeast-2`). The currently linked Tokyo development project is not a valid production target for the V1 residency contract.
-2. A separate managed PostgreSQL 17 provider and Sydney region for the analytical cell. The founding specification deliberately leaves the provider to the operator; do not silently place analytics in Supabase or another region.
+2. A second, isolated Supabase PostgreSQL project in Sydney for the analytical
+   cell, as accepted by ADR 0079. It must never share a project, administrator
+   credential, runtime login or connection budget with the control plane.
 3. Lightspeed Retail **R-Series** registrations. X-Series fails closed because its APIs and semantics are different.
 4. An OpenAI project eligible for Modified Abuse Monitoring or Zero Data Retention, using `https://au.api.openai.com/v1`. Regional storage alone is not the V1 privacy approval.
 5. Xero application certification/capacity and, if enabled, Advanced Journals approval. Keep `XERO_ENABLE_ADVANCED_JOURNALS=false` until both are documented.
@@ -40,7 +49,11 @@ secret deployment material and never belongs in Sites or browser code.
 
 ### Analytical Postgres
 
-Create a private PostgreSQL 17 database in Sydney with encrypted connections, point-in-time recovery, automated backups, deletion protection, and alerts for storage, connections, replication/backup failure, and CPU. The runtime must not share the Supabase database or administrator credential.
+Create the separate analytical Supabase project in Sydney with encrypted
+connections, point-in-time recovery, automated backups, deletion protection,
+and alerts for storage, connections, backup failure and CPU. Albert does not use
+that project's Auth, Storage or Data API. The runtime must not share the control
+project or any administrator credential.
 
 Use direct or pooled endpoints according to the provider, but retain transaction semantics and require TLS. Semantic statements have an application timeout; configure a database-side maximum as a second boundary.
 
@@ -59,6 +72,21 @@ npm run provision:webhook-attestation-key
 ```
 
 The first two commands create NOLOGIN group roles and apply every immutable migration. The login provisioner then reconciles fixed NOINHERIT LOGIN identities, removes unexpected memberships, grants exactly one group per credential, enforces connection/statement/lock timeouts, and never prints passwords. The raw-storage provisioner uses protected Auth Admin plus direct `postgres` authority to create or rotate exactly three machine users, bind their IDs to the generation-fenced policy mapping, and prove their real S3 sessions with non-customer readiness objects. The capability provisioner connects to both databases before changing either, installs the analytical verifier first and the control-plane signer second, verifies identical SHA-256 fingerprints without printing key material, and requires both readiness checks to pass. A fresh environment is not service-ready until all six commands succeed.
+
+The governed ShopifyQL plane additionally requires control migration 0133 and
+an app-client-hash-bound Level-2 protected-customer-data approval record before
+the sync worker can report ready. Install one dedicated 32+ byte
+`ALBERT_SHOPIFYQL_SIGNING_SECRET` in web and sync only; it must not equal any
+other signing secret. Record approval evidence only through the migration-owner
+session described in `docs/shopifyql-production-runbook.md`. This path executes
+on-demand reports and never activates Shopify ingestion.
+
+The typed Admin GraphQL read plane additionally requires control migration
+0134 and a separate 32+ byte `ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET` in web and
+sync only. It must differ from OAuth, ShopifyQL and semantic signing secrets.
+Protected selections reuse the same app-client-bound Level-2 evidence; public
+selections do not fabricate that requirement. This read path never activates
+or enqueues ingestion.
 
 The raw-storage provisioner requires
 `SUPABASE_AUTH_URL`, `SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY`,
@@ -192,12 +220,14 @@ suppressed:
 
 ## 5. Create service applications
 
-Create six Albert runtime applications and two metrics-autoscaler applications
+Create eight Albert runtime applications and two metrics-autoscaler applications
 in the same Fly organization. The release workflow passes app names, so the
 manifests intentionally do not hardcode one.
 
 ```bash
+fly apps create <anthropic-app> --org <org>
 fly apps create <semantic-app> --org <org>
+fly apps create <cube-app> --org <org>
 fly apps create <sync-app> --org <org>
 fly apps create <transform-app> --org <org>
 fly apps create <webhook-app> --org <org>
@@ -207,11 +237,13 @@ fly apps create <sync-autoscaler-app> --org <org>
 fly apps create <transform-autoscaler-app> --org <org>
 ```
 
-Do not allocate a public IP to transform or deletion. The release rejects either private worker if an IP exists. Semantic, sync, and webhook use HTTPS ingress; only health plus signed application routes are served.
+Do not allocate a public IP to transform or deletion. The release rejects either private worker if an IP exists. Anthropic, semantic, Cube, sync, and webhook use HTTPS ingress; only health plus signed application routes are served. Cube remains exactly one Machine while it uses its in-memory cache and queue driver.
 
 Create an app-scoped deploy token for each app and store it in the protected GitHub environment as:
 
+- `FLY_ANTHROPIC_API_TOKEN`
 - `FLY_SEMANTIC_API_TOKEN`
+- `FLY_CUBE_API_TOKEN`
 - `FLY_SYNC_API_TOKEN`
 - `FLY_TRANSFORM_API_TOKEN`
 - `FLY_WEBHOOK_API_TOKEN`
@@ -220,7 +252,8 @@ Create an app-scoped deploy token for each app and store it in the protected Git
 - `FLY_SYNC_AUTOSCALER_API_TOKEN`
 - `FLY_TRANSFORM_AUTOSCALER_API_TOKEN`
 
-Set the matching environment variables `FLY_SEMANTIC_APP`, `FLY_SYNC_APP`,
+Set the matching environment variables `FLY_ANTHROPIC_APP`, `FLY_SEMANTIC_APP`,
+`FLY_CUBE_APP`, `CUBE_API_URL`, `FLY_SYNC_APP`,
 `FLY_TRANSFORM_APP`, `FLY_WEBHOOK_APP`, `FLY_DELETION_APP`,
 `FLY_OPERATOR_DIAGNOSTIC_APP`, `FLY_SYNC_AUTOSCALER_APP`,
 `FLY_TRANSFORM_AUTOSCALER_APP`, and `FLY_ORGANIZATION_SLUG`.
@@ -242,11 +275,12 @@ before any migration runs. Secret values are never returned to CI.
 
 | App | Required secrets |
 | --- | --- |
+| Cube | `ALBERT_SEMANTIC_READ_DATABASE_URL`, `ALBERT_SEMANTIC_CONTROL_DATABASE_URL`, `CUBEJS_API_SECRET` |
 | Semantic | `ALBERT_CONTROL_PLANE_PROJECT_REF`, `CONTROL_PLANE_DATABASE_URL`, `ANALYTICAL_DATABASE_URL`, `ALBERT_SEMANTIC_METADATA_DATABASE_URL`, `ALBERT_SEMANTIC_SIGNING_SECRET`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `ALBERT_MODEL_DATA_CONTROL_APPROVED` |
-| Sync/OAuth | `ALBERT_CONTROL_PLANE_PROJECT_REF`, `ALBERT_LIGHTSPEED_PRODUCT`, `CONTROL_PLANE_DATABASE_URL`, `ANALYTICAL_DATABASE_URL`, `SUPABASE_STORAGE_S3_ENDPOINT`, `SUPABASE_STORAGE_S3_ACCESS_KEY_ID`, `SUPABASE_STORAGE_S3_LEGACY_ANON_KEY`, `ALBERT_RAW_STORAGE_SYNC_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `TOKEN_ENCRYPTION_KEY_ID`, `ALBERT_OAUTH_WORKER_SIGNING_SECRET`, `ALBERT_PUBLIC_ORIGIN`, all three vendor client IDs, Lightspeed/Deputy client secrets, `XERO_DAILY_REQUEST_LIMIT`, `ALBERT_VENDOR_ATTESTOR_RELAY_ENABLED=true`, `ALBERT_VENDOR_ATTESTOR_PRIVATE_ORIGIN`, `ALBERT_VENDOR_ATTESTOR_TLS_SERVER_NAME`, `ALBERT_VENDOR_ATTESTOR_EXPECTED_TOOL_REF`, `ALBERT_VENDOR_ATTESTOR_EXPECTED_BUILD_DIGEST`, `ALBERT_VENDOR_ATTESTOR_TLS_CLIENT_CERT_BASE64`, `ALBERT_VENDOR_ATTESTOR_TLS_CLIENT_KEY_BASE64`, and `ALBERT_VENDOR_ATTESTOR_TLS_SERVER_CA_BASE64`; optional `TOKEN_PREVIOUS_ENCRYPTION_KEYS` during rotation and `ALBERT_VENDOR_ATTESTOR_RELAY_POLL_MS` |
+| Sync/OAuth | `ALBERT_CONTROL_PLANE_PROJECT_REF`, `ALBERT_LIGHTSPEED_PRODUCT`, `CONTROL_PLANE_DATABASE_URL`, `ANALYTICAL_DATABASE_URL`, `SUPABASE_STORAGE_S3_ENDPOINT`, `SUPABASE_STORAGE_S3_ACCESS_KEY_ID`, `SUPABASE_STORAGE_S3_LEGACY_ANON_KEY`, `ALBERT_RAW_STORAGE_SYNC_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `TOKEN_ENCRYPTION_KEY_ID`, `ALBERT_OAUTH_WORKER_SIGNING_SECRET`, dedicated `ALBERT_SHOPIFYQL_SIGNING_SECRET`, dedicated `ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET`, `ALBERT_PUBLIC_ORIGIN`, Lightspeed ID/secret, Xero client ID, Square ID/secret, Shopify ID/secret, Deputy ID/secret, `XERO_DAILY_REQUEST_LIMIT`, `ALBERT_VENDOR_ATTESTOR_RELAY_ENABLED=true`, `ALBERT_VENDOR_ATTESTOR_PRIVATE_ORIGIN`, `ALBERT_VENDOR_ATTESTOR_TLS_SERVER_NAME`, `ALBERT_VENDOR_ATTESTOR_EXPECTED_TOOL_REF`, `ALBERT_VENDOR_ATTESTOR_EXPECTED_BUILD_DIGEST`, `ALBERT_VENDOR_ATTESTOR_TLS_CLIENT_CERT_BASE64`, `ALBERT_VENDOR_ATTESTOR_TLS_CLIENT_KEY_BASE64`, and `ALBERT_VENDOR_ATTESTOR_TLS_SERVER_CA_BASE64`; optional `TOKEN_PREVIOUS_ENCRYPTION_KEYS` during rotation and `ALBERT_VENDOR_ATTESTOR_RELAY_POLL_MS` |
 | Transform | `ALBERT_CONTROL_PLANE_PROJECT_REF`, `TRANSFORM_CONTROL_PLANE_DATABASE_URL`, `TRANSFORM_DATABASE_URL` |
 | Webhook | `ALBERT_CONTROL_PLANE_PROJECT_REF`, webhook-control `CONTROL_PLANE_DATABASE_URL`, `SUPABASE_STORAGE_S3_ENDPOINT`, `SUPABASE_STORAGE_S3_ACCESS_KEY_ID`, `SUPABASE_STORAGE_S3_LEGACY_ANON_KEY`, `ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD`, `XERO_WEBHOOK_SIGNING_KEY`, `WEBHOOK_ATTESTATION_KEY_ID`, `WEBHOOK_ATTESTATION_SECRET`, `WEBHOOK_INBOX_ENCRYPTION_KEY`, `WEBHOOK_INBOX_ENCRYPTION_KEY_ID`, `DEPUTY_WEBHOOK_ENCRYPTION_KEY`, `DEPUTY_WEBHOOK_ENCRYPTION_KEY_ID` |
-| Deletion | `ALBERT_CONTROL_PLANE_PROJECT_REF`, deletion-control `CONTROL_PLANE_DATABASE_URL`, `DELETION_ANALYTICAL_DATABASE_URL`, `SUPABASE_STORAGE_S3_ENDPOINT`, `SUPABASE_STORAGE_S3_ACCESS_KEY_ID`, `SUPABASE_STORAGE_S3_LEGACY_ANON_KEY`, `ALBERT_RAW_STORAGE_DELETION_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `TOKEN_ENCRYPTION_KEY_ID`, Lightspeed ID/secret and Xero client ID, `DELETION_PROOF_HMAC_KEY`; optional `TOKEN_PREVIOUS_ENCRYPTION_KEYS` during rotation |
+| Deletion | `ALBERT_CONTROL_PLANE_PROJECT_REF`, deletion-control `CONTROL_PLANE_DATABASE_URL`, `DELETION_ANALYTICAL_DATABASE_URL`, `SUPABASE_STORAGE_S3_ENDPOINT`, `SUPABASE_STORAGE_S3_ACCESS_KEY_ID`, `SUPABASE_STORAGE_S3_LEGACY_ANON_KEY`, `ALBERT_RAW_STORAGE_DELETION_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `TOKEN_ENCRYPTION_KEY_ID`, `ALBERT_PUBLIC_ORIGIN`, Lightspeed ID/secret, Square ID/secret and Xero client ID, `DELETION_PROOF_HMAC_KEY`; optional `TOKEN_PREVIOUS_ENCRYPTION_KEYS` during rotation |
 | Operator diagnostic | `ALBERT_CONTROL_PLANE_PROJECT_REF`, `OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL`, `OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL`, `ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET` |
 
 The Fly manifests lock `SUPABASE_STORAGE_S3_REGION=ap-southeast-2`. The endpoint
@@ -483,6 +517,27 @@ with non-secret pins `ALBERT_CAPACITY_STAGING_CELL_ID`,
 `ALBERT_CAPACITY_ATTESTOR_BUILD_DIGEST`; no attestor private key or observer
 credential belongs in an Albert GitHub environment.
 
+Production also requires two release-only inputs for the authenticated Cube
+proof: `ALBERT_RELEASE_CUBE_SMOKE_CONTROL_DATABASE_URL` is the exact
+`albert_operator_diagnostic_control_runtime` login against the **production**
+control cell, and `ALBERT_RELEASE_CUBE_SMOKE_TENANT_ID` selects a dedicated
+non-customer production smoke tenant with an active owner. Never point this URL
+at the staging dogfood control cell and never select an arbitrary merchant
+tenant. The runner rejects a URL that is not bound to the protected production
+`ALBERT_CONTROL_PLANE_PROJECT_REF` before opening the diagnostic lease. These
+values stay in the protected GitHub environment; neither is
+staged into the Cube app or any web runtime.
+
+The release re-verifies its signed authorization receipt, mints one existing
+three-minute diagnostic turn, and runs the baked-in probe inside the one exact
+approved Cube Machine. The Machine uses its resident `CUBEJS_API_SECRET` to
+authenticate `/cubejs-api/v1/meta` and an aggregate Shopify `/v1/load` query.
+The query uses `processed_at` at day grain, includes the governed k=5 population
+measure, and targets a future window that must return zero rows. Only the
+aggregate-only policy/member contract, zero row count, approved image and
+authorization digests survive in the release artifact and lease result digest;
+JWTs, tenant/turn IDs, response bodies and data rows do not.
+
 For the immutable authority design, the dogfood pins are not an independent
 trust root: `ALBERT_DOGFOOD_ACCEPTANCE_WORKFLOW_REF` is the same exact
 `refs/tags/albert-release-authority-v*` ref and
@@ -575,19 +630,19 @@ their normal credential stores. Do not pass tokens on the command line. Inject
 the read-only `SUPABASE_MANAGEMENT_TOKEN` from the approved secret store and
 export the numeric `ALBERT_RELEASE_AUTHORITY_CREATOR_APP_ID` and
 `ALBERT_VENDOR_ATTESTOR_TAG_ISSUER_APP_ID`, plus `ALBERT_PUBLIC_ORIGIN`,
-`FLY_ORGANIZATION_SLUG`, and the nine non-secret
-app name variables `FLY_SEMANTIC_APP`, `FLY_SYNC_APP`, `FLY_TRANSFORM_APP`,
+`FLY_ORGANIZATION_SLUG`, `CUBE_API_URL`, and the eleven non-secret
+app name variables `FLY_ANTHROPIC_APP`, `FLY_SEMANTIC_APP`, `FLY_CUBE_APP`, `FLY_SYNC_APP`, `FLY_TRANSFORM_APP`,
 `FLY_WEBHOOK_APP`, `FLY_DELETION_APP`, `FLY_OPERATOR_DIAGNOSTIC_APP`,
 `FLY_SYNC_AUTOSCALER_APP`, `FLY_TRANSFORM_AUTOSCALER_APP`, and
 `FLY_VENDOR_ATTESTOR_APP`.
 
-Export a names-only Sites inventory from the production Sites project through
-the Sites environment UI or API. The file is deliberately not an env file and
+Export a names-only Vercel inventory from the production Vercel project through
+the Vercel API. The file is deliberately not an env file and
 must use one record per line; assignments and values are rejected:
 
 ```text
-project:appgprj_6a6da1d589608191b95650ffb3aad67f
-build:ALBERT_BUILD_SHA
+project:prj_l5faWCnDWxw7QB7nBWgr9zaKFxuL
+team:team_wx7OlK7ikXNuFcOSaewRxonA
 runtime:NEXT_PUBLIC_SUPABASE_URL
 runtime:NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 # Continue with every installed runtime name; never include a value.
@@ -599,7 +654,7 @@ Then run:
 npm run --silent audit:production-environment -- \
   --repo tomlidgett1/Albert \
   --supabase-project-ref <sydney-control-plane-ref> \
-  --sites-inventory-names <absolute-path-to-names-only-inventory>
+  --vercel-inventory-names <absolute-path-to-names-only-inventory>
 ```
 
 The command derives required GitHub secret and variable names directly from the
@@ -701,18 +756,20 @@ The production workflow performs these phases in order:
    status, and expected signer email. It separately proves the candidate is the
    current protected-main head with every required check green.
 2. Still without protected credentials, it checks out the candidate, runs the
-   complete `npm run check`, builds the services image with the candidate SHA
-   compiled and labelled into it, pushes an immutable GHCR digest, logs out of
-   GHCR, and proves that digest is anonymously pullable.
+   complete `npm run check`, then separately builds the services and Cube
+   images. Both are labelled with the candidate SHA, published as immutable
+   GHCR digests, and proven anonymously pullable after logging out of GHCR.
 3. Authority code verifies the exact tag-owned dogfood workflow path and
    tooling SHA, dispatch event, successful first attempt, run ID, artifact ID,
    GitHub-reported artifact digest, candidate-specific artifact name, and
    unexpired state. It then creates a deterministic release plan binding
-   authority ref/SHA/workflow, candidate SHA, services image digest, dogfood
+   authority ref/SHA/workflow, candidate SHA, services and Cube image digests,
+   dogfood
    run/artifact IDs and digest, plus the release run/attempt and dispatcher
    identity. Plan creation is valid only on release run attempt 1.
 4. Plan creation hashes the privileged release surface in both checkouts. Any
-   difference in CI, service Dockerfile, connectors, contracts, deployment
+   difference in CI, service Dockerfile, Cube model/build context, connectors,
+   contracts, deployment
    manifests, capacity tooling, evals, migrations, packages, scripts, lockfile,
    package manifest, or TypeScript configuration stops the run and requires a
    newly reviewed authority tag.
@@ -723,7 +780,8 @@ The production workflow performs these phases in order:
    the queue drains, the autoscaler floor remains stable, and database/pool
    limits pass. Cleanup quiesces both capacity apps on success or failure.
 6. The `production` reviewer checks the exact authority tag/SHA, candidate SHA,
-   image digest, plan digest, and dogfood run/artifact IDs and digest shown in
+   services and Cube image digests, plan digest, and dogfood run/artifact IDs
+   and digest shown in
    the release summary. GitHub must identify the approver as a human user who is
    different from the workflow dispatcher. Approval is authorization for that
    tuple only.
@@ -733,7 +791,7 @@ The production workflow performs these phases in order:
    acceptance. Candidate checkout and candidate scripts are absent from this
    protected authorization job.
 8. The authorizer seals an Ed25519 receipt binding authority ref/SHA/workflow,
-   candidate SHA, services image, plan digest, workflow run/attempt and
+   candidate SHA, services image, Cube image, plan digest, workflow run/attempt and
    dispatcher, distinct human reviewer, production-approval record digest,
    GitHub authority-audit digest, and the exact capacity and dogfood envelope
    digests. The receipt has a six-hour lifetime and a fresh nonce. Downstream
@@ -746,16 +804,20 @@ The production workflow performs these phases in order:
    semantic registry, or deploy the candidate image digest. Protected jobs
    check out only the authority SHA; the release plan has already proved their
    privileged surface is identical to the candidate.
-10. The workflow deploys every service from the approved digest, never from a
-    mutable tag. It preserves any larger running fleet, applies the attested
+10. The workflow deploys every service from its approved digest, never from a
+    mutable tag. It preserves any larger non-Cube fleet, applies the attested
     transform Machine floor, deploys pinned autoscalers, verifies private-worker
-    exposure and exact image/SHA identity, waits for public readiness, then
-    activates the complete connector pack.
-11. The final gate waits for Sites `/api/health` to expose the same candidate
+    exposure and exact image/SHA identity, enforces exactly one Cube Machine,
+    requires Cube `/readyz` to return `{"health":"HEALTH"}`, re-verifies the
+    signed release receipt, and proves authenticated `/v1/meta` plus a
+    representative zero-row Shopify `/v1/load` query from inside that exact
+    Machine before activating the complete connector pack. The proof reuses a
+    bounded production diagnostic turn and never exports the Cube signing
+    secret or query rows.
+11. The final gate waits for Vercel `/api/health` to expose the same candidate
     SHA and release run/attempt, with matching service readiness. The authority
-    workflow does not deploy Sites. After dispatch and before this final
-    activation can pass, explicitly select/push the exact candidate Sites
-    source version, save the candidate-bound runtime values, and deploy it.
+    workflow does not deploy Vercel. The Git-connected production project must
+    serve the exact protected-main candidate before this final gate can pass.
 
 A failed tag check, public-pull proof, plan comparison, evidence check,
 preflight, receipt verification, migration, publication, deployment, or health

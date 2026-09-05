@@ -45,6 +45,7 @@ function source(value) {
     ALBERT_RELEASE_CANDIDATE_SHA: value.candidateSha,
     ALBERT_RELEASE_AUTHORITY_REF: "refs/tags/albert-release-authority-v1",
     ALBERT_RELEASE_SERVICES_IMAGE: `ghcr.io/tomlidgett1/albert-services@sha256:${"c".repeat(64)}`,
+    ALBERT_RELEASE_CUBE_IMAGE: `ghcr.io/tomlidgett1/albert-cube@sha256:${"d".repeat(64)}`,
     ALBERT_DOGFOOD_RUN_ID: "123",
     ALBERT_DOGFOOD_ARTIFACT_ID: "456",
     ALBERT_DOGFOOD_ARTIFACT_DIGEST: `sha256:${"e".repeat(64)}`,
@@ -68,7 +69,11 @@ test("release plan binds a separately checked out candidate to the exact authori
   assert.equal(plan.authority.sha, value.authoritySha);
   assert.equal(plan.candidate.sha, value.candidateSha);
   assert.match(plan.planDigest, /^[a-f0-9]{64}$/u);
-  assert.equal(plan.schemaVersion, 2);
+  assert.equal(plan.schemaVersion, 3);
+  assert.equal(
+    plan.candidate.cubeImage,
+    `ghcr.io/tomlidgett1/albert-cube@sha256:${"d".repeat(64)}`,
+  );
   assert.deepEqual(plan.verification, {
     ciWorkflowId: "11",
     ciRunId: "12",
@@ -83,6 +88,21 @@ test("release plan rejects candidate drift in privileged tooling", async () => {
   await writeFile(path.join(value.candidate, "scripts", "fixture.txt"), "candidate drift\n");
   execFileSync("git", ["add", "."], { cwd: value.candidate });
   execFileSync("git", ["commit", "-qm", "drift"], { cwd: value.candidate });
+  value.candidateSha = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: value.candidate,
+    encoding: "utf8",
+  }).trim();
+  await assert.rejects(
+    createReleasePlan(source(value), path.join(value.root, "release-plan.json")),
+    /privileged release surface differs/u,
+  );
+});
+
+test("release plan rejects Cube model drift from immutable authority", async () => {
+  const value = await fixture();
+  await writeFile(path.join(value.candidate, "cube-playground", "fixture.txt"), "Cube model drift\n");
+  execFileSync("git", ["add", "."], { cwd: value.candidate });
+  execFileSync("git", ["commit", "-qm", "Cube drift"], { cwd: value.candidate });
   value.candidateSha = execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: value.candidate,
     encoding: "utf8",
@@ -125,5 +145,16 @@ test("release plan rejects a rerun CI attempt", async () => {
       path.join(value.root, "release-plan.json"),
     ),
     /CI must be from its first run attempt/u,
+  );
+});
+
+test("release plan requires an immutable Cube image digest", async () => {
+  const value = await fixture();
+  await assert.rejects(
+    createReleasePlan(
+      { ...source(value), ALBERT_RELEASE_CUBE_IMAGE: "ghcr.io/tomlidgett1/albert-cube:latest" },
+      path.join(value.root, "release-plan.json"),
+    ),
+    /Cube image must be a GHCR digest reference/u,
   );
 });

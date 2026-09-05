@@ -118,8 +118,14 @@ test("every declared stream walks its own endpoint and terminates", async () => 
     const region = regionFor(table.source.api);
     if (!byRegion.has(region)) byRegion.set(region, connectorFor(region));
     const xero = byRegion.get(region)!;
-    const contract = (await xero.list_streams(context)).find((candidate) => candidate.id === stream.id);
-    assert.ok(contract, `${stream.id} is not exposed by list_streams`);
+    // On-demand streams are excluded from backfill fan-out but must remain
+    // walkable for an explicit request; list_all_streams covers both.
+    const contract = xero.list_all_streams().find((candidate) => candidate.id === stream.id);
+    assert.ok(contract, `${stream.id} is not exposed by list_all_streams`);
+    if (stream.ingestionMode === "on_demand") {
+      const scheduled = await xero.list_streams(context);
+      assert.ok(!scheduled.some((candidate) => candidate.id === stream.id), `${stream.id} must not fan out in backfill`);
+    }
 
     const page = await xero.initial_sync(context, contract, range);
     assert.ok(page, `${stream.id} produced no page`);

@@ -110,7 +110,10 @@ const INTERNAL_FAILURE_CODES: Readonly<
 });
 
 export interface ConnectorRegistry {
-  get(connectorId: SyncJob["connectorId"]): ConnectorPack;
+  get(
+    connectorId: SyncJob["connectorId"],
+    options?: Readonly<{ externalAccountReference?: string | null }>,
+  ): ConnectorPack;
 }
 
 function assertJson(value: unknown, path = "payload", depth = 0): asserts value is JsonValue {
@@ -152,7 +155,7 @@ export function manifestBackfillStreams(connector: ConnectorPack): readonly Conn
   // registers the live list after a successful connection check.
   const contracts = connector.manifest?.streams;
   if (!contracts) return [];
-  return contracts.map((stream) => ({
+  return contracts.filter((stream) => stream.ingestionMode !== "on_demand").map((stream) => ({
     id: stream.id,
     label: stream.resource,
     domains: stream.productDomains,
@@ -291,6 +294,28 @@ function authHealthForFailure(
   return connectionCheckInFlight ? "error" : null;
 }
 
+export type ShopifyDeletionContinuityBlockReason =
+  | "shopify_deletion_continuity_unproven"
+  | "shopify_deletion_watermark_missing"
+  | "shopify_deletion_retention_gap"
+  | "shopify_deletion_feed_unavailable";
+
+export function shopifyDeletionContinuityBlockReason(
+  job: SyncJob,
+  error: unknown,
+): ShopifyDeletionContinuityBlockReason | null {
+  if (job.connectorId !== "shopify" || !(error instanceof ConnectorError) || ![
+    "CAPABILITY_UNAVAILABLE","REMOTE_RESPONSE_INVALID","CURSOR_INVALID",
+  ].includes(error.code)) return null;
+  const reason = error.details?.reason;
+  return reason === "shopify_deletion_continuity_unproven" ||
+      reason === "shopify_deletion_watermark_missing" ||
+      reason === "shopify_deletion_retention_gap" ||
+      reason === "shopify_deletion_feed_unavailable"
+    ? reason
+    : null;
+}
+
 export class SyncJobProcessor {
   private readonly operationTimeoutMs: number;
   private readonly vendorRateBudgetOptions: Readonly<Record<string, number | undefined>>;
@@ -389,7 +414,13 @@ export class SyncJobProcessor {
         : null;
       writePermitId = await this.control.acquireSyncWritePermit(claim);
       const connection = await this.control.loadConnection(job);
-      const connector = this.registry.get(job.connectorId);
+      const connector = this.registry.get(job.connectorId, {
+        externalAccountReference: job.externalAccountReference,
+      });
+      const rateBudgetOptions: Record<string, number | undefined> = {
+        ...this.vendorRateBudgetOptions,
+        ...connector.rate_limit_options?.(connection.accountMetadata),
+      };
       const context = {
         tenantId: job.tenantId,
         connectionId: job.connectionId,
@@ -399,40 +430,47 @@ export class SyncJobProcessor {
           job.tenantId,
           job.connectionId,
           connector.manifest,
-          this.vendorRateBudgetOptions,
+          rateBudgetOptions,
         ),
       } as const;
       const expectedStreams = manifestBackfillStreams(connector);
-      connectionCheckInFlight = true;
-      const connectionHealth = await this.connectorOperation(
-        operationSignal,
-        () => connector.check_connection(context),
-      );
-      connectionCheckInFlight = false;
-      const persistedHealth = persistedAuthHealth(connectionHealth);
-      try {
-        await this.control.recordConnectionAuthHealth(claim, persistedHealth);
-      } catch (error) {
-        // Transform capability issuance holds FOR SHARE on connections for the
-        // whole analytical transaction. A healthy probe must not abort the
-        // backfill when that ShareLock briefly blocks an auth-health write.
-        const pgCode = error && typeof error === "object" && "code" in error
-          ? String((error as { code?: unknown }).code)
-          : "";
-        if (persistedHealth !== "healthy" || (pgCode !== "55P03" && pgCode !== "40P01")) {
-          throw error;
+      // A coordinator probes /connections once before fan-out. Repeating that
+      // probe on every stream claim spends a scarce vendor budget before the
+      // real endpoint can use it, starving extraction. Stream calls
+      // validate the same credential themselves and their 401/403 responses
+      // are persisted by the catch path below.
+      if (!job.stream) {
+        connectionCheckInFlight = true;
+        const connectionHealth = await this.connectorOperation(
+          operationSignal,
+          () => connector.check_connection(context),
+        );
+        connectionCheckInFlight = false;
+        const persistedHealth = persistedAuthHealth(connectionHealth);
+        try {
+          await this.control.recordConnectionAuthHealth(claim, persistedHealth);
+        } catch (error) {
+          // Transform capability issuance holds FOR SHARE on connections for the
+          // whole analytical transaction. A healthy probe must not abort the
+          // backfill when that ShareLock briefly blocks an auth-health write.
+          const pgCode = error && typeof error === "object" && "code" in error
+            ? String((error as { code?: unknown }).code)
+            : "";
+          if (persistedHealth !== "healthy" || (pgCode !== "55P03" && pgCode !== "40P01")) {
+            throw error;
+          }
+        }
+        if (connectionHealth === "expired" || connectionHealth === "revoked") {
+          throw new ConnectorError(
+            "AUTHENTICATION_REQUIRED",
+            `The ${connector.id} connection requires authorisation before sync can continue.`,
+            { details: { authHealth: connectionHealth } },
+          );
         }
       }
-      if (connectionHealth === "expired" || connectionHealth === "revoked") {
-        throw new ConnectorError(
-          "AUTHENTICATION_REQUIRED",
-          `The ${connector.id} connection requires authorisation before sync can continue.`,
-          { details: { authHealth: connectionHealth } },
-        );
-      }
-      // Once the connection probe succeeds, persist the complete manifest
-      // expectation set before extraction/fan-out. A revoked credential must
-      // still have its auth health durably recorded even if analytics is down.
+      // Persist the complete manifest expectation set before extraction/fan-out.
+      // A coordinator records revoked credentials before reaching this write;
+      // stream calls surface credential failures through their real endpoint.
       if (expectedStreams.length > 0) {
         await withWriteFence((capability) =>
           this.analytical.registerConnectorStreams({ job, streams: expectedStreams }, capability));
@@ -496,10 +534,14 @@ export class SyncJobProcessor {
             () => connector.incremental_sync(context, stream, reconnectCursor),
           );
         } else {
+          const shopifyContinuityCursor = shopifyInitialDeletionCursor(job, persisted);
           page = await this.connectorOperation(
             operationSignal,
             () => connector.initial_sync(
-              context,stream,job.range,runResumeCursor ?? job.cursor,
+              context,
+              stream,
+              job.range,
+              runResumeCursor ?? job.cursor ?? shopifyContinuityCursor,
             ),
           );
         }
@@ -894,6 +936,29 @@ export class SyncJobProcessor {
         return Object.freeze({ status: "completed" });
       }
     } catch (error) {
+      const deletionContinuityReason = shopifyDeletionContinuityBlockReason(job,error);
+      if (deletionContinuityReason) {
+        try {
+          // The analytical fence is committed first because Cube queries do
+          // not consult the control database. Once it exists, even a delayed
+          // or failed control mutation cannot expose stale Shopify rows.
+          await withWriteFence((capability) =>
+            this.analytical.blockShopifyConnectionQueryability({
+              job,reason: deletionContinuityReason,
+            },capability));
+          await this.control.blockShopifyDeletionContinuity(
+            claim,deletionContinuityReason,
+          );
+        } catch (blockError) {
+          // A failure to publish either durable half is itself unsafe: do not
+          // reduce the original non-retryable gap to success.
+          console.error("Albert Shopify deletion-continuity block failed", {
+            reason: deletionContinuityReason,
+            message: blockError instanceof Error ? blockError.message : String(blockError),
+          });
+          throw blockError;
+        }
+      }
       const authHealth = authHealthForFailure(error, connectionCheckInFlight);
       if (authHealth) {
         await this.control.recordConnectionAuthHealth(claim, authHealth).catch(() => undefined);
@@ -1194,6 +1259,66 @@ function latestSourceWatermark(records: readonly RawSourceRecord[], fallback: st
     if (candidate > latestTimestamp) latestTimestamp = candidate;
   }
   return Number.isFinite(latestTimestamp) ? new Date(latestTimestamp).toISOString() : fallback;
+}
+
+/**
+ * A new Shopify OAuth generation must not silently reset the independently
+ * committed destroy-event watermark. Only the bounded event watermark is
+ * inherited; vendor pagination cursors are intentionally discarded because
+ * they are valid only for the original generation's frozen result set.
+ *
+ * Legacy or non-adjacent generations receive an explicit unproven marker.
+ * The connector fails that stream closed after the current snapshot instead
+ * of treating Shopify's one-year event retention as complete history.
+ */
+export function shopifyInitialDeletionCursor(
+  job: Extract<SyncJob, { type: "InitialBackfill" }>,
+  persisted: Readonly<{
+    cursor: ConnectorCursor | null;
+    connectionGeneration: number;
+  }>,
+): ConnectorCursor | undefined {
+  if (job.connectorId !== "shopify") return undefined;
+  const previousExists = persisted.connectionGeneration > 0 || persisted.cursor !== null;
+  if (!previousExists) return undefined;
+
+  let deletionEventWatermark: string | undefined;
+  try {
+    const parsed = persisted.cursor
+      ? JSON.parse(persisted.cursor.value) as Readonly<Record<string, unknown>>
+      : null;
+    if (
+      parsed?.version === 1 &&
+      typeof parsed.deletionEventWatermark === "string" &&
+      Number.isFinite(Date.parse(parsed.deletionEventWatermark))
+    ) {
+      deletionEventWatermark = new Date(parsed.deletionEventWatermark).toISOString();
+    }
+  } catch {
+    // The explicit unproven marker below is the fail-closed legacy path.
+  }
+
+  const generationIsContinuous =
+    persisted.connectionGeneration === job.connectionGeneration ||
+    persisted.connectionGeneration === job.connectionGeneration - 1;
+  const state = deletionEventWatermark && generationIsContinuous
+    ? {
+        version: 1,
+        deletionEventWatermark,
+        deletionContinuity: "prior_generation_verified",
+        ...(job.phase === "recent" ? {} : { skipDeletionEventPoll: true }),
+      }
+    : {
+        version: 1,
+        deletionContinuity: "prior_generation_unproven",
+        ...(job.phase === "recent" ? {} : { skipDeletionEventPoll: true }),
+      };
+  return {
+    value: JSON.stringify(state),
+    ...(persisted.cursor?.sourceUpdatedAt
+      ? { sourceUpdatedAt: persisted.cursor.sourceUpdatedAt }
+      : {}),
+  };
 }
 
 function reconciliationTombstoneRecord(

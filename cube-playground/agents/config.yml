@@ -1,0 +1,1031 @@
+# Albert V3 engine configuration (Cube Cloud agent schema, replicated for the
+# in-repo engine). Loaded at build time via generate:albert-v3-agent-config.
+version: 1
+
+# The only query surfaces the agent may use. Raw cubes are public: false.
+# connector identifies the tool a view's data comes from (shown in the UI).
+accessible_views:
+  - name: sales_analytics
+    connector: lightspeed
+    routing_terms:
+      - best employee this month
+      - top staff sales performance
+      - employee performance by takings
+    guidance: >
+      Whole-transaction grain. Revenue, refunds, discounts, tax, quotes, voids,
+      store and staff performance, and the customer on the sale. “Best employee”
+      also requires authoritative hours from workforce_analytics when Deputy is
+      connected; sales alone are contribution, not productivity.
+  - name: product_sales_analytics
+    connector: lightspeed
+    guidance: >
+      Sale-line grain. Units, item revenue, discounts, cost and gross profit by
+      product, category, brand, season and tags. Also the R-Series fallback for
+      observed selling prices when current catalogue-price fields are blank:
+      normal_unit_price is the pre-discount line price, unit_price is charged,
+      and average_selling_price is a period aggregate; none is current catalogue
+      truth.
+  - name: payments_analytics
+    connector: lightspeed
+    guidance: >
+      Tender grain. Payment mix, tips, refund tenders, card charge outcomes and
+      processing fees.
+  - name: customer_analytics
+    connector: lightspeed
+    guidance: >
+      Customer-profile grain. Refund-safe positive-purchase recency/frequency,
+      true censored 90-day repeat, signed lifetime net spend, broad geography,
+      aggregate contactability, store credit and gift cards. Profiles are not
+      deduplicated people. Exact contact values, street address, date of birth,
+      custom values and note text are deliberately excluded.
+  - name: workshop_analytics
+    connector: lightspeed
+    guidance: >
+      Workshop / service jobs. Job intake, statuses, due and overdue work,
+      warranty jobs, labour hours and parts attached to jobs. Charged workshop
+      revenue stays in product_sales_analytics (is_workorder = true).
+  - name: inventory_analytics
+    connector: lightspeed
+    guidance: >
+      Stock grain. Current stock on hand and value per item and store, reorder
+      alerts, stock ageing, stock movement history, stocktake variances and
+      shrinkage, inter-store transfers, special orders, serialised units,
+      price lists and bundle components. Aged inventory reports: group
+      units_on_hand and stock_value by stock_age_band with the in_stock
+      segment (one query); do not reconstruct ageing from goods receipts or
+      movement logs. Blank catalogue prices do not prove an item is unpriced;
+      recover observed prices from product_sales_analytics before concluding
+      unavailable.
+  - name: purchasing_analytics
+    connector: lightspeed
+    guidance: >
+      Buying grain. Purchase orders and their lifecycle, goods receipts and
+      lead times, returns to vendors and supplier reference data (part
+      numbers, costs, B2B catalogues). This is stock ORDERING, not money:
+      dollar spend with suppliers (bills, payments, amounts owed) lives in
+      xero_finance_analytics. items_* / categories_* dimensions ride the PO
+      line grain only; never pair them with order_shipment_* or
+      vendor_returns_* members (no join path).
+  - name: cash_management_analytics
+    connector: lightspeed
+    guidance: >
+      Till grain. Register count sessions, expected vs counted per tender
+      (cash over/short), withdrawals and banking drops, and the live expected
+      drawer position.
+  - name: square_sales_analytics
+    connector: square
+    routing_terms:
+      - cafe sales yesterday
+      - average order value by store
+      - whole order sales
+    guidance: >
+      Square whole-order grain. Completed net sales, returns, tax, discounts,
+      tips, service charges, open/canceled orders, stores and attached customers.
+      Default sales time is closed_at and only COMPLETED orders count.
+  - name: square_product_sales_analytics
+    connector: square
+    routing_terms:
+      - best selling products
+      - best selling coffees and pastries
+      - product sales by SKU and category
+    guidance: >
+      Square order-line grain. Units and final/gross line value by item,
+      variation, SKU, category and location. Gift-card loads are excluded from
+      earned sales; itemised returns are not subtracted from this line surface.
+  - name: square_payments_analytics
+    connector: square
+    routing_terms:
+      - card versus cash takings
+      - cash versus card collections
+      - payment tender mix
+    guidance: >
+      Square Payment grain. Completed collections, payment/tender mix, tips,
+      failed and offline attempts, plus payment processing-fee entries. Refunds
+      are separate in square_refunds_analytics.
+  - name: square_refunds_analytics
+    connector: square
+    guidance: >
+      Square PaymentRefund grain. Completed refund count/value, reasons,
+      destinations, locations and linked/unlinked status. It cannot identify a
+      returned product without a real order-return allocation.
+  - name: square_disputes_analytics
+    connector: square
+    guidance: >
+      Current Square card-dispute exposure by state, reason, store and evidence
+      due date. A dispute amount is exposure, not automatically an expense.
+  - name: square_settlements_analytics
+    connector: square
+    guidance: >
+      Square payout settlement grain plus its enriched activity entries. Use
+      for deposited payouts, fees/adjustments rolled into a payout and bank
+      matching via end_to_end_id. A payout is not a bank-feed transaction.
+  - name: square_inventory_analytics
+    connector: square
+    guidance: >
+      Current Square inventory balance by item variation, store and state.
+      Snapshot/semi-additive: use IN_STOCK for sellable on hand and never sum
+      quantities across calculated_at observations.
+  - name: square_inventory_activity_analytics
+    connector: square
+    guidance: >
+      Square inventory change events. Adjustments and physical counts by item,
+      store, reason and state transition. units_affected is absolute, not net.
+  - name: square_roster_analytics
+    connector: square
+    routing_terms:
+      - roster for this week
+      - who is scheduled to work
+      - rostered hours
+      - upcoming shifts
+    guidance: >
+      Published Square scheduled shifts: the planned roster by team member,
+      location and day, with rostered hours. Planned time only - actual worked
+      hours live in square_workforce_analytics.
+
+  - name: square_workforce_analytics
+    connector: square
+    routing_terms:
+      - who is currently clocked in
+      - open clock-ins
+      - hours worked by job and store
+    guidance: >
+      Square actual timecards: completed worked hours, open clock-ins, wage-rate
+      labour estimate, team member, job and store. This is not payroll or roster.
+  - name: square_labour_sales_analytics
+    connector: square
+    guidance: >
+      Safe daily/store-aligned Square sales and actual labour. Use for sales per
+      labour hour, estimated labour-cost percentage and orders per labour hour;
+      labour cost is a wage-rate estimate, not fully loaded payroll.
+  - name: square_cash_management_analytics
+    connector: square
+    guidance: >
+      Square cash drawer shift grain. Expected versus counted cash and closed-
+      shift variance; positive is over and negative is short.
+  - name: square_cash_activity_analytics
+    connector: square
+    guidance: >
+      Square cash drawer event type/amount over time. The official event payload
+      has no parent shift/location id, so this view cannot group events by store;
+      use cash management for shift-level variance and never invent the join.
+  - name: square_loyalty_analytics
+    connector: square
+    guidance: >
+      Current Square loyalty accounts and point balances. Snapshot only; use
+      square_loyalty_activity_analytics for point and reward event flows.
+  - name: square_loyalty_activity_analytics
+    connector: square
+    guidance: >
+      Square loyalty event grain. Points earned/adjusted/expired, rewards created
+      or redeemed, location and event time.
+  - name: square_gift_card_analytics
+    connector: square
+    guidance: >
+      Current Square gift-card accounts and outstanding stored-value balance.
+      Snapshot/liability-like, not revenue and not additive over time.
+  - name: square_gift_card_activity_analytics
+    connector: square
+    guidance: >
+      Square gift-card activation, load, redemption and refund activity. Loads
+      create stored-value liability; they are not earned sales.
+  - name: square_catalogue_analytics
+    connector: square
+    guidance: >
+      Current Square catalogue setup: items, variations/SKUs, categories, price,
+      taxability and inventory/sell flags. Sales use the product-sales view.
+  - name: square_customer_analytics
+    connector: square
+    guidance: >
+      Square Customer Directory grain: profile count, creation source,
+      contactability and geography. Period spend belongs in Square sales.
+  - name: square_source_explorer
+    connector: square
+    guidance: >
+      Exhaustive fallback for every field returned by any Square stream. Use
+      only when no curated Square view exposes the concept; filter one exact
+      source object/stream and field_path, then select its typed value. Numeric
+      values are not automatically additive and contact fields may be PII.
+  - name: lightspeed_x_sales_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series whole-sale grain. Signed closed net sales and returns, tax,
+      surcharges, gift-card liabilities, lifecycle, outlet, register, user and
+      customer. Default sales time is the API sale date translated to the outlet
+      business date. Parked, pending and voided sales never count as revenue.
+  - name: lightspeed_x_product_sales_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series sale-line grain. Product/variant/SKU/category/brand/supplier units,
+      signed sales and returns, explicit discounts, COGS and realised margin.
+      Gift-card loads and the system discount product are separated; sale-level
+      discounts remain unallocated.
+  - name: lightspeed_x_payments_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series payment grain. Positive collections, negative refund tenders,
+      tender mix, surcharge, outlet and register. Payment flow is not a revenue
+      substitute.
+  - name: lightspeed_x_refunds_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series return-sale grain. Closed refund value and tax, original sale,
+      timing, outlet and customer. Product allocation lives in product sales and
+      refund tender destination in payments.
+  - name: lightspeed_x_customer_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series customer snapshot with group, safe geography/contactability,
+      lifetime signed spend, repeat/lapsed behaviour and current account/loyalty
+      balances. Direct contact fields are excluded.
+  - name: lightspeed_x_stored_value_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series gift-card and store-credit current liabilities plus transaction
+      flows. Snapshot and flow prefixes are separate grains. Loads/issues and
+      redemptions are liability movements, not earned revenue.
+  - name: lightspeed_x_catalogue_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series product/variant catalogue, hierarchy, brand, supplier, current
+      retail/supply price, tax and inventory flags. Current catalogue margin is
+      not realised sale margin.
+  - name: lightspeed_x_pricing_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series price-book definitions and product price rules, including dates,
+      platform, customer/outlet scope and quantity thresholds. Definition and
+      rule prefixes have different grains.
+  - name: lightspeed_x_promotion_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series promotion definitions and applied line discounts. Action values
+      are contextual rates or amounts. Applied activity exposes safe discount
+      and affected counts without duplicating line revenue.
+  - name: lightspeed_x_inventory_analytics
+    connector: lightspeed-x
+    routing_terms:
+      - units available by outlet and product
+      - available stock by outlet
+      - products below reorder point
+    guidance: >
+      Current X-Series stock by product/outlet, value, procurement demand,
+      reorder strategy and stockout risk. Snapshot/semi-additive: never sum over
+      versions or ingestion observations.
+  - name: lightspeed_x_purchasing_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series supplier orders, outlet transfers, supplier returns and stocktakes
+      with product lines, units, operational order cost and receipt lead time.
+      Supplier bills/payments/amounts owed remain in Xero.
+  - name: lightspeed_x_fulfillment_analytics
+    connector: lightspeed-x
+    routing_terms:
+      - picked packed and fulfilled units
+      - incomplete fulfilments
+      - fulfilment line progress
+    guidance: >
+      Current X-Series fulfilment header and line progress by state, type,
+      product and outlet. Current quantities are snapshots; exact transitions
+      require history fields in the explorer.
+  - name: lightspeed_x_services_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series service-order scheduling/status, service lines and customer-owned
+      items. Each service creates a linked sale, so service reference totals must
+      never be added to sales revenue.
+  - name: lightspeed_x_store_operations_analytics
+    connector: lightspeed-x
+    guidance: >
+      X-Series retailer/outlet/register/user setup, open registers, user/MFA
+      status and till-login shifts. Shift hours are not roster or payroll.
+  - name: lightspeed_x_audit_analytics
+    connector: lightspeed-x
+    routing_terms:
+      - who changed product records
+      - audit actor action entity
+      - record changes
+    guidance: >
+      Safe X-Series audit activity counts by entity, action, actor and time.
+      Changed values, prior values, IP addresses and user agents are excluded.
+  - name: lightspeed_x_source_explorer
+    connector: lightspeed-x
+    routing_terms:
+      - API returned custom field
+      - new API field
+      - exhaustive source field fallback
+    guidance: >
+      Exhaustive fallback for every field returned by any X-Series stream. Use
+      only when curated X-Series views lack the concept; filter one exact stream
+      or object and field_path, use its typed value, and treat PII carefully.
+  - name: staff_analytics
+    connector: lightspeed
+    guidance: >
+      POS register clock in / out shifts by staff member and store. Only use
+      when the question is specifically about till logins; authoritative
+      hours worked, rosters, leave and wage cost live in workforce_analytics
+      (Deputy). Sales per staff member stay in sales_analytics.
+  - name: workforce_analytics
+    connector: deputy
+    routing_terms:
+      - best employee by productivity
+      - employee sales per worked hour
+      - staff performance with hours worked
+    guidance: >
+      Workforce (Deputy) grain. Authoritative hours worked and wage cost from
+      timesheets, rostered / scheduled shifts and planned cost, open and
+      published shifts, leave requests by type and status, staff headcount
+      and positions. Labour against sales by day or week (labour cost as a
+      share of sales, sales per labour hour) is one query here through the
+      labour_sales_* members; rostered-versus-actual, late and no-show
+      questions are one query through the shift_* members. Per-person
+      cross-tool comparisons require an explicit governed identity mapping.
+      Names alone do not establish identity. Without that mapping, keep the
+      per-source figures separate and disclose the gap; use common periods
+      for cross-source aggregate comparisons.
+  - name: xero_profit_and_loss_analytics
+    connector: xero
+    routing_terms:
+      - net profit this financial year
+      - profit and loss by month
+      - gross profit and margin
+      - total income and expenses
+      - how much did wages reduce profit
+    guidance: >
+      AUTHORITATIVE Xero accrual Profit and Loss at monthly grain, landed from
+      Xero's own standard report through Fivetran. Use for P&L/income statement,
+      Net or Gross Profit, revenue/income, cost of sales, operating/total
+      expenses, wages in profit, and margins. Net Profit already deducts every
+      posted wage, super, depreciation, interest and tax expense; never subtract
+      payroll again. Sum period_start months for quarter/FY/YTD. Current month
+      is partial through report_updated_at. Amounts are organisation base
+      currency. Use the account view for named-line rankings.
+  - name: xero_profit_and_loss_account_analytics
+    connector: xero
+    routing_terms:
+      - biggest Xero expense accounts
+      - wages and salaries in the P&L
+      - rent and merchant fees by month
+      - income accounts
+    guidance: >
+      Xero P&L leaf account rows at monthly accrual grain. Use statement_amount
+      grouped by account_name/type/category for expense or income rankings and
+      wage/super drill-down. Official report codes, not names, identify wages.
+      It excludes statement subtotal/formula rows to prevent double counting.
+      Never derive Net Profit by summing this view; headline profit and margins
+      live in xero_profit_and_loss_analytics.
+  - name: xero_balance_sheet_analytics
+    connector: xero
+    routing_terms:
+      - balance sheet
+      - net assets and equity
+      - total assets and liabilities
+      - inventory value on the balance sheet
+      - loan balance
+      - GST balance owed
+      - accounts payable balance at month end
+    guidance: >
+      Xero's own standard-layout Balance Sheet at month-end grain (trailing 24
+      month ends, current month rendered through the last refresh): total
+      assets, total liabilities, net assets / equity, bank total, accounts
+      receivable and payable balances, GST control balance, inventory, current
+      year earnings, plus every statement line (line_* members) for loan,
+      owner-loan, PAYG/super payable, fixed-asset and equity accounts. Pick ONE
+      as_at date (newest = latest month end); never sum across dates or mix
+      account lines with Xero total lines. The live xero_balance_sheet tool is
+      more current for "as at today"; fall back here (and say the date) when
+      it is unavailable. Dashboard-style "bills to pay" / "invoices owed" come
+      from xero_finance_analytics payable_outstanding / receivable_outstanding.
+  - name: xero_bank_balances_analytics
+    connector: xero
+    routing_terms:
+      - bank account balances
+      - how much is in the bank
+      - balance of each bank account
+      - bank summary by month
+    guidance: >
+      Xero's Bank Summary at monthly grain (trailing 12 months): each bank and
+      credit-card account's opening balance, cash received, cash spent and
+      closing balance IN XERO per calendar month, plus Xero's Total row. The
+      latest month's closing balance is the account's current "Balance in
+      Xero" through the last refresh. Always pick one month and filter
+      is_account_line = true to list accounts; closing balances are
+      point-in-time, never sum across months. For whole-business cash in and
+      out over a period use xero_finance_analytics cash_in / cash_out. The
+      live xero_balance_sheet tool gives today's balances when Xero's API
+      allowance permits.
+  - name: xero_trial_balance_analytics
+    connector: xero
+    routing_terms:
+      - trial balance
+      - ledger account balance
+    guidance: >
+      Xero's Trial Balance per as-at date (last three month ends and the
+      financial-year end): every ledger account with period and YTD debit /
+      credit; net_balance = debit - credit. Choose one as_at and filter
+      is_account_line = true. Balance sheet headlines live in
+      xero_balance_sheet_analytics, P&L in xero_profit_and_loss_analytics.
+  - name: xero_finance_analytics
+    connector: xero
+    guidance: >
+      The accounting ledger (Xero). Invoices and bills with amounts due and
+      ageing bands, who owes me / who I owe (headline payable_outstanding /
+      receivable_outstanding with overdue parts and counts, exactly as Xero's
+      dashboard tiles), average days to pay
+      (avg_days_to_pay), payments received and made, cash in and out of the
+      bank for a period (cash_in / cash_out / net_cash_movement, matching
+      Xero's dashboard), bank account spending
+      and income by GL category, GST position (gst_* members), credit notes
+      and credit note lines, overpayments (customer/supplier credit
+      balances), batch payments, journal debits/credits, recurring invoice
+      templates with their lines, and contact details (email, payment terms).
+      NEVER use legacy pnl_* members for Profit and Loss, Net/Gross Profit,
+      income, total expenses or margins: they omit system payroll and
+      depreciation journals. Use xero_profit_and_loss_analytics for headline
+      statement figures and xero_profit_and_loss_account_analytics for account
+      breakdowns. GST
+      questions use gst_collected / gst_paid / gst_net over gst_date, but
+      disclose that GST collected only covers directly invoiced sales
+      (register sales post via tax-blind journals) and the authoritative BAS
+      comes from Xero's GST return. Bank balances in Xero live in
+      xero_bank_balances_analytics (month-end / latest) or the live
+      xero_balance_sheet tool. NOT AVAILABLE from this connection, say
+      so honestly: budget line values, and Xero's own
+      report PDFs. This business has no quotes, purchase orders, projects
+      or expense claims in Xero.
+      "Spend with supplier X" and "who do I buy from" are answered here
+      (bills by contact plus bank spend), not from Lightspeed purchase
+      orders. For running-cost questions ("how much am I paying in fees")
+      use recent COMPLETE months, not the current partial month: coding
+      lags mean the current month is usually empty. POS register revenue
+      stays in sales_analytics (Lightspeed); Xero is the books. For
+      cross-tool questions query each view separately and combine
+      narratively.
+  - name: xero_payroll_analytics
+    connector: xero
+    guidance: >
+      Payroll (Xero AU). What payroll actually paid: per-employee payslips
+      (gross wages, PAYG tax, super, net pay), pay run totals, payroll hours
+      by day and earnings rate, the earnings rate catalogue with $ rates,
+      salaries and standard rates, super funds, deduction and reimbursement
+      types, pay calendars (pay frequency and next payment date) and the GL
+      accounts payroll posts to. Filter pay_run_status = 'POSTED' for
+      finalised pay. NOT AVAILABLE, say so honestly: leave balances and
+      per-payslip earnings line detail (Xero does not expose them for this
+      org). Operational hours and shift-level wage cost stay in
+      workforce_analytics (Deputy); match people by name per tool, never
+      join across tools.
+  - name: xero_business_analytics
+    connector: xero
+    guidance: >
+      Business setup and structure (Xero). The organisation record (ABN, GST
+      basis, financial year end), chart of accounts, product/service prices,
+      tax rates, users with access, budgets, fixed assets with book values
+      and depreciation, and the file library. Reference grains that do not
+      join to each other: query one grain at a time.
+  - name: shopify_sales_analytics
+    connector: shopify
+    guidance: >
+      Shopify order grain. Headline sales, AOV, discounts, tax, shipping,
+      outstanding value and order financial/fulfilment state. Use processed_at
+      as trading time and current_total_sales for current performance; retain
+      original_total_sales only for order-time comparisons. Aggregate queries
+      only: order/customer identifiers, tags and exact timestamps are absent.
+  - name: shopify_product_sales_analytics
+    connector: shopify
+    guidance: >
+      Aggregate Shopify order-line facts: unit sales, gross and net product
+      sales, discounts, refundable quantities and return-affected lines.
+      Merchant-authored product/variant/SKU/vendor labels and exact line/order
+      records are unavailable on this replayable public surface.
+  - name: shopify_payments_analytics
+    connector: shopify
+    guidance: >
+      Shopify transaction grain. Authorisations, captures, successes, failures,
+      gateway/payment-method mix, voids and transaction refunds. Transaction
+      amounts are not a replacement for order revenue. Only aggregate measures
+      are public; payment, transaction and order identifiers are unavailable.
+  - name: shopify_refunds_analytics
+    connector: shopify
+    guidance: >
+      Shopify refund-line source truth. Refunded units, subtotal, tax, total and
+      restocking aggregates. Never derive refunds from an order total delta when
+      this source view answers the question. Merchant-authored product/location
+      labels are absent; results never reveal a refund, line or order identifier.
+  - name: shopify_fulfillment_analytics
+    connector: shopify
+    guidance: >
+      Shopify fulfilment grain. Dispatch, in-transit, delivery, estimated
+      delivery, late deliveries and cycle times. Merchant-authored service/
+      location labels, tracking, fulfilment/order identities and exact event
+      timestamps are unavailable.
+  - name: shopify_returns_analytics
+    connector: shopify
+    guidance: >
+      Shopify return grain. Return lifecycle, quantities, exchange and return
+      line counts, linked refunds and time to close. Refund dollars remain in
+      shopify_refunds_analytics. Exact return/order identities are unavailable.
+  - name: shopify_inventory_analytics
+    connector: shopify
+    guidance: >
+      Current inventory-item/location grain. Available, on-hand, committed,
+      incoming, reserved, damaged, safety-stock and quality-control quantities
+      are distinct states; never add them together as if they were extra stock.
+      Product, SKU and location labels/identifiers are unavailable publicly.
+  - name: shopify_customer_analytics
+    connector: shopify
+    guidance: >
+      Aggregate Shopify customer population snapshot. Counts, total/average
+      lifetime spend and repeat-customer rates only. Customer identifiers,
+      tags, locale, per-customer facts and timestamps are deliberately absent.
+  - name: shopify_catalogue_analytics
+    connector: shopify
+    guidance: >
+      Shopify product facts for merchandising status, publishing and aggregate
+      inventory. All merchant-authored labels, descriptions, vendor/type/category,
+      tags, SEO text, URLs and product identifiers are unavailable publicly.
+  - name: shopify_variant_analytics
+    connector: shopify
+    guidance: >
+      Shopify variant price, inventory policy/quantity, online sellable quantity
+      and availability. SKU, barcode, titles and identifiers are unavailable.
+  - name: shopify_discount_analytics
+    connector: shopify
+    guidance: >
+      Shopify discount-definition grain. Lifecycle, classes, combinations,
+      dates, usage/capacity and Shopify-attributed sales. Do not equate
+      attributed sales with discount dollars. Merchant-authored titles/codes
+      are unavailable on the replayable public surface.
+  - name: shopify_store_analytics
+    connector: shopify
+    guidance: >
+      Shopify shop configuration: currency, timezone, plan and customer-account
+      mode. Shop names, domains and protected contact/address values are excluded.
+  - name: shopify_source_fields_analytics
+    connector: shopify
+    guidance: >
+      Exhaustive definition and availability catalogue for a specifically named
+      Admin GraphQL field absent from curated Shopify views. It exposes no store
+      value or source-object identifier. For an allowed current value, use the
+      owner/manager-only typed Admin read plane; otherwise report Unavailable.
+  - name: shopify_metafield_catalogue_analytics
+    connector: shopify
+    guidance: >
+      Aggregate Shopify custom-field definition counts by owner type, declared
+      type and access. Merchant names, namespaces, keys, constraints,
+      validations and literals are unavailable on this public surface.
+  - name: shopify_metafield_presence_analytics
+    connector: shopify
+    guidance: >
+      Aggregate Shopify custom-field presence by owner and type. IDs, merchant
+      namespaces/keys, size fingerprints, timestamps and literals are always
+      unavailable; never infer a value from aggregate presence.
+  - name: momence_member_analytics
+    connector: momence
+    guidance: >
+      Momence member profile snapshot: observed activity bounds, current visit
+      counters, contactability and tags. A member is not an active membership;
+      first/last seen are not guaranteed signup/churn and visit counters are not
+      event history.
+  - name: momence_schedule_analytics
+    connector: momence
+    guidance: >
+      Yoga class/session and appointment occurrence schedule. Use for capacity,
+      booked places, availability estimate, waitlist, duration, instructor,
+      location and lifecycle. Booked is not attended or paid.
+  - name: momence_attendance_analytics
+    connector: momence
+    guidance: >
+      Session booking and member appointment reservation grain. Use source
+      check-ins for attendance and label ended unresolved records as a no-show
+      proxy. Session ticketsBought can exceed one while check-in is record-level.
+  - name: momence_membership_catalogue_analytics
+    connector: momence
+    guidance: >
+      Membership plan definitions: subscription/package type, duration,
+      renewals, activation/trial, source price values, limits and rollover.
+      Currency/unit is absent from plan price fields; plans are not entitlements.
+  - name: momence_member_entitlement_analytics
+    connector: momence
+    guidance: >
+      Current active-endpoint bought memberships by member/plan with freeze,
+      expiry, current usage period, separate credit/usage units and declined-
+      renewal risk. Snapshot only; not all historical membership purchases.
+  - name: momence_instructor_analytics
+    connector: momence
+    guidance: >
+      Distinct Momence teacher identities and deduplicated current session/
+      appointment assignments. Instructor assignment is not employment,
+      rostered/actual labour hours, wage cost or payroll.
+  - name: momence_location_analytics
+    connector: momence
+    guidance: >
+      Momence public/embedded location reference and schedule footprint. Public
+      address/timezone details are optional; missing fields stay unknown. For
+      capacity, bookings or attendance use their native views.
+  - name: momence_tag_analytics
+    connector: momence
+    guidance: >
+      Host tag-definition catalogue. A tag definition count is not a count of
+      tagged members, plans or sessions; exact assignments remain on each entity.
+  - name: momence_sales_analytics
+    connector: momence
+    guidance: >
+      Experimental HostSale header records and reported item/tender arithmetic.
+      No status, void flag, location or currency is returned, so never label as
+      certified revenue or add reported item value to embedded tender value.
+  - name: momence_product_sales_analytics
+    connector: momence
+    guidance: >
+      HostSale item grain for memberships, yoga classes, appointments, products,
+      gift cards, fees and other source item types. Paying and target member may
+      differ; value/tax has no returned currency or sale lifecycle.
+  - name: momence_sale_tender_analytics
+    connector: momence
+    guidance: >
+      HostSale-linked payment method items for source tender mix. Transaction
+      status and currency are absent, so these values are not certified captured
+      cash and must not be added to detailed payment items.
+  - name: momence_payment_analytics
+    connector: momence
+    guidance: >
+      Discovered detailed payment headers with status, currency, captured value,
+      VAT, credits, fees and net-after-refunds. Only succeeded is captured.
+      Coverage is partial because IDs are discoverable only via member notes.
+  - name: momence_payment_method_analytics
+    connector: momence
+    guidance: >
+      Detailed transactionItems grain for payment method/status, custom modes,
+      currency, fees, credits and used membership/gift-card. Never add item and
+      header payment amounts; note-discovery coverage remains partial.
+  - name: momence_refund_analytics
+    connector: momence
+    guidance: >
+      Detailed refund-event grain. Use refund_created_at, keep currency/money-
+      credit/event-credit units separate, and do not infer a returned service or
+      product. Coverage inherits partial payment-ID discovery.
+  - name: momence_source_explorer
+    connector: momence
+    guidance: >
+      Exhaustive fallback for every scalar returned by every Momence stream.
+      Filter exact parent_stream/source_object_type and field_path, use the typed
+      value, never assume numeric additivity, and protect PII/notes/stream secrets.
+  - name: stripe_payments_analytics
+    connector: stripe
+    routing_terms:
+      - stripe charges this month
+      - payment intent collections
+      - succeeded stripe payments
+    guidance: >
+      Stripe Charge grain from Fivetran's official charge table. collected_amount
+      is succeeded paid charges in major currency units. PaymentIntent members
+      are a parallel grain: never add them to charge totals in one query.
+      Refunds and disputes are separate views.
+  - name: stripe_refunds_analytics
+    connector: stripe
+    guidance: >
+      Stripe Refund grain. Succeeded refunded_amount over created is money
+      returned. Do not net this into stripe_payments_analytics in one query.
+  - name: stripe_disputes_analytics
+    connector: stripe
+    guidance: >
+      Stripe Dispute exposure by status and reason. Amount is exposure, not an
+      automatic expense. Open states need a response.
+  - name: stripe_billing_analytics
+    connector: stripe
+    routing_terms:
+      - outstanding stripe invoices
+      - paid invoices this month
+    guidance: >
+      Stripe Invoice grain. amount_remaining on open or uncollectible is
+      outstanding. Line members are a different grain from invoice totals.
+  - name: stripe_subscriptions_analytics
+    connector: stripe
+    routing_terms:
+      - active stripe subscriptions
+      - cancelled subscriptions
+    guidance: >
+      Current Stripe subscriptions (Fivetran subscription_history active row).
+      active_subscriptions is headcount, not recognised revenue. Invoice money
+      stays in stripe_billing_analytics.
+  - name: stripe_customer_analytics
+    connector: stripe
+    guidance: >
+      Stripe Customer profiles, delinquency and recorded balance. Lifetime spend
+      is on charges and invoices. Email is PII.
+  - name: stripe_catalogue_analytics
+    connector: stripe
+    guidance: >
+      Stripe Products, Prices and Coupons. Catalogue grain, not sales.
+  - name: stripe_payouts_analytics
+    connector: stripe
+    routing_terms:
+      - stripe payouts to the bank
+    guidance: >
+      Stripe Payouts to the merchant bank. payout_amount over created or
+      arrival_date. paid is deposited.
+  - name: stripe_balance_analytics
+    connector: stripe
+    routing_terms:
+      - stripe processing fees
+      - stripe net and fees
+    guidance: >
+      Stripe Balance Transaction ledger: gross, fee and net by type and
+      reporting_category. Different grain from charge collections.
+  - name: stripe_checkout_analytics
+    connector: stripe
+    guidance: >
+      Stripe Checkout Sessions. complete_sessions and checkout_amount use
+      status complete.
+  - name: stripe_connect_analytics
+    connector: stripe
+    guidance: >
+      Stripe Connect application fees and transfers. Platform grain, not
+      Standard-account charges.
+  - name: stripe_source_explorer
+    connector: stripe
+    routing_terms:
+      - fivetran stripe table
+      - official stripe erd
+    guidance: >
+      Catalogue of every official Fivetran Stripe ERD table and whether it has
+      landed. Use only when curated views lack the object; filter table_name
+      exactly.
+
+# Cube's "plain" runtime maps to the quick/analytical lanes, "reasoning" to deep.
+lanes:
+  quick:
+    reasoning_effort: low
+    max_queries: 3
+  analytical:
+    reasoning_effort: medium
+    max_queries: 8
+  deep:
+    reasoning_effort: high
+    max_queries: 30
+    max_branches: 5
+
+defaults:
+  timezone: Australia/Melbourne
+  currency: AUD
+
+# Data-derived freshness probes: the latest business date each connector's
+# primary activity view holds. The engine runs these (cached per tenant) when
+# the control plane has no ingestion watermark for the connector, so the model
+# knows "Deputy timesheets run to Sunday" rather than treating an empty
+# yesterday as zero. One probe per connector-domain; any connector can add its own.
+freshness_probes:
+  - connector: lightspeed
+    domain: sales
+    member: sales_analytics.completed_at
+  - connector: lightspeed
+    domain: workshop
+    member: workshop_analytics.checked_in_at
+  - connector: deputy
+    domain: timesheets
+    member: workforce_analytics.shift_date
+  - connector: deputy
+    domain: roster
+    member: workforce_analytics.rostered_date
+  - connector: xero
+    domain: bank
+    member: xero_finance_analytics.bank_occurred_on
+  - connector: xero
+    domain: invoices
+    member: xero_finance_analytics.issued_on
+  - connector: xero
+    domain: profit_and_loss
+    member: xero_profit_and_loss_analytics.report_updated_at
+  - connector: stripe
+    domain: payments
+    member: stripe_payments_analytics.created
+  - connector: stripe
+    domain: invoices
+    member: stripe_billing_analytics.created
+  - connector: stripe
+    domain: payouts
+    member: stripe_payouts_analytics.created
+
+# Business-context probes: the small governed queries the context-layer
+# generator runs (once per tenant, refreshed when stale) to learn what THIS
+# business is — revenue streams, locations, headcount, seasonality, tools' data
+# ranges. Each probe is one Cube query on one view; any connector adds its own.
+# `purpose` is what the generator is told the rows mean. Rows are capped by
+# `rows` (default 24). Date ranges are relative so probes never go stale.
+context_probes:
+  # ---- Lightspeed (POS: sales, products, workshop, inventory, customers) ----
+  - connector: lightspeed
+    key: sales_by_month_24m
+    purpose: "Monthly sales (GST-inclusive takings) and transaction counts for the last 24 months — scale, trend and seasonality."
+    rows: 26
+    query:
+      measures: [sales_analytics.gross_takings, sales_analytics.transactions, sales_analytics.average_sale_value]
+      timeDimensions: [{ dimension: sales_analytics.completed_at, granularity: month, dateRange: last 24 months }]
+  - connector: lightspeed
+    key: sales_by_location_12m
+    purpose: "Sales by shop/location, last 12 months — the business's locations and their relative size."
+    rows: 8
+    query:
+      measures: [sales_analytics.gross_takings, sales_analytics.transactions]
+      dimensions: [sales_analytics.shops_name]
+      timeDimensions: [{ dimension: sales_analytics.completed_at, dateRange: last 12 months }]
+      order: { sales_analytics.gross_takings: desc }
+  - connector: lightspeed
+    key: revenue_by_category_12m
+    purpose: "Product-line revenue by top-level category, last 12 months — the revenue streams and their relative importance (service/labour lines appear as categories too)."
+    rows: 20
+    query:
+      measures: [product_sales_analytics.line_revenue, product_sales_analytics.units_sold, product_sales_analytics.line_gross_margin_pct]
+      dimensions: [product_sales_analytics.categories_name]
+      timeDimensions: [{ dimension: product_sales_analytics.completed_at, dateRange: last 12 months }]
+      order: { product_sales_analytics.line_revenue: desc }
+      limit: 20
+  - connector: lightspeed
+    key: top_brands_12m
+    purpose: "Top manufacturers/brands by revenue, last 12 months — what the business sells."
+    rows: 12
+    query:
+      measures: [product_sales_analytics.line_revenue]
+      dimensions: [product_sales_analytics.manufacturers_name]
+      filters: [{ member: product_sales_analytics.manufacturers_name, operator: set }]
+      timeDimensions: [{ dimension: product_sales_analytics.completed_at, dateRange: last 12 months }]
+      order: { product_sales_analytics.line_revenue: desc }
+      limit: 12
+  - connector: lightspeed
+    key: sales_by_year_all_time
+    purpose: "Completed sales per calendar year over the whole history — the first year is when the POS data starts (dataFrom); the last is the latest."
+    rows: 2
+    query:
+      measures: [sales_analytics.transactions]
+      timeDimensions: [{ dimension: sales_analytics.completed_at, granularity: year }]
+  - connector: lightspeed
+    key: workshop_by_month_12m
+    purpose: "Workshop/service jobs checked in per month, labour hours and parts value, last 12 months — whether a service department exists and how busy it is."
+    rows: 14
+    query:
+      measures: [workshop_analytics.workorder_count, workshop_analytics.workorder_lines_labour_hours, workshop_analytics.workorder_items_parts_value]
+      timeDimensions: [{ dimension: workshop_analytics.checked_in_at, granularity: month, dateRange: last 12 months }]
+  - connector: lightspeed
+    key: customers
+    purpose: "Customer base: profiles on file/active, positive purchasers, repeat profiles, lifetime repeat rate, signed net spend and refunds. Profiles are not deduplicated people."
+    rows: 1
+    query:
+      measures: [customer_analytics.customer_count, customer_analytics.active_customer_count, customer_analytics.customers_with_purchases, customer_analytics.repeat_customers, customer_analytics.repeat_purchase_rate_pct, customer_analytics.total_lifetime_net_spend, customer_analytics.total_lifetime_refund_value]
+  - connector: lightspeed
+    key: customer_recency_frequency
+    purpose: "Active customer profile distribution by transparent purchase recency and positive-purchase frequency bands; operational segments, not predicted churn."
+    rows: 30
+    query:
+      measures: [customer_analytics.customer_count, customer_analytics.total_lifetime_net_spend]
+      dimensions: [customer_analytics.recency_band, customer_analytics.frequency_band]
+      segments: [customer_analytics.active_customers]
+      order: { customer_analytics.customer_count: desc }
+      limit: 30
+  - connector: lightspeed
+    key: customer_attribution_12m
+    purpose: "Last-12-month completed transactions and takings split into customer-profile-attached versus anonymous coverage."
+    rows: 1
+    query:
+      measures: [sales_analytics.transactions, sales_analytics.identified_transactions, sales_analytics.anonymous_transactions, sales_analytics.identified_transaction_coverage_pct, sales_analytics.gross_takings, sales_analytics.identified_gross_takings, sales_analytics.anonymous_gross_takings, sales_analytics.identified_revenue_coverage_pct]
+      timeDimensions: [{ dimension: sales_analytics.completed_at, dateRange: last 12 months }]
+  - connector: lightspeed
+    key: catalogue_and_stock
+    purpose: "Catalogue and stock position: distinct items in stock, units on hand, stock value, positions below reorder."
+    rows: 1
+    query:
+      measures: [inventory_analytics.distinct_items_in_stock, inventory_analytics.units_on_hand, inventory_analytics.stock_value, inventory_analytics.positions_below_reorder]
+  - connector: lightspeed
+    key: payment_mix_12m
+    purpose: "Tender mix by payment type, last 12 months — how customers pay (cash, card, account, online)."
+    rows: 10
+    query:
+      measures: [payments_analytics.tender_total, payments_analytics.payment_count]
+      dimensions: [payments_analytics.payment_types_name]
+      timeDimensions: [{ dimension: payments_analytics.completed_at, dateRange: last 12 months }]
+      order: { payments_analytics.tender_total: desc }
+      limit: 10
+  # ---- Deputy (workforce: rosters, timesheets, wages) ----
+  - connector: deputy
+    key: staff_headcount
+    purpose: "Staff on the books and currently active."
+    rows: 1
+    query:
+      measures: [workforce_analytics.staff_count, workforce_analytics.active_staff_count]
+  - connector: deputy
+    key: hours_wages_by_month_12m
+    purpose: "Hours worked and wage cost per month, last 12 months — labour scale and its trend."
+    rows: 14
+    query:
+      measures: [workforce_analytics.hours_worked, workforce_analytics.wage_cost, workforce_analytics.worked_shift_count]
+      timeDimensions: [{ dimension: workforce_analytics.shift_date, granularity: month, dateRange: last 12 months }]
+  - connector: deputy
+    key: areas_12m
+    purpose: "Rostered areas (departments) and hours in each, last 12 months — how the workforce is organised (floor, workshop, office…)."
+    rows: 10
+    query:
+      measures: [workforce_analytics.rostered_hours, workforce_analytics.rostered_shift_count]
+      dimensions: [workforce_analytics.rostered_area]
+      timeDimensions: [{ dimension: workforce_analytics.rostered_date, dateRange: last 12 months }]
+      order: { workforce_analytics.rostered_hours: desc }
+      limit: 10
+  - connector: deputy
+    key: staff_positions
+    purpose: "Staff by position title (active staff)."
+    rows: 20
+    query:
+      measures: [workforce_analytics.staff_count]
+      dimensions: [workforce_analytics.staff_position]
+      filters: [{ member: workforce_analytics.staff_active, operator: equals, values: ["true"] }]
+      order: { workforce_analytics.staff_count: desc }
+      limit: 20
+  # ---- Xero (accounts: organisation, ledger, invoices/bills, bank) ----
+  - connector: xero
+    key: organisation
+    purpose: "The Xero organisation: business and legal name, line of business, country, timezone, financial year end, GST basis and period."
+    rows: 1
+    query:
+      dimensions: [xero_business_analytics.org_business_name, xero_business_analytics.org_legal_name, xero_business_analytics.org_line_of_business, xero_business_analytics.org_country, xero_business_analytics.org_timezone, xero_business_analytics.org_fy_end_day, xero_business_analytics.org_fy_end_month, xero_business_analytics.org_gst_basis, xero_business_analytics.org_gst_period]
+      limit: 1
+  - connector: xero
+    key: invoices_by_year_all_time
+    purpose: "Invoices and bills issued per calendar year over the whole history — the first year is when the accounting data starts (dataFrom)."
+    rows: 12
+    query:
+      measures: [xero_finance_analytics.invoice_count, xero_finance_analytics.total_invoiced]
+      filters: [{ member: xero_finance_analytics.invoice_status, operator: equals, values: [AUTHORISED, PAID] }]
+      timeDimensions: [{ dimension: xero_finance_analytics.issued_on, granularity: year }]
+  - connector: xero
+    key: profit_and_loss_by_month_12m
+    purpose: "Xero's authoritative monthly accrual P&L — income, gross profit, all expenses including wages, and Net Profit."
+    rows: 14
+    query:
+      measures: [xero_profit_and_loss_analytics.total_income, xero_profit_and_loss_analytics.gross_profit, xero_profit_and_loss_analytics.total_expenses, xero_profit_and_loss_analytics.wage_expenses, xero_profit_and_loss_analytics.net_profit]
+      timeDimensions: [{ dimension: xero_profit_and_loss_analytics.period_start, granularity: month, dateRange: last 12 months }]
+  - connector: xero
+    key: top_expense_accounts_12m
+    purpose: "Largest accounts in Xero's authoritative P&L, last 12 months — including purchases, wages, super, rent and other posted costs."
+    rows: 12
+    query:
+      measures: [xero_profit_and_loss_account_analytics.statement_amount]
+      dimensions: [xero_profit_and_loss_account_analytics.account_name, xero_profit_and_loss_account_analytics.profit_category]
+      filters: [{ member: xero_profit_and_loss_account_analytics.account_class, operator: equals, values: [EXPENSE] }]
+      timeDimensions: [{ dimension: xero_profit_and_loss_account_analytics.period_start, dateRange: last 12 months }]
+      order: { xero_profit_and_loss_account_analytics.statement_amount: desc }
+      limit: 12
+  - connector: xero
+    key: receivables_payables
+    purpose: "Money owed to and by the business right now (outstanding and overdue receivables and payables)."
+    rows: 1
+    query:
+      measures: [xero_finance_analytics.total_receivable_outstanding, xero_finance_analytics.total_receivable_overdue, xero_finance_analytics.total_payable_outstanding, xero_finance_analytics.total_payable_overdue]
+  - connector: xero
+    key: top_suppliers_12m
+    purpose: "Largest suppliers by bills, last 12 months."
+    rows: 10
+    query:
+      measures: [xero_finance_analytics.total_invoiced, xero_finance_analytics.invoice_count]
+      dimensions: [xero_finance_analytics.invoice_contact]
+      filters:
+        - { member: xero_finance_analytics.document_kind, operator: equals, values: ["Bill"] }
+        - { member: xero_finance_analytics.invoice_status, operator: equals, values: ["AUTHORISED", "PAID"] }
+      timeDimensions: [{ dimension: xero_finance_analytics.issued_on, dateRange: last 12 months }]
+      order: { xero_finance_analytics.total_invoiced: desc }
+      limit: 10
+  - connector: xero
+    key: bank_accounts_12m
+    purpose: "Bank accounts in use and money in/out through each, last 12 months."
+    rows: 8
+    query:
+      measures: [xero_finance_analytics.money_in, xero_finance_analytics.money_out, xero_finance_analytics.bank_transaction_count]
+      dimensions: [xero_finance_analytics.bank_account_name]
+      timeDimensions: [{ dimension: xero_finance_analytics.bank_occurred_on, dateRange: last 12 months }]
+      order: { xero_finance_analytics.money_out: desc }
+      limit: 8
+  - connector: stripe
+    key: charges_by_month_12m
+    purpose: "Succeeded Stripe charges and collected amount per month, last 12 months — card collection scale and trend."
+    rows: 14
+    query:
+      measures: [stripe_payments_analytics.collected_amount, stripe_payments_analytics.succeeded_charges]
+      timeDimensions: [{ dimension: stripe_payments_analytics.created, granularity: month, dateRange: last 12 months }]
+  - connector: stripe
+    key: invoice_position
+    purpose: "Stripe invoice counts and outstanding versus paid totals."
+    rows: 1
+    query:
+      measures: [stripe_billing_analytics.invoice_count, stripe_billing_analytics.paid_invoices, stripe_billing_analytics.amount_paid, stripe_billing_analytics.amount_remaining]
+  - connector: stripe
+    key: subscriptions
+    purpose: "Current Stripe subscriptions by status."
+    rows: 8
+    query:
+      measures: [stripe_subscriptions_analytics.subscription_count]
+      dimensions: [stripe_subscriptions_analytics.status]
+      order: { stripe_subscriptions_analytics.subscription_count: desc }
+      limit: 8
+  - connector: stripe
+    key: payouts_12m
+    purpose: "Stripe payouts to the bank, last 12 months."
+    rows: 14
+    query:
+      measures: [stripe_payouts_analytics.payout_amount, stripe_payouts_analytics.paid_payouts]
+      timeDimensions: [{ dimension: stripe_payouts_analytics.created, granularity: month, dateRange: last 12 months }]

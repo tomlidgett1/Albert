@@ -1,0 +1,239 @@
+views:
+  - name: product_sales_analytics
+    title: Product sales analytics
+    description: >
+      Item-level sales surface: revenue, units, discounts, cost and gross profit
+      per product, category, brand, season, store, staff member or customer.
+      One row of fact data per sale line on completed, non-voided sales unless
+      segments say otherwise. Also answers pure catalogue questions (items,
+      categories, brands) when no sales measures are requested.
+    meta:
+      ai_context: >
+        Use this view whenever the question mentions products, items, SKUs,
+        categories, brands, seasons or line-level margin. Default time dimension:
+        completed_at. Line costs are line totals (already multiplied by quantity).
+        "Sales by category" = line_revenue (or line_net_revenue ex tax) grouped by
+        categories_full_path_name; "by supplier" = vendors_name (the item's
+        default vendor). Profitability by product/category/customer =
+        line_gross_profit and line_gross_margin_pct (both post-discount:
+        line_net_revenue is the tax-inclusive line total less tax, so discounts
+        are already deducted; line_net_revenue_before_discounts is the
+        pre-discount value and line_discounts the difference - never subtract
+        discounts again). line_gross_margin_pct is BLENDED: goods run near 45%
+        while labour / service lines (items_item_type = non_inventory) show
+        about 98% because they carry no cost, so "product margin" / "retail
+        margin" = goods_gross_margin_pct.
+        Workshop labour revenue = is_workorder = true with items_item_type =
+        non_inventory (parts = default). Staff: employees_full_name is the
+        staff member on the line, sale_employees_full_name the seller of record
+        on the sale header; they differ on roughly a third of lines, so state
+        which one is used. "Busiest day / hour" for a product or category: group
+        units_sold or line_revenue by completed_weekday or completed_hour_of_day
+        in one query. Basket size = units_per_sale (units_sold / sales_count).
+        items_default_price / items_msrp / items_online_price are the CURRENT
+        list prices; normal_unit_price is the pre-discount line price actually
+        charged at the time, unit_price the charged line price, and
+        average_selling_price a period aggregate.
+
+    cubes:
+      - join_path: sale_lines
+        includes:
+          - tenant_id
+          - sale_line_id
+          - sale_id
+          - parent_sale_line_id
+          - line_type
+          - sale_completed
+          - sale_voided
+          - completed_at
+          - created_at
+          - unit_quantity
+          - unit_price
+          - normal_unit_price
+          - discount_amount
+          - discount_percent
+          - is_taxed
+          - tax1_rate
+          - tax2_rate
+          - is_layaway
+          - is_workorder
+          - is_special_order
+          - is_return_line
+          - completed_weekday
+          - completed_weekday_number
+          - completed_hour_of_day
+          - line_count
+          - units_sold
+          - units_returned
+          - line_revenue
+          - line_net_revenue
+          - line_net_revenue_before_discounts
+          - line_tax
+          - line_discounts
+          - line_cost_of_goods
+          - line_gross_profit
+          - line_gross_margin_pct
+          - goods_net_revenue
+          - goods_cost_of_goods
+          - goods_gross_margin_pct
+          - average_selling_price
+          - sales_count
+          - units_per_sale
+          - distinct_items_sold
+          - completed_lines
+          - return_lines
+          - workorder_lines
+          - special_order_lines
+          - layaway_lines
+      - join_path: sale_lines.items
+        prefix: true
+        includes:
+          - item_id
+          - name
+          - full_path_name
+          - description
+          - system_sku
+          - custom_sku
+          - manufacturer_sku
+          - upc
+          - ean
+          - item_type
+          - serialized
+          - archived
+          - discountable
+          - default_cost
+          - average_cost
+          - default_price
+          - msrp
+          - online_price
+          - model_year
+          - attribute1
+          - attribute2
+          - attribute3
+          - publish_to_ecom
+          - created_at
+          - item_count
+          - active_item_count
+      - join_path: sale_lines.items.categories
+        prefix: true
+        includes:
+          - category_id
+          - name
+          - full_path_name
+          - parent_id
+          - node_depth
+      - join_path: sale_lines.items.manufacturers
+        prefix: true
+        includes:
+          - name
+      - join_path: sale_lines.items.seasons
+        prefix: true
+        includes:
+          - name
+      - join_path: sale_lines.items.tax_classes
+        prefix: true
+        includes:
+          - name
+      - join_path: sale_lines.items.vendors
+        prefix: true
+        includes:
+          - name
+      - join_path: sale_lines.shops
+        prefix: true
+        includes:
+          - name
+      - join_path: sale_lines.employees
+        prefix: true
+        includes:
+          - full_name
+      # Seller of record on the sale header, distinct from the line employee.
+      - join_path: sale_lines.sales.employees
+        includes:
+          - name: full_name
+            alias: sale_employees_full_name
+      - join_path: sale_lines.customers
+        prefix: true
+        includes:
+          - full_name
+          - company
+          - is_repeat_customer
+      - join_path: sale_lines.customers.customer_types
+        prefix: true
+        includes:
+          - name
+      - join_path: sale_lines.discounts
+        prefix: true
+        includes:
+          - name
+
+    folders:
+      - name: Revenue and units
+        includes:
+          - line_count
+          - units_sold
+          - units_returned
+          - line_revenue
+          - line_net_revenue
+          - line_net_revenue_before_discounts
+          - average_selling_price
+          - sales_count
+          - units_per_sale
+          - distinct_items_sold
+      - name: Profitability
+        includes:
+          - line_cost_of_goods
+          - line_gross_profit
+          - line_gross_margin_pct
+          - goods_net_revenue
+          - goods_cost_of_goods
+          - goods_gross_margin_pct
+      - name: Discounts and tax
+        includes:
+          - line_discounts
+          - line_tax
+          - discounts_name
+          - is_taxed
+      - name: Product
+        includes:
+          - items_name
+          - items_full_path_name
+          - items_system_sku
+          - items_custom_sku
+          - items_item_type
+          - items_default_price
+          - items_msrp
+          - items_online_price
+          - items_default_cost
+          - items_average_cost
+          - items_archived
+          - vendors_name
+      - name: Category, brand and season
+        includes:
+          - categories_name
+          - categories_full_path_name
+          - categories_node_depth
+          - manufacturers_name
+          - seasons_name
+      - name: Stores, staff and customers
+        includes:
+          - shops_name
+          - employees_full_name
+          - sale_employees_full_name
+          - customers_full_name
+          - customers_company
+          - customer_types_name
+      - name: Line detail
+        includes:
+          - sale_id
+          - sale_line_id
+          - completed_at
+          - completed_weekday
+          - completed_weekday_number
+          - completed_hour_of_day
+          - unit_quantity
+          - unit_price
+          - normal_unit_price
+          - is_return_line
+          - is_workorder
+          - is_special_order
+          - is_layaway

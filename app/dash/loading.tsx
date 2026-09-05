@@ -1,3 +1,4 @@
+import Image from "next/image";
 import styles from "./dash.module.css";
 
 export default function DashLoading() {
@@ -6,13 +7,13 @@ export default function DashLoading() {
       <aside className={styles.sidebar} aria-hidden="true">
         <div className={styles.sidebarHeader}>
           <div className={styles.projectBrand}>
-            <img
+            <Image
               className={styles.projectLogo}
               src="/logos/albert.png"
               alt=""
               width={20}
               height={20}
-              decoding="async"
+              unoptimized
             />
             <span className={styles.projectName}>
               <span className={styles.projectNameAlbert}>Albert</span>
@@ -81,7 +82,7 @@ export default function DashLoading() {
               className={`${styles.chatComposerStack} ${styles.chatComposerStackEmpty}`}
               aria-hidden="true"
             >
-              <p className={styles.chatHeroTitle}>Ask me anything</p>
+              <p className={styles.chatHeroTitle}>Ask about your business</p>
               <div className={`${styles.chatComposer} ${styles.chatComposerBar} ${styles.routeShellComposer}`}>
                 <span className={styles.routeShellComposerPlus} />
                 <span className={styles.routeShellComposerField} />

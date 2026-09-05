@@ -1,5 +1,6 @@
 import { rm, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
+import { computeOmniBuildFingerprint } from "../packages/albert-omni/src/build-fingerprint.mjs";
 
 const outdir = ".albert-build/services";
 const requestedBuildSha = process.env.GITHUB_SHA ?? process.env.ALBERT_BUILD_SHA;
@@ -14,13 +15,12 @@ if (process.env.GITHUB_ACTIONS === "true" && buildSha === "development") {
 await rm(outdir, { recursive: true, force: true });
 await build({
   entryPoints: {
-    "semantic-query": "services/semantic-query/src/main.ts",
     "sync-worker": "services/sync-workers/src/main.ts",
-    "transform-worker": "services/transform-worker/src/main.ts",
-    "transform-capacity-harness": "scripts/transform-capacity-harness.ts",
     "deletion-worker": "services/deletion-worker/src/main.ts",
     "webhook-gateway": "services/webhook-gateway/src/main.ts",
     "operator-diagnostic": "services/operator-diagnostic/src/main.ts",
+    "codex-runtime": "services/codex-runtime/src/main.ts",
+    "imessage-bridge": "services/imessage-bridge/src/main.ts",
   },
   outdir,
   bundle: true,
@@ -30,6 +30,7 @@ await build({
   packages: "external",
   define: {
     __ALBERT_SERVICE_BUILD_SHA__: JSON.stringify(buildSha),
+    __ALBERT_OMNI_BUILD_HASH__: JSON.stringify(computeOmniBuildFingerprint()),
   },
   sourcemap: true,
   sourcesContent: false,

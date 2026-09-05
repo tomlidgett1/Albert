@@ -61,7 +61,7 @@ export class PostgresCapacityAttestationStore {
     tokenJti: string,
     requestDigest: string,
   ): Promise<CapacityReservation> {
-    const leaseToken = randomBytes(32).toString("hex");
+    const leaseToken = Buffer.from(randomBytes(32)).toString("hex");
     return this.transaction(async (client) => {
       await client.query(`
         insert into capacity_trust.transform_attestations(

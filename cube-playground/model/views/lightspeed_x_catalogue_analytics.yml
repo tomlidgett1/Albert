@@ -1,0 +1,179 @@
+views:
+  - name: lightspeed_x_catalogue_analytics
+    title: Lightspeed X-Series catalogue analytics
+    description: >
+      Current product/variant catalogue, category hierarchy, type, brand,
+      supplier, retail/supply pricing, tax behaviour, inventory tracking and
+      merchandising state. Sales and realised margin stay in product sales.
+    meta:
+      ai_context: >
+        Product rows can be family/root or sellable variants. Filter
+        is_variant/has_variants deliberately. Catalogue price and supply cost are
+        current snapshots, not historical sale price/cost. catalogue_margin uses
+        current tax-exclusive retail price less current supply price and must not
+        replace sale-line realised gross profit.
+    cubes:
+      - join_path: lightspeed_x_products
+        includes:
+          - tenant_id
+          - product_name
+          - variant_name
+          - sku
+          - handle
+          - supplier_code
+          - source
+          - source_id
+          - active
+          - is_variant
+          - has_variants
+          - tracks_inventory
+          - is_composite
+          - tax_category
+          - description
+          - retail_price_including_tax
+          - retail_price_excluding_tax
+          - supply_price
+          - catalogue_margin
+          - catalogue_margin_pct
+          - loyalty_amount
+          - weight
+          - weight_unit
+          - created_at
+          - updated_at
+          - deleted_at
+          - products_and_variants
+          - active_products_and_variants
+          - sellable_variants
+          - inventory_tracked_products
+          - average_retail_price_including_tax
+          - average_supply_price
+      - join_path: lightspeed_x_products.lightspeed_x_product_categories
+        prefix: true
+        includes: [category_name, is_leaf_category, category_path]
+      - join_path: lightspeed_x_products.lightspeed_x_product_types
+        prefix: true
+        includes: [product_type_name, is_leaf_type, category_path]
+      - join_path: lightspeed_x_products.lightspeed_x_brands
+        prefix: true
+        includes: [brand_name]
+      - join_path: lightspeed_x_products.lightspeed_x_suppliers
+        prefix: true
+        includes: [supplier_name, source]
+    folders:
+      - { name: Product identity, includes: [product_name, variant_name, sku, handle, lightspeed_x_product_categories_category_name, lightspeed_x_product_types_product_type_name, lightspeed_x_brands_brand_name, lightspeed_x_suppliers_supplier_name] }
+      - { name: Current pricing, includes: [retail_price_including_tax, retail_price_excluding_tax, supply_price, catalogue_margin, catalogue_margin_pct, average_retail_price_including_tax, average_supply_price] }
+      - { name: Merchandising, includes: [active, is_variant, has_variants, tracks_inventory, is_composite, source, created_at, updated_at, deleted_at, active_products_and_variants, sellable_variants] }
+
+  - name: lightspeed_x_pricing_analytics
+    title: Lightspeed X-Series price-book analytics
+    description: >
+      Price-book definitions and product-price rules. Definition and product-rule
+      prefixes are different grains; query one at a time unless grouping rules by
+      their joined price book.
+    meta:
+      ai_context: >
+        Price books can be constrained by validity dates, platform, outlets and
+        customer groups. is_currently_valid checks time/deletion only; eligibility
+        still depends on platform/outlet/customer group and quantity thresholds.
+        Product rule price is current configuration, not realised sale price.
+    cubes:
+      - join_path: lightspeed_x_price_books
+        includes:
+          - tenant_id
+          - price_book_name
+          - price_book_type
+          - platform_scope
+          - outlet_count
+          - customer_group_count
+          - valid_from
+          - valid_to
+          - created_at
+          - updated_at
+          - deleted_at
+          - is_currently_valid
+          - price_books
+          - currently_valid_price_books
+      - join_path: lightspeed_x_price_book_products
+        includes:
+          - adjustment_type
+          - rounding
+          - price
+          - default_display_price
+          - adjustment
+          - discount
+          - retail_tax
+          - loyalty_value
+          - min_units
+          - max_units
+          - name: created_at
+            alias: price_rule_created_at
+          - name: updated_at
+            alias: price_rule_updated_at
+          - price_book_product_rules
+          - average_price_book_price
+          - minimum_price_book_price
+          - maximum_price_book_price
+      - join_path: lightspeed_x_price_book_products.lightspeed_x_price_books
+        prefix: true
+        includes: [price_book_name, price_book_type, platform_scope, valid_from, valid_to, is_currently_valid]
+      - join_path: lightspeed_x_price_book_products.lightspeed_x_products
+        prefix: true
+        includes: [product_name, variant_name, sku, active]
+    folders:
+      - { name: Price books, includes: [price_book_name, price_book_type, platform_scope, outlet_count, customer_group_count, valid_from, valid_to, is_currently_valid, price_books, currently_valid_price_books] }
+      - { name: Product price rules, includes: [lightspeed_x_price_books_price_book_name, lightspeed_x_products_product_name, lightspeed_x_products_variant_name, lightspeed_x_products_sku, price, default_display_price, adjustment_type, adjustment, discount, retail_tax, loyalty_value, min_units, max_units, price_book_product_rules, average_price_book_price, minimum_price_book_price, maximum_price_book_price] }
+
+  - name: lightspeed_x_promotion_analytics
+    title: Lightspeed X-Series promotion analytics
+    description: >
+      Promotion definitions plus applied sale-line promotion activity. Definition
+      and application members have different grains; application measures safely
+      report discount and affected sales/lines without duplicating revenue.
+    meta:
+      ai_context: >
+        Promotion action value is contextual: percent actions represent a rate,
+        fixed actions a currency amount. Do not sum action_value across
+        definitions. currently_scheduled means within dates only, not necessarily
+        eligible for a customer/outlet/channel. Application discount amounts are
+        source-recorded; one line can have multiple promotions, so no revenue
+        attribution measure is exposed.
+    cubes:
+      - join_path: lightspeed_x_promotions
+        includes:
+          - tenant_id
+          - promotion_name
+          - description
+          - promotion_status
+          - action_type
+          - action_value
+          - condition_type
+          - condition_quantity
+          - minimum_price
+          - requires_promo_code
+          - loyalty_multiplier
+          - outlet_count
+          - channel_count
+          - customer_group_count
+          - starts_at
+          - ends_at
+          - is_currently_scheduled
+          - promotion_definitions
+          - currently_scheduled_promotions
+      - join_path: lightspeed_x_sale_line_promotions
+        includes:
+          - name: promotion_name
+            alias: applied_promotion_name
+          - promo_code
+          - sold_at
+          - sale_state
+          - promotion_amount
+          - promotion_applications
+          - promotion_discount_value
+          - promotion_affected_sales
+          - promotion_affected_lines
+      - join_path: lightspeed_x_sale_line_promotions.lightspeed_x_products
+        prefix: true
+        includes: [product_name, variant_name, sku]
+    folders:
+      - { name: Definitions, includes: [promotion_name, promotion_status, action_type, action_value, condition_type, condition_quantity, minimum_price, requires_promo_code, loyalty_multiplier, starts_at, ends_at, is_currently_scheduled, promotion_definitions, currently_scheduled_promotions] }
+      - { name: Applied promotions, includes: [applied_promotion_name, promo_code, sold_at, promotion_discount_value, promotion_applications, promotion_affected_sales, promotion_affected_lines, lightspeed_x_products_product_name, lightspeed_x_products_sku] }

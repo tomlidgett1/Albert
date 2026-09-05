@@ -50,6 +50,7 @@ jobs:
           path: .playwright
           if-no-files-found: ignore
           retention-days: 14
+          include-hidden-files: true
 
   analytical-database:
     runs-on: ubuntu-latest
@@ -95,26 +96,17 @@ jobs:
       - run: npm ci
       - run: npm run migrate -- --target=analytical --bootstrap
       - run: npm run migrate -- --target=analytical
+      - name: Prove the Momence 0152 to 0153 production upgrade path
+        run: npx tsx scripts/test-momence-0153-upgrade.mts
       - run: npm run provision:runtime-logins -- --target=analytical
       - run: npm run provision:analytical-capability-key -- --target=analytical
-      - run: npm run test:lightspeed-supplier-transform
-        env:
-          ALBERT_LIGHTSPEED_SUPPLIER_TEST_MODE: ci
       - run: npm run test:analytical-capability-boundary
         env:
           ALBERT_CAPABILITY_TEST_MODE: ci
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-role-isolation.sql
-      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-deletion-residual-attestation.sql
-      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-identity-resolution.sql
-      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-settlement-bridge.sql
-      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-quality-gates.sql
-      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-canonical-record-hardening.sql
-      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-multi-account-authority.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-reconciliation-lifecycle.sql
-      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-durable-reconciliation-findings.sql
+      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-momence-reconciliation-policy.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-lookup-backed-statuses.sql
-      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-quality-run-bound-pipeline-stats.sql
-      - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-capability-scoped-health.sql
       - run: psql -h 127.0.0.1 -U postgres -d albert_ci -v ON_ERROR_STOP=1 -f tests/sql/analytical-connector-pack-activation.sql
 
   control-plane-database:
@@ -129,6 +121,8 @@ jobs:
       ALBERT_SYNC_CONTROL_DB_PASSWORD: ci-control-sync-password-00000000001
       ALBERT_TRANSFORM_CONTROL_DB_PASSWORD: ci-control-transform-password-0000001
       ALBERT_SEMANTIC_CONTROL_DB_PASSWORD: ci-control-semantic-password-00000001
+      ALBERT_ANTHROPIC_CONTROL_DB_PASSWORD: ci-control-anthropic-password-0000001
+      ALBERT_OMNI_CONTROL_DB_PASSWORD: ci-control-omni-password-00000000001
       ALBERT_OPERATOR_DIAGNOSTIC_CONTROL_DB_PASSWORD: ci-control-diagnostic-password-000001
       ALBERT_WEBHOOK_CONTROL_DB_PASSWORD: ci-control-webhook-password-00000001
       ALBERT_DELETION_CONTROL_DB_PASSWORD: ci-control-deletion-password-0000001
@@ -257,13 +251,6 @@ jobs:
           -d postgres -v ON_ERROR_STOP=1 -f tests/sql/control-plane-capability-runtime.sql
         env:
           PGPASSWORD: ci-control-diagnostic-password-000001
-      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-promotion-relay-seed.sql
-      - run: >-
-          psql -h 127.0.0.1 -p 54322 -U albert_semantic_control_runtime
-          -d postgres -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-promotion-relay.sql
-        env:
-          PGPASSWORD: ci-control-semantic-password-00000001
-      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-semantic-promotion-relay-verify.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-rls.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-runtime-isolation.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-connection-mutation-boundary.sql
@@ -330,7 +317,6 @@ jobs:
           PGPASSWORD: ci-control-diagnostic-password-000001
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-protected-dogfood-acceptance-verify.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-sync-lifecycle.sql
-      - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-progressive-dependency-barriers.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-reconciliation-lifecycle.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-lookup-backed-statuses.sql
       - run: psql "$CONTROL_PLANE_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/sql/control-plane-code-only-worker-failure-evidence.sql

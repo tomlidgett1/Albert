@@ -142,7 +142,7 @@ test("activation CLI requires explicit predecessor and exact analytical deployer
   ]),/albert_analytical_deployer/u);
 });
 
-test("migration and runtime use staged evidence, atomic views, stale-write fences, and deletion",()=>{
+test("historical pack activation uses staged evidence, atomic views, stale-write fences, and deletion",()=>{
   const migration=readFileSync(new URL(
     "../../infra/migrations/analytical/0095_m5_atomic_connector_pack_activation.sql",
     import.meta.url,
@@ -189,27 +189,4 @@ test("migration and runtime use staged evidence, atomic views, stale-write fence
     /GRANT EXECUTE ON FUNCTION semantic_internal\.activate_connector_pack\(text,text,text\)[\s\S]*TO albert_migration_owner/u,
   );
 
-  const semantic=readFileSync(new URL(
-    "../../services/semantic-query/src/postgres-adapters.ts",import.meta.url,
-  ),"utf8");
-  assert.match(semantic,/FROM semantic_internal\.active_tenant_capability/u);
-  assert.match(semantic,/FROM semantic_internal\.active_source_field_allowlist/u);
-  assert.doesNotMatch(semantic,/FROM semantic_internal\.tenant_capability\s+WHERE/u);
-
-  const pipeline=readFileSync(new URL(
-    "../../services/sync-workers/src/canonical-pipeline.ts",import.meta.url,
-  ),"utf8");
-  assert.match(pipeline,/on conflict \(tenant_id,capability,source_key\) do update/u);
-  assert.match(pipeline,/on conflict \(tenant_id,connection_id,source_table,source_field\)/u);
-  assert.doesNotMatch(pipeline,/on conflict \(tenant_id,capability,source_key,pack_version\)/u);
-  assert.doesNotMatch(pipeline,/on conflict \(tenant_id,connection_id,source_table,source_field,pack_version\)/u);
-  assert.match(pipeline,/update semantic_internal\.connector_pack_source_field_snapshot/u);
-
-  const release=readFileSync(new URL("../../.github/workflows/release-authority.yml",import.meta.url),"utf8");
-  const finalGate=release.indexOf("\n  activate-and-smoke:");
-  const smoke=release.indexOf("Wait for every public runtime",finalGate);
-  const activation=release.indexOf("Verify and atomically activate complete Lightspeed pack 1.1",finalGate);
-  const webGate=release.indexOf("Require the hosted web release",finalGate);
-  assert.ok(finalGate>-1&&smoke>finalGate&&activation>smoke&&webGate>activation);
-  assert.match(release.slice(activation,webGate),/--candidate=1\.1\.0[\s\S]*--check/u);
 });

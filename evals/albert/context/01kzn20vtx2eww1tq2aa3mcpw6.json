@@ -1,0 +1,1199 @@
+{
+  "tenantId": "01KZN20VTX2EWW1TQ2AA3MCPW6",
+  "connectors": [
+    "deputy",
+    "lightspeed-r",
+    "xero"
+  ],
+  "generatedAt": "2026-08-18T08:13:53.330Z",
+  "generatorVersion": "2026-08-18.1",
+  "model": "gpt-5.6-luna",
+  "ownerLocked": [],
+  "document": {
+    "version": 1,
+    "identity": {
+      "name": "Ashburton Cycles",
+      "summary": "Ashburton Cycles is an Australian cycling shop in Ashburton, operating from one retail location. It sells bikes and cycling products on the retail floor and provides workshop and service jobs.",
+      "industry": "Cycling retail and workshop services",
+      "model": "hybrid",
+      "channels": [
+        "Retail shop",
+        "Workshop/service"
+      ],
+      "locations": [
+        {
+          "name": "Ashburton Cycles",
+          "role": "Only recorded location; retail shop and workshop"
+        }
+      ]
+    },
+    "revenue": {
+      "basis": "Lightspeed product_sales_analytics, 12 months to July 2026; category line revenue shares",
+      "streams": [
+        {
+          "name": "Workshop/service",
+          "share": 0.2051,
+          "note": "Services category; includes service and repair lines"
+        },
+        {
+          "name": "Bikes",
+          "share": 0.2414,
+          "note": "Includes City, Kids, Gravel, Mountain and Hybrid categories"
+        },
+        {
+          "name": "Parts & accessories",
+          "share": 0.5535,
+          "note": "Includes wheels, tyres, drivetrain, helmets and accessories"
+        }
+      ],
+      "annualBand": "roughly $620k–$650k a year, GST-inclusive takings",
+      "seasonality": "Takings peak October–May, strongest in December; September and June are lower."
+    },
+    "scale": {
+      "headcount": "20 staff on the books, 7 active; Deputy workforce_analytics",
+      "customers": "9,613 customers on file, 8,714 with purchases; Lightspeed customer_analytics",
+      "catalogue": "1,376 items in stock, 4,139 units worth $160,899.91; Lightspeed inventory_analytics",
+      "other": [
+        "4,780 transactions and $632,865.60 gross takings in 12 months; Lightspeed sales_analytics.",
+        "Workshop check-ins ranged from 119 to 196 monthly; Lightspeed workshop_analytics."
+      ]
+    },
+    "goals": {
+      "ownerStated": [],
+      "suggestedFocus": [
+        "Payables outstanding $22,487.32 versus receivables outstanding $2,000; overdue balances are $23,033.62 and $1,750.",
+        "Workshop check-ins fell from 196 in February 2026 to 127 in July 2026; recorded labour hours remain zero.",
+        "Purchases were $221,631.76, the largest Xero expense account in the latest 12 months.",
+        "Xero reports $558,604.67 revenue and $363,780.98 expenses; Lightspeed reports $632,865.60 GST-inclusive takings."
+      ],
+      "comparisonPreference": null
+    },
+    "vocabulary": [
+      {
+        "term": "workshop",
+        "meaning": "Service and repair activity recorded as Lightspeed workorders",
+        "mapsTo": "workshop_analytics"
+      },
+      {
+        "term": "the floor",
+        "meaning": "Retail shop operation and sales activity",
+        "mapsTo": "sales_analytics"
+      },
+      {
+        "term": "takings",
+        "meaning": "Completed-sale gross revenue including GST",
+        "mapsTo": "gross_takings"
+      },
+      {
+        "term": "wages",
+        "meaning": "Worked-time wage cost from Deputy timesheets",
+        "mapsTo": "workforce_analytics"
+      },
+      {
+        "term": "P&L",
+        "meaning": "Accounting revenue and expense lines in Xero",
+        "mapsTo": "xero_finance_analytics"
+      },
+      {
+        "term": "payables",
+        "meaning": "Amounts currently owed to suppliers and other creditors",
+        "mapsTo": "total_payable_outstanding"
+      },
+      {
+        "term": "receivables",
+        "meaning": "Amounts currently owed by customers or other debtors",
+        "mapsTo": "total_receivable_outstanding"
+      },
+      {
+        "term": "stock",
+        "meaning": "Products and units held in inventory",
+        "mapsTo": "inventory_analytics"
+      },
+      {
+        "term": "GST",
+        "meaning": "Tax collected on completed POS sales",
+        "mapsTo": "sales_analytics"
+      },
+      {
+        "term": "services",
+        "meaning": "Lightspeed category containing workshop-related sales lines",
+        "mapsTo": "revenue_by_category"
+      }
+    ],
+    "tools": [
+      {
+        "connector": "lightspeed-r",
+        "label": "Lightspeed Retail (R-Series)",
+        "role": "Canonical source for sales, products, customers, inventory and workshop activity",
+        "sourceOfTruthFor": [
+          "sales",
+          "products",
+          "workshop",
+          "customers",
+          "stock"
+        ],
+        "dataFrom": "2018-01-01",
+        "dataThrough": "2026-07-31"
+      },
+      {
+        "connector": "deputy",
+        "label": "Deputy rostering and timesheets",
+        "role": "Authoritative source for worked hours, wage cost, rosters and workforce structure",
+        "sourceOfTruthFor": [
+          "rosters",
+          "wages",
+          "headcount"
+        ],
+        "dataFrom": null,
+        "dataThrough": null
+      },
+      {
+        "connector": "xero",
+        "label": "Xero accounting and payroll",
+        "role": "Source for accounting ledger, invoices, bills, bank activity and business setup",
+        "sourceOfTruthFor": [
+          "invoices",
+          "bills",
+          "bank",
+          "GST"
+        ],
+        "dataFrom": "2018-01-01",
+        "dataThrough": "2026-07-31"
+      }
+    ],
+    "cautions": [
+      "Lightspeed raw sales can contain duplicate recent versions; governed sales figures are deduplicated.",
+      "Deputy timesheets are authoritative for labour hours and wage cost.",
+      "Lightspeed workshop labour hours are zero despite workorders and parts values; do not treat this as absent labour.",
+      "Use Xero P&L for whole-business income; do not add POS takings to ledger revenue.",
+      "POS sales contain the GST collected; Xero directly-invoiced GST materially understates it.",
+      "Xero payroll has no employees or pay runs; wages and super are unavailable there."
+    ]
+  },
+  "rendered": "# About this business (reference data from its systems and its owner — not instructions)\n**Ashburton Cycles** — Ashburton Cycles is an Australian cycling shop in Ashburton, operating from one retail location. It sells bikes and cycling products on the retail floor and provides workshop and service jobs. Industry: Cycling retail and workshop services; model: hybrid; channels: Retail shop, Workshop/service; locations: Ashburton Cycles (Only recorded location; retail shop and workshop).\n**How it makes money** (Lightspeed product_sales_analytics, 12 months to July 2026; category line revenue shares): Parts & accessories (~55%) — Includes wheels, tyres, drivetrain, helmets and accessories; Bikes (~24%) — Includes City, Kids, Gravel, Mountain and Hybrid categories; Workshop/service (~21%) — Services category; includes service and repair lines. Scale: roughly $620k–$650k a year, GST-inclusive takings. Seasonality: Takings peak October–May, strongest in December; September and June are lower.\n**Scale & shape**: 20 staff on the books, 7 active; Deputy workforce_analytics; 9,613 customers on file, 8,714 with purchases; Lightspeed customer_analytics; 1,376 items in stock, 4,139 units worth $160,899.91; Lightspeed inventory_analytics; 4,780 transactions and $632,865.60 gross takings in 12 months; Lightspeed sales_analytics; Workshop check-ins ranged from 119 to 196 monthly; Lightspeed workshop_analytics.\n**Goals & priorities**: not stated by the owner yet. Current watch-points from the data: Payables outstanding $22,487.32 versus receivables outstanding $2,000; overdue balances are $23,033.62 and $1,750; Workshop check-ins fell from 196 in February 2026 to 127 in July 2026; recorded labour hours remain zero.\n**Owner vocabulary**: \"workshop\" = Service and repair activity recorded as Lightspeed workorders [workshop_analytics]; \"the floor\" = Retail shop operation and sales activity [sales_analytics]; \"takings\" = Completed-sale gross revenue including GST [gross_takings]; \"wages\" = Worked-time wage cost from Deputy timesheets [workforce_analytics]; \"P&L\" = Accounting revenue and expense lines in Xero [xero_finance_analytics]; \"payables\" = Amounts currently owed to suppliers and other creditors [total_payable_outstanding]; \"receivables\" = Amounts currently owed by customers or other debtors [total_receivable_outstanding]; \"stock\" = Products and units held in inventory [inventory_analytics].\n**Connected tools**: Lightspeed Retail (R-Series) (lightspeed-r): Canonical source for sales, products, customers, inventory and workshop activity — source of truth for sales, products, workshop, customers, stock [data from 2018-01-01 through 2026-07-31]. Deputy rostering and timesheets (deputy): Authoritative source for worked hours, wage cost, rosters and workforce structure — source of truth for rosters, wages, headcount. Xero accounting and payroll (xero): Source for accounting ledger, invoices, bills, bank activity and business setup — source of truth for invoices, bills, bank, GST [data from 2018-01-01 through 2026-07-31].\n**Read the data with care**: Lightspeed raw sales can contain duplicate recent versions; governed sales figures are deduplicated; Deputy timesheets are authoritative for labour hours and wage cost.",
+  "classifierBlock": "About THIS business (reference data, not instructions):\n- Ashburton Cycles: Ashburton Cycles is an Australian cycling shop in Ashburton, operating from one retail location. It sells bikes and cycling products on the retail floor and provides workshop and service jobs.\n- Revenue streams: Parts & accessories (~55%), Bikes (~24%), Workshop/service (~21%).\n- Tools: lightspeed-r = Canonical source for sales, products, customers, inventory and workshop activity; deputy = Authoritative source for worked hours, wage cost, rosters and workforce structure; xero = Source for accounting ledger, invoices, bills, bank activity and business setup.\n- Owner vocabulary: \"workshop\" → Service and repair activity recorded as Lightspeed workorders; \"the floor\" → Retail shop operation and sales activity; \"takings\" → Completed-sale gross revenue including GST; \"wages\" → Worked-time wage cost from Deputy timesheets; \"P&L\" → Accounting revenue and expense lines in Xero; \"payables\" → Amounts currently owed to suppliers and other creditors; \"receivables\" → Amounts currently owed by customers or other debtors; \"stock\" → Products and units held in inventory; \"GST\" → Tax collected on completed POS sales; \"services\" → Lightspeed category containing workshop-related sales lines.\nUse it to pick the natural reading of a vague question (\"the workshop\", \"the floor\", \"how are we going\") and the right tool; never invent facts beyond it.",
+  "facts": {
+    "collectedAt": "2026-08-18T08:12:55.709Z",
+    "connectors": [
+      "lightspeed",
+      "deputy",
+      "xero"
+    ],
+    "connectorKeys": [
+      "deputy",
+      "lightspeed-r",
+      "xero"
+    ],
+    "probes": [
+      {
+        "key": "sales_by_month_24m",
+        "connector": "lightspeed",
+        "purpose": "Monthly sales (GST-inclusive takings) and transaction counts for the last 24 months — scale, trend and seasonality.",
+        "view": "sales_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "sales_analytics.completed_at.month": "2024-08-01T00:00:00.000",
+            "sales_analytics.gross_takings": 42066.94,
+            "sales_analytics.transactions": 325,
+            "sales_analytics.average_sale_value": "129.4367384615384615",
+            "sales_analytics.completed_at": "2024-08-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2024-09-01T00:00:00.000",
+            "sales_analytics.gross_takings": 29317.01,
+            "sales_analytics.transactions": 310,
+            "sales_analytics.average_sale_value": "94.5710000000000000",
+            "sales_analytics.completed_at": "2024-09-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2024-10-01T00:00:00.000",
+            "sales_analytics.gross_takings": 54447.08,
+            "sales_analytics.transactions": 427,
+            "sales_analytics.average_sale_value": "127.5107259953161593",
+            "sales_analytics.completed_at": "2024-10-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2024-11-01T00:00:00.000",
+            "sales_analytics.gross_takings": 59756.44,
+            "sales_analytics.transactions": 438,
+            "sales_analytics.average_sale_value": "136.4302283105022831",
+            "sales_analytics.completed_at": "2024-11-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2024-12-01T00:00:00.000",
+            "sales_analytics.gross_takings": 73288.94,
+            "sales_analytics.transactions": 459,
+            "sales_analytics.average_sale_value": "159.6708932461873638",
+            "sales_analytics.completed_at": "2024-12-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-01-01T00:00:00.000",
+            "sales_analytics.gross_takings": 65098.67,
+            "sales_analytics.transactions": 469,
+            "sales_analytics.average_sale_value": "138.8031343283582090",
+            "sales_analytics.completed_at": "2025-01-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-02-01T00:00:00.000",
+            "sales_analytics.gross_takings": 45906.76,
+            "sales_analytics.transactions": 375,
+            "sales_analytics.average_sale_value": "122.4180266666666667",
+            "sales_analytics.completed_at": "2025-02-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-03-01T00:00:00.000",
+            "sales_analytics.gross_takings": 42686.15,
+            "sales_analytics.transactions": 462,
+            "sales_analytics.average_sale_value": "92.3942640692640693",
+            "sales_analytics.completed_at": "2025-03-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-04-01T00:00:00.000",
+            "sales_analytics.gross_takings": 56775.04,
+            "sales_analytics.transactions": 474,
+            "sales_analytics.average_sale_value": "119.7785654008438819",
+            "sales_analytics.completed_at": "2025-04-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-05-01T00:00:00.000",
+            "sales_analytics.gross_takings": 55662.49,
+            "sales_analytics.transactions": 371,
+            "sales_analytics.average_sale_value": "150.0336657681940701",
+            "sales_analytics.completed_at": "2025-05-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-06-01T00:00:00.000",
+            "sales_analytics.gross_takings": 31570.85,
+            "sales_analytics.transactions": 266,
+            "sales_analytics.average_sale_value": "118.6874060150375940",
+            "sales_analytics.completed_at": "2025-06-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-07-01T00:00:00.000",
+            "sales_analytics.gross_takings": 46617.92,
+            "sales_analytics.transactions": 273,
+            "sales_analytics.average_sale_value": "170.7616117216117216",
+            "sales_analytics.completed_at": "2025-07-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-08-01T00:00:00.000",
+            "sales_analytics.gross_takings": 47320.07,
+            "sales_analytics.transactions": 358,
+            "sales_analytics.average_sale_value": "132.1789664804469274",
+            "sales_analytics.completed_at": "2025-08-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-09-01T00:00:00.000",
+            "sales_analytics.gross_takings": 52523.59,
+            "sales_analytics.transactions": 328,
+            "sales_analytics.average_sale_value": "160.1328963414634146",
+            "sales_analytics.completed_at": "2025-09-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-10-01T00:00:00.000",
+            "sales_analytics.gross_takings": 62826.55,
+            "sales_analytics.transactions": 445,
+            "sales_analytics.average_sale_value": "141.1832584269662921",
+            "sales_analytics.completed_at": "2025-10-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-11-01T00:00:00.000",
+            "sales_analytics.gross_takings": 52613.4,
+            "sales_analytics.transactions": 391,
+            "sales_analytics.average_sale_value": "134.5611253196930946",
+            "sales_analytics.completed_at": "2025-11-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2025-12-01T00:00:00.000",
+            "sales_analytics.gross_takings": 61529.75,
+            "sales_analytics.transactions": 451,
+            "sales_analytics.average_sale_value": "136.4296008869179601",
+            "sales_analytics.completed_at": "2025-12-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2026-01-01T00:00:00.000",
+            "sales_analytics.gross_takings": 49239.12,
+            "sales_analytics.transactions": 434,
+            "sales_analytics.average_sale_value": "113.4541935483870968",
+            "sales_analytics.completed_at": "2026-01-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2026-02-01T00:00:00.000",
+            "sales_analytics.gross_takings": 63188.07,
+            "sales_analytics.transactions": 499,
+            "sales_analytics.average_sale_value": "126.6293987975951904",
+            "sales_analytics.completed_at": "2026-02-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2026-03-01T00:00:00.000",
+            "sales_analytics.gross_takings": 51716.68,
+            "sales_analytics.transactions": 468,
+            "sales_analytics.average_sale_value": "110.5057264957264957",
+            "sales_analytics.completed_at": "2026-03-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2026-04-01T00:00:00.000",
+            "sales_analytics.gross_takings": 51616.29,
+            "sales_analytics.transactions": 407,
+            "sales_analytics.average_sale_value": "126.8213513513513514",
+            "sales_analytics.completed_at": "2026-04-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2026-05-01T00:00:00.000",
+            "sales_analytics.gross_takings": 55223.52,
+            "sales_analytics.transactions": 362,
+            "sales_analytics.average_sale_value": "152.5511602209944751",
+            "sales_analytics.completed_at": "2026-05-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2026-06-01T00:00:00.000",
+            "sales_analytics.gross_takings": 40548.47,
+            "sales_analytics.transactions": 310,
+            "sales_analytics.average_sale_value": "130.8015161290322581",
+            "sales_analytics.completed_at": "2026-06-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.month": "2026-07-01T00:00:00.000",
+            "sales_analytics.gross_takings": 44520.09,
+            "sales_analytics.transactions": 327,
+            "sales_analytics.average_sale_value": "136.1470642201834862",
+            "sales_analytics.completed_at": "2026-07-01T00:00:00.000"
+          }
+        ],
+        "rowCount": 24,
+        "executionMs": 5155
+      },
+      {
+        "key": "sales_by_location_12m",
+        "connector": "lightspeed",
+        "purpose": "Sales by shop/location, last 12 months — the business's locations and their relative size.",
+        "view": "sales_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "sales_analytics.shops_name": "Ashburton Cycles",
+            "sales_analytics.gross_takings": 632865.6,
+            "sales_analytics.transactions": 4780
+          }
+        ],
+        "rowCount": 1,
+        "executionMs": 5240
+      },
+      {
+        "key": "revenue_by_category_12m",
+        "connector": "lightspeed",
+        "purpose": "Product-line revenue by top-level category, last 12 months — the revenue streams and their relative importance (service/labour lines appear as categories too).",
+        "view": "product_sales_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "product_sales_analytics.categories_name": "Services",
+            "product_sales_analytics.line_revenue": 129779.83,
+            "product_sales_analytics.units_sold": 2694,
+            "product_sales_analytics.line_gross_margin_pct": "97.3052556693420706"
+          },
+          {
+            "product_sales_analytics.categories_name": "City",
+            "product_sales_analytics.line_revenue": 79168.29,
+            "product_sales_analytics.units_sold": 59,
+            "product_sales_analytics.line_gross_margin_pct": "25.5686220685131440"
+          },
+          {
+            "product_sales_analytics.categories_name": "Wheels & Tyres",
+            "product_sales_analytics.line_revenue": 72645.52,
+            "product_sales_analytics.units_sold": 2433,
+            "product_sales_analytics.line_gross_margin_pct": "61.5353378959902852"
+          },
+          {
+            "product_sales_analytics.categories_name": null,
+            "product_sales_analytics.line_revenue": 61371.54,
+            "product_sales_analytics.units_sold": 2820,
+            "product_sales_analytics.line_gross_margin_pct": "80.9956120656322421"
+          },
+          {
+            "product_sales_analytics.categories_name": "Drivetrain",
+            "product_sales_analytics.line_revenue": 54549.05,
+            "product_sales_analytics.units_sold": 1146,
+            "product_sales_analytics.line_gross_margin_pct": "54.2464232642571139"
+          },
+          {
+            "product_sales_analytics.categories_name": "Kids",
+            "product_sales_analytics.line_revenue": 48831.86,
+            "product_sales_analytics.units_sold": 82,
+            "product_sales_analytics.line_gross_margin_pct": "44.9993961764961646"
+          },
+          {
+            "product_sales_analytics.categories_name": "Helmets",
+            "product_sales_analytics.line_revenue": 24882.35,
+            "product_sales_analytics.units_sold": 266,
+            "product_sales_analytics.line_gross_margin_pct": "51.3512336377231738"
+          },
+          {
+            "product_sales_analytics.categories_name": "Brakes",
+            "product_sales_analytics.line_revenue": 21585.03,
+            "product_sales_analytics.units_sold": 734,
+            "product_sales_analytics.line_gross_margin_pct": "71.2998345518221128"
+          },
+          {
+            "product_sales_analytics.categories_name": "Other",
+            "product_sales_analytics.line_revenue": 13934.58,
+            "product_sales_analytics.units_sold": 96,
+            "product_sales_analytics.line_gross_margin_pct": "31.3974051381493915"
+          },
+          {
+            "product_sales_analytics.categories_name": "Lights",
+            "product_sales_analytics.line_revenue": 13904.21,
+            "product_sales_analytics.units_sold": 190,
+            "product_sales_analytics.line_gross_margin_pct": "53.3232565204957298"
+          },
+          {
+            "product_sales_analytics.categories_name": "Cockpit",
+            "product_sales_analytics.line_revenue": 11125.9,
+            "product_sales_analytics.units_sold": 260,
+            "product_sales_analytics.line_gross_margin_pct": "50.0189530806383031"
+          },
+          {
+            "product_sales_analytics.categories_name": "Gravel",
+            "product_sales_analytics.line_revenue": 11100,
+            "product_sales_analytics.units_sold": 4,
+            "product_sales_analytics.line_gross_margin_pct": "12.8422638218592990"
+          },
+          {
+            "product_sales_analytics.categories_name": "Pedals",
+            "product_sales_analytics.line_revenue": 8339.49,
+            "product_sales_analytics.units_sold": 142,
+            "product_sales_analytics.line_gross_margin_pct": "43.6281893260011107"
+          },
+          {
+            "product_sales_analytics.categories_name": "Mountain",
+            "product_sales_analytics.line_revenue": 7499.96,
+            "product_sales_analytics.units_sold": 5,
+            "product_sales_analytics.line_gross_margin_pct": "-11.1505483900301255"
+          },
+          {
+            "product_sales_analytics.categories_name": "Pumps",
+            "product_sales_analytics.line_revenue": 6895.2,
+            "product_sales_analytics.units_sold": 151,
+            "product_sales_analytics.line_gross_margin_pct": "64.4172708190474196"
+          },
+          {
+            "product_sales_analytics.categories_name": "Hybrid",
+            "product_sales_analytics.line_revenue": 6162.97,
+            "product_sales_analytics.units_sold": 10,
+            "product_sales_analytics.line_gross_margin_pct": "47.6525257120574520"
+          },
+          {
+            "product_sales_analytics.categories_name": "Lubes",
+            "product_sales_analytics.line_revenue": 4542.26,
+            "product_sales_analytics.units_sold": 195,
+            "product_sales_analytics.line_gross_margin_pct": "56.7365698491010249"
+          },
+          {
+            "product_sales_analytics.categories_name": "Saddles & Seatposts",
+            "product_sales_analytics.line_revenue": 4491.46,
+            "product_sales_analytics.units_sold": 71,
+            "product_sales_analytics.line_gross_margin_pct": "56.6007254675656285"
+          },
+          {
+            "product_sales_analytics.categories_name": "Bottles & Cages",
+            "product_sales_analytics.line_revenue": 4145.95,
+            "product_sales_analytics.units_sold": 195,
+            "product_sales_analytics.line_gross_margin_pct": "64.7014668545995385"
+          },
+          {
+            "product_sales_analytics.categories_name": "Bags & Baskets",
+            "product_sales_analytics.line_revenue": 3950.15,
+            "product_sales_analytics.units_sold": 103,
+            "product_sales_analytics.line_gross_margin_pct": "50.4162299777235600"
+          }
+        ],
+        "rowCount": 20,
+        "executionMs": 1814
+      },
+      {
+        "key": "top_brands_12m",
+        "connector": "lightspeed",
+        "purpose": "Top manufacturers/brands by revenue, last 12 months — what the business sells.",
+        "view": "product_sales_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "product_sales_analytics.manufacturers_name": "Generic",
+            "product_sales_analytics.line_revenue": 263755.05
+          },
+          {
+            "product_sales_analytics.manufacturers_name": "Apollo",
+            "product_sales_analytics.line_revenue": 41017.81
+          },
+          {
+            "product_sales_analytics.manufacturers_name": "NEO",
+            "product_sales_analytics.line_revenue": 31407.49
+          },
+          {
+            "product_sales_analytics.manufacturers_name": "Shimano",
+            "product_sales_analytics.line_revenue": 27409.33
+          },
+          {
+            "product_sales_analytics.manufacturers_name": "Focus",
+            "product_sales_analytics.line_revenue": 20618.96
+          },
+          {
+            "product_sales_analytics.manufacturers_name": "VITTORIA",
+            "product_sales_analytics.line_revenue": 17238.48
+          },
+          {
+            "product_sales_analytics.manufacturers_name": "felt",
+            "product_sales_analytics.line_revenue": 14400
+          },
+          {
+            "product_sales_analytics.manufacturers_name": "Knog",
+            "product_sales_analytics.line_revenue": 10989.08
+          },
+          {
+            "product_sales_analytics.manufacturers_name": "Pirelli",
+            "product_sales_analytics.line_revenue": 10470.52
+          },
+          {
+            "product_sales_analytics.manufacturers_name": "Lazer",
+            "product_sales_analytics.line_revenue": 9842.02
+          },
+          {
+            "product_sales_analytics.manufacturers_name": "LAS",
+            "product_sales_analytics.line_revenue": 9184
+          },
+          {
+            "product_sales_analytics.manufacturers_name": "Schwalbe",
+            "product_sales_analytics.line_revenue": 7922.16
+          }
+        ],
+        "rowCount": 12,
+        "executionMs": 1658
+      },
+      {
+        "key": "sales_by_year_all_time",
+        "connector": "lightspeed",
+        "purpose": "Completed sales per calendar year over the whole history — the first year is when the POS data starts (dataFrom); the last is the latest.",
+        "view": "sales_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "sales_analytics.completed_at.year": "2018-01-01T00:00:00.000",
+            "sales_analytics.transactions": 3045,
+            "sales_analytics.completed_at": "2018-01-01T00:00:00.000"
+          },
+          {
+            "sales_analytics.completed_at.year": "2019-01-01T00:00:00.000",
+            "sales_analytics.transactions": 5830,
+            "sales_analytics.completed_at": "2019-01-01T00:00:00.000"
+          }
+        ],
+        "rowCount": 10,
+        "executionMs": 943
+      },
+      {
+        "key": "workshop_by_month_12m",
+        "connector": "lightspeed",
+        "purpose": "Workshop/service jobs checked in per month, labour hours and parts value, last 12 months — whether a service department exists and how busy it is.",
+        "view": "workshop_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "workshop_analytics.checked_in_at.month": "2025-08-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 126,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 18754.63,
+            "workshop_analytics.checked_in_at": "2025-08-01T00:00:00.000"
+          },
+          {
+            "workshop_analytics.checked_in_at.month": "2025-09-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 159,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 27958.46,
+            "workshop_analytics.checked_in_at": "2025-09-01T00:00:00.000"
+          },
+          {
+            "workshop_analytics.checked_in_at.month": "2025-10-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 170,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 17159.63,
+            "workshop_analytics.checked_in_at": "2025-10-01T00:00:00.000"
+          },
+          {
+            "workshop_analytics.checked_in_at.month": "2025-11-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 163,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 18743.47,
+            "workshop_analytics.checked_in_at": "2025-11-01T00:00:00.000"
+          },
+          {
+            "workshop_analytics.checked_in_at.month": "2025-12-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 146,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 14577.39,
+            "workshop_analytics.checked_in_at": "2025-12-01T00:00:00.000"
+          },
+          {
+            "workshop_analytics.checked_in_at.month": "2026-01-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 186,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 19934.03,
+            "workshop_analytics.checked_in_at": "2026-01-01T00:00:00.000"
+          },
+          {
+            "workshop_analytics.checked_in_at.month": "2026-02-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 196,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 14452.57,
+            "workshop_analytics.checked_in_at": "2026-02-01T00:00:00.000"
+          },
+          {
+            "workshop_analytics.checked_in_at.month": "2026-03-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 174,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 14409.02,
+            "workshop_analytics.checked_in_at": "2026-03-01T00:00:00.000"
+          },
+          {
+            "workshop_analytics.checked_in_at.month": "2026-04-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 163,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 16470.62,
+            "workshop_analytics.checked_in_at": "2026-04-01T00:00:00.000"
+          },
+          {
+            "workshop_analytics.checked_in_at.month": "2026-05-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 119,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 13555.62,
+            "workshop_analytics.checked_in_at": "2026-05-01T00:00:00.000"
+          },
+          {
+            "workshop_analytics.checked_in_at.month": "2026-06-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 119,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 13631.53,
+            "workshop_analytics.checked_in_at": "2026-06-01T00:00:00.000"
+          },
+          {
+            "workshop_analytics.checked_in_at.month": "2026-07-01T00:00:00.000",
+            "workshop_analytics.workorder_count": 127,
+            "workshop_analytics.workorder_lines_labour_hours": "0.00000000000000000000",
+            "workshop_analytics.workorder_items_parts_value": 11872.14,
+            "workshop_analytics.checked_in_at": "2026-07-01T00:00:00.000"
+          }
+        ],
+        "rowCount": 12,
+        "executionMs": 925
+      },
+      {
+        "key": "customers",
+        "connector": "lightspeed",
+        "purpose": "Customer base: customers on file, customers with purchases, repeat customers and repeat rate.",
+        "view": "customer_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "customer_analytics.customer_count": 9613,
+            "customer_analytics.customers_with_purchases": 8714,
+            "customer_analytics.repeat_customers": 4150,
+            "customer_analytics.repeat_purchase_rate_pct": "47.6245122790911177"
+          }
+        ],
+        "rowCount": 1,
+        "executionMs": 1318
+      },
+      {
+        "key": "catalogue_and_stock",
+        "connector": "lightspeed",
+        "purpose": "Catalogue and stock position: distinct items in stock, units on hand, stock value, positions below reorder.",
+        "view": "inventory_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "inventory_analytics.distinct_items_in_stock": 1376,
+            "inventory_analytics.units_on_hand": 4139,
+            "inventory_analytics.stock_value": 160899.9089,
+            "inventory_analytics.positions_below_reorder": 4
+          }
+        ],
+        "rowCount": 1,
+        "executionMs": 1326
+      },
+      {
+        "key": "payment_mix_12m",
+        "connector": "lightspeed",
+        "purpose": "Tender mix by payment type, last 12 months — how customers pay (cash, card, account, online).",
+        "view": "payments_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "payments_analytics.payment_types_name": "Credit Card",
+            "payments_analytics.tender_total": 563756.04,
+            "payments_analytics.payment_count": 4061
+          },
+          {
+            "payments_analytics.payment_types_name": "Cash",
+            "payments_analytics.tender_total": 26989.28,
+            "payments_analytics.payment_count": 262
+          },
+          {
+            "payments_analytics.payment_types_name": "Debit Card",
+            "payments_analytics.tender_total": 22499.31,
+            "payments_analytics.payment_count": 183
+          },
+          {
+            "payments_analytics.payment_types_name": "eCom",
+            "payments_analytics.tender_total": 13740.02,
+            "payments_analytics.payment_count": 27
+          },
+          {
+            "payments_analytics.payment_types_name": "Check",
+            "payments_analytics.tender_total": 8039.99,
+            "payments_analytics.payment_count": 3
+          },
+          {
+            "payments_analytics.payment_types_name": "Gift Card",
+            "payments_analytics.tender_total": -640.06,
+            "payments_analytics.payment_count": 9
+          },
+          {
+            "payments_analytics.payment_types_name": "Credit Account",
+            "payments_analytics.tender_total": -1518.98,
+            "payments_analytics.payment_count": 270
+          }
+        ],
+        "rowCount": 7,
+        "executionMs": 1265
+      },
+      {
+        "key": "staff_headcount",
+        "connector": "deputy",
+        "purpose": "Staff on the books and currently active.",
+        "view": "workforce_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "workforce_analytics.staff_count": 20,
+            "workforce_analytics.active_staff_count": 7
+          }
+        ],
+        "rowCount": 1,
+        "executionMs": 686
+      },
+      {
+        "key": "hours_wages_by_month_12m",
+        "connector": "deputy",
+        "purpose": "Hours worked and wage cost per month, last 12 months — labour scale and its trend.",
+        "view": "workforce_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "workforce_analytics.shift_date.month": "2025-08-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 332.37,
+            "workforce_analytics.wage_cost": 10671.385,
+            "workforce_analytics.worked_shift_count": 43,
+            "workforce_analytics.shift_date": "2025-08-01T00:00:00.000"
+          },
+          {
+            "workforce_analytics.shift_date.month": "2025-09-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 359.44,
+            "workforce_analytics.wage_cost": 11437.18,
+            "workforce_analytics.worked_shift_count": 44,
+            "workforce_analytics.shift_date": "2025-09-01T00:00:00.000"
+          },
+          {
+            "workforce_analytics.shift_date.month": "2025-10-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 440.68,
+            "workforce_analytics.wage_cost": 14042.62,
+            "workforce_analytics.worked_shift_count": 53,
+            "workforce_analytics.shift_date": "2025-10-01T00:00:00.000"
+          },
+          {
+            "workforce_analytics.shift_date.month": "2025-11-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 433.47,
+            "workforce_analytics.wage_cost": 13635.575,
+            "workforce_analytics.worked_shift_count": 54,
+            "workforce_analytics.shift_date": "2025-11-01T00:00:00.000"
+          },
+          {
+            "workforce_analytics.shift_date.month": "2025-12-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 452.1,
+            "workforce_analytics.wage_cost": 12225.955,
+            "workforce_analytics.worked_shift_count": 55,
+            "workforce_analytics.shift_date": "2025-12-01T00:00:00.000"
+          },
+          {
+            "workforce_analytics.shift_date.month": "2026-01-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 411,
+            "workforce_analytics.wage_cost": 12271.37,
+            "workforce_analytics.worked_shift_count": 50,
+            "workforce_analytics.shift_date": "2026-01-01T00:00:00.000"
+          },
+          {
+            "workforce_analytics.shift_date.month": "2026-02-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 445.51,
+            "workforce_analytics.wage_cost": 13567.87,
+            "workforce_analytics.worked_shift_count": 57,
+            "workforce_analytics.shift_date": "2026-02-01T00:00:00.000"
+          },
+          {
+            "workforce_analytics.shift_date.month": "2026-03-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 402.83,
+            "workforce_analytics.wage_cost": 12289.09,
+            "workforce_analytics.worked_shift_count": 50,
+            "workforce_analytics.shift_date": "2026-03-01T00:00:00.000"
+          },
+          {
+            "workforce_analytics.shift_date.month": "2026-04-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 317.47,
+            "workforce_analytics.wage_cost": 8853.3,
+            "workforce_analytics.worked_shift_count": 39,
+            "workforce_analytics.shift_date": "2026-04-01T00:00:00.000"
+          },
+          {
+            "workforce_analytics.shift_date.month": "2026-05-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 372.58,
+            "workforce_analytics.wage_cost": 8951.5,
+            "workforce_analytics.worked_shift_count": 46,
+            "workforce_analytics.shift_date": "2026-05-01T00:00:00.000"
+          },
+          {
+            "workforce_analytics.shift_date.month": "2026-06-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 349.24,
+            "workforce_analytics.wage_cost": 8629.63,
+            "workforce_analytics.worked_shift_count": 43,
+            "workforce_analytics.shift_date": "2026-06-01T00:00:00.000"
+          },
+          {
+            "workforce_analytics.shift_date.month": "2026-07-01T00:00:00.000",
+            "workforce_analytics.hours_worked": 359.91,
+            "workforce_analytics.wage_cost": 8694.45,
+            "workforce_analytics.worked_shift_count": 44,
+            "workforce_analytics.shift_date": "2026-07-01T00:00:00.000"
+          }
+        ],
+        "rowCount": 12,
+        "executionMs": 692
+      },
+      {
+        "key": "areas_12m",
+        "connector": "deputy",
+        "purpose": "Rostered areas (departments) and hours in each, last 12 months — how the workforce is organised (floor, workshop, office…).",
+        "view": "workforce_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "workforce_analytics.rostered_area": "Retail",
+            "workforce_analytics.rostered_hours": 4715.25,
+            "workforce_analytics.rostered_shift_count": 579
+          }
+        ],
+        "rowCount": 1,
+        "executionMs": 759
+      },
+      {
+        "key": "staff_positions",
+        "connector": "deputy",
+        "purpose": "Staff by position title (active staff).",
+        "view": "workforce_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "workforce_analytics.staff_position": null,
+            "workforce_analytics.staff_count": 4
+          },
+          {
+            "workforce_analytics.staff_position": "",
+            "workforce_analytics.staff_count": 3
+          }
+        ],
+        "rowCount": 2,
+        "executionMs": 1191
+      },
+      {
+        "key": "organisation",
+        "connector": "xero",
+        "purpose": "The Xero organisation: business and legal name, line of business, country, timezone, financial year end, GST basis and period.",
+        "view": "xero_business_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "xero_business_analytics.org_business_name": "Ashburton Cycles",
+            "xero_business_analytics.org_legal_name": "Ashburton Cycles",
+            "xero_business_analytics.org_line_of_business": "Cycling shop",
+            "xero_business_analytics.org_country": "AU",
+            "xero_business_analytics.org_timezone": "AUSEASTERNSTANDARDTIME",
+            "xero_business_analytics.org_fy_end_day": 30,
+            "xero_business_analytics.org_fy_end_month": 6,
+            "xero_business_analytics.org_gst_basis": "CASH",
+            "xero_business_analytics.org_gst_period": "QUARTERLY1"
+          }
+        ],
+        "rowCount": 1,
+        "executionMs": 691
+      },
+      {
+        "key": "invoices_by_year_all_time",
+        "connector": "xero",
+        "purpose": "Invoices and bills issued per calendar year over the whole history — the first year is when the accounting data starts (dataFrom).",
+        "view": "xero_finance_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "xero_finance_analytics.issued_on.year": "2018-01-01T00:00:00.000",
+            "xero_finance_analytics.invoice_count": 424,
+            "xero_finance_analytics.total_invoiced": 250275.28,
+            "xero_finance_analytics.issued_on": "2018-01-01T00:00:00.000"
+          },
+          {
+            "xero_finance_analytics.issued_on.year": "2019-01-01T00:00:00.000",
+            "xero_finance_analytics.invoice_count": 642,
+            "xero_finance_analytics.total_invoiced": 454613.44,
+            "xero_finance_analytics.issued_on": "2019-01-01T00:00:00.000"
+          },
+          {
+            "xero_finance_analytics.issued_on.year": "2020-01-01T00:00:00.000",
+            "xero_finance_analytics.invoice_count": 822,
+            "xero_finance_analytics.total_invoiced": 930667.63,
+            "xero_finance_analytics.issued_on": "2020-01-01T00:00:00.000"
+          },
+          {
+            "xero_finance_analytics.issued_on.year": "2021-01-01T00:00:00.000",
+            "xero_finance_analytics.invoice_count": 680,
+            "xero_finance_analytics.total_invoiced": 742875.56,
+            "xero_finance_analytics.issued_on": "2021-01-01T00:00:00.000"
+          },
+          {
+            "xero_finance_analytics.issued_on.year": "2022-01-01T00:00:00.000",
+            "xero_finance_analytics.invoice_count": 498,
+            "xero_finance_analytics.total_invoiced": 428282.29,
+            "xero_finance_analytics.issued_on": "2022-01-01T00:00:00.000"
+          },
+          {
+            "xero_finance_analytics.issued_on.year": "2023-01-01T00:00:00.000",
+            "xero_finance_analytics.invoice_count": 462,
+            "xero_finance_analytics.total_invoiced": 295507.22,
+            "xero_finance_analytics.issued_on": "2023-01-01T00:00:00.000"
+          },
+          {
+            "xero_finance_analytics.issued_on.year": "2024-01-01T00:00:00.000",
+            "xero_finance_analytics.invoice_count": 541,
+            "xero_finance_analytics.total_invoiced": 291818.47,
+            "xero_finance_analytics.issued_on": "2024-01-01T00:00:00.000"
+          },
+          {
+            "xero_finance_analytics.issued_on.year": "2025-01-01T00:00:00.000",
+            "xero_finance_analytics.invoice_count": 472,
+            "xero_finance_analytics.total_invoiced": 295982.46,
+            "xero_finance_analytics.issued_on": "2025-01-01T00:00:00.000"
+          },
+          {
+            "xero_finance_analytics.issued_on.year": "2026-01-01T00:00:00.000",
+            "xero_finance_analytics.invoice_count": 293,
+            "xero_finance_analytics.total_invoiced": 172404.84,
+            "xero_finance_analytics.issued_on": "2026-01-01T00:00:00.000"
+          }
+        ],
+        "rowCount": 9,
+        "executionMs": 770
+      },
+      {
+        "key": "pnl_by_account_class_12m",
+        "connector": "xero",
+        "purpose": "Ledger revenue and expenses by account class, last 12 months — the shape of income and costs in the accounts.",
+        "view": "xero_finance_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "xero_finance_analytics.pnl_account_class": "REVENUE",
+            "xero_finance_analytics.pnl_revenue": 558604.67,
+            "xero_finance_analytics.pnl_expenses": 0
+          },
+          {
+            "xero_finance_analytics.pnl_account_class": "EXPENSE",
+            "xero_finance_analytics.pnl_revenue": 0,
+            "xero_finance_analytics.pnl_expenses": 363780.98
+          }
+        ],
+        "rowCount": 2,
+        "executionMs": 1882
+      },
+      {
+        "key": "top_expense_accounts_12m",
+        "connector": "xero",
+        "purpose": "Largest expense accounts in the ledger, last 12 months — the main cost lines (rent, wages, purchases…).",
+        "view": "xero_finance_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "xero_finance_analytics.pnl_account": "Purchases",
+            "xero_finance_analytics.pnl_expenses": 221631.76
+          },
+          {
+            "xero_finance_analytics.pnl_account": "Rent",
+            "xero_finance_analytics.pnl_expenses": 45344.52
+          },
+          {
+            "xero_finance_analytics.pnl_account": "Discounts on Sales",
+            "xero_finance_analytics.pnl_expenses": 17825.03
+          },
+          {
+            "xero_finance_analytics.pnl_account": "Insurance",
+            "xero_finance_analytics.pnl_expenses": 10101.11
+          },
+          {
+            "xero_finance_analytics.pnl_account": "Workshop Supplies",
+            "xero_finance_analytics.pnl_expenses": 8098.67
+          },
+          {
+            "xero_finance_analytics.pnl_account": "Accounting Fees",
+            "xero_finance_analytics.pnl_expenses": 7200
+          },
+          {
+            "xero_finance_analytics.pnl_account": "Merchant Fees",
+            "xero_finance_analytics.pnl_expenses": 6767.53
+          },
+          {
+            "xero_finance_analytics.pnl_account": "Motor Vehicle Expenses",
+            "xero_finance_analytics.pnl_expenses": 6761.64
+          },
+          {
+            "xero_finance_analytics.pnl_account": "Freight & Courier",
+            "xero_finance_analytics.pnl_expenses": 6684.26
+          },
+          {
+            "xero_finance_analytics.pnl_account": "Telephone & Internet",
+            "xero_finance_analytics.pnl_expenses": 4495.66
+          },
+          {
+            "xero_finance_analytics.pnl_account": "Cleaning",
+            "xero_finance_analytics.pnl_expenses": 4021
+          },
+          {
+            "xero_finance_analytics.pnl_account": "Subscriptions",
+            "xero_finance_analytics.pnl_expenses": 3934.52
+          }
+        ],
+        "rowCount": 12,
+        "executionMs": 1984
+      },
+      {
+        "key": "receivables_payables",
+        "connector": "xero",
+        "purpose": "Money owed to and by the business right now (outstanding and overdue receivables and payables).",
+        "view": "xero_finance_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "xero_finance_analytics.total_receivable_outstanding": 2000,
+            "xero_finance_analytics.total_receivable_overdue": 1750,
+            "xero_finance_analytics.total_payable_outstanding": 22487.32,
+            "xero_finance_analytics.total_payable_overdue": 23033.62
+          }
+        ],
+        "rowCount": 1,
+        "executionMs": 763
+      },
+      {
+        "key": "top_suppliers_12m",
+        "connector": "xero",
+        "purpose": "Largest suppliers by bills, last 12 months.",
+        "view": "xero_finance_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "xero_finance_analytics.invoice_contact": "Pon Bike",
+            "xero_finance_analytics.total_invoiced": 61884.74,
+            "xero_finance_analytics.invoice_count": 17
+          },
+          {
+            "xero_finance_analytics.invoice_contact": "Apollo Bicycle",
+            "xero_finance_analytics.total_invoiced": 45666.01,
+            "xero_finance_analytics.invoice_count": 43
+          },
+          {
+            "xero_finance_analytics.invoice_contact": "AustSuper Quicksuper",
+            "xero_finance_analytics.total_invoiced": 19537.43,
+            "xero_finance_analytics.invoice_count": 11
+          },
+          {
+            "xero_finance_analytics.invoice_contact": "Bicycle Parts Wholesale",
+            "xero_finance_analytics.total_invoiced": 17069.84,
+            "xero_finance_analytics.invoice_count": 61
+          },
+          {
+            "xero_finance_analytics.invoice_contact": "fe sports",
+            "xero_finance_analytics.total_invoiced": 16998.38,
+            "xero_finance_analytics.invoice_count": 29
+          },
+          {
+            "xero_finance_analytics.invoice_contact": "GKA Sports",
+            "xero_finance_analytics.total_invoiced": 16088.71,
+            "xero_finance_analytics.invoice_count": 25
+          },
+          {
+            "xero_finance_analytics.invoice_contact": "Shimano",
+            "xero_finance_analytics.total_invoiced": 13745.06,
+            "xero_finance_analytics.invoice_count": 18
+          },
+          {
+            "xero_finance_analytics.invoice_contact": "Shimano Australia",
+            "xero_finance_analytics.total_invoiced": 12867.47,
+            "xero_finance_analytics.invoice_count": 28
+          },
+          {
+            "xero_finance_analytics.invoice_contact": "Bikecorp",
+            "xero_finance_analytics.total_invoiced": 10983.87,
+            "xero_finance_analytics.invoice_count": 29
+          },
+          {
+            "xero_finance_analytics.invoice_contact": "PSI Cycling",
+            "xero_finance_analytics.total_invoiced": 6888.97,
+            "xero_finance_analytics.invoice_count": 18
+          }
+        ],
+        "rowCount": 10,
+        "executionMs": 708
+      },
+      {
+        "key": "bank_accounts_12m",
+        "connector": "xero",
+        "purpose": "Bank accounts in use and money in/out through each, last 12 months.",
+        "view": "xero_finance_analytics",
+        "ok": true,
+        "rows": [
+          {
+            "xero_finance_analytics.bank_account_name": "Business One Account P/Ship",
+            "xero_finance_analytics.money_in": 733279.77,
+            "xero_finance_analytics.money_out": 475869.62,
+            "xero_finance_analytics.bank_transaction_count": 1113
+          },
+          {
+            "xero_finance_analytics.bank_account_name": "WPC 033038 401759 Cash Management Account",
+            "xero_finance_analytics.money_in": 100725.97,
+            "xero_finance_analytics.money_out": 115778,
+            "xero_finance_analytics.bank_transaction_count": 402
+          },
+          {
+            "xero_finance_analytics.bank_account_name": "Ashburton Cycles Amex",
+            "xero_finance_analytics.money_in": 43634.88,
+            "xero_finance_analytics.money_out": 28459.25,
+            "xero_finance_analytics.bank_transaction_count": 257
+          },
+          {
+            "xero_finance_analytics.bank_account_name": "American Express Velocity Busi",
+            "xero_finance_analytics.money_in": 2727.63,
+            "xero_finance_analytics.money_out": 895.44,
+            "xero_finance_analytics.bank_transaction_count": 15
+          }
+        ],
+        "rowCount": 4,
+        "executionMs": 787
+      }
+    ],
+    "freshness": [],
+    "timezone": "Australia/Melbourne",
+    "currency": "AUD"
+  }
+}

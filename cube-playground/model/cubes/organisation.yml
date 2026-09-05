@@ -1,0 +1,396 @@
+cubes:
+  - name: shops
+    title: Shops (store locations)
+    public: false
+    description: >
+      One row per store location. Sales, sale lines and payments join here for
+      by-store breakdowns. time_zone matters when interpreting business dates.
+    meta:
+      ai_context: '"Store", "location", "shop" and "branch" all mean shops.name.'
+    sql: >
+      SELECT t.* FROM source_lightspeed_official.ls_shops t
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        description: Lightspeed's identifier for the shop.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Store
+        description: Store display name.
+      - name: time_zone
+        sql: time_zone
+        type: string
+        description: IANA time zone the store operates in.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the store has been archived.
+      - name: service_rate
+        sql: service_rate
+        type: number
+        format: currency
+        description: Hourly labour rate for workshop services at this store.
+      - name: tax_labor
+        sql: tax_labor
+        type: boolean
+        public: false
+        description: Whether labour is taxed at this store.
+      - name: label_title
+        sql: label_title
+        type: string
+        public: false
+      - name: label_msrp
+        sql: label_msrp
+        type: boolean
+        public: false
+      - name: contact_id
+        sql: contact_id
+        type: number
+        public: false
+      - name: tax_category_id
+        sql: tax_category_id
+        type: number
+        public: false
+      - name: receipt_setup_id
+        sql: receipt_setup_id
+        type: number
+        public: false
+      - name: cc_gateway_id
+        sql: cc_gateway_id
+        type: number
+        public: false
+      - name: price_level_id
+        sql: price_level_id
+        type: number
+        public: false
+
+    measures:
+      - name: count
+        type: count
+        description: Number of store locations.
+
+  - name: registers
+    title: Registers
+    public: false
+    description: >
+      One row per POS register (till) within a store. Sales and payments join
+      here for by-register breakdowns.
+    sql: >
+      SELECT t.* FROM source_lightspeed_official.ls_registers t
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: register_id
+        sql: register_id
+        type: number
+        description: Lightspeed's identifier for the register.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Register
+        description: Register display name.
+      - name: is_open
+        sql: '{CUBE}."open"'
+        type: boolean
+        description: Whether the register was open at last sync.
+      - name: opened_at
+        sql: open_time
+        type: time
+        description: When the register was last opened.
+      - name: tip_enabled
+        sql: tip_enabled
+        type: boolean
+        description: Whether tipping is enabled on this register.
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+      - name: open_employee_id
+        sql: open_employee_id
+        type: number
+        public: false
+
+    measures:
+      - name: count
+        type: count
+        description: Number of registers.
+
+  - name: employees
+    title: Employees (staff)
+    public: false
+    description: >
+      One row per staff member. Sales, lines, payments, voids and quotes join
+      here for by-staff performance questions.
+    meta:
+      ai_context: '"Staff", "salesperson", "employee" mean employees.full_name. The employee on a sale is the seller of record.'
+    sql: >
+      SELECT t.* FROM source_lightspeed_official.ls_employees t
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        description: Lightspeed's identifier for the employee.
+      - name: first_name
+        sql: first_name
+        type: string
+        description: Given name.
+      - name: last_name
+        sql: last_name
+        type: string
+        description: Family name.
+      - name: full_name
+        type: string
+        sql: "TRIM(COALESCE({CUBE}.first_name, '') || ' ' || COALESCE({CUBE}.last_name, ''))"
+        title: Staff member
+        description: Full display name.
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the employee has been archived (no longer active staff).
+      - name: locked_out
+        sql: lock_out
+        type: boolean
+        description: Whether the employee is locked out of the POS.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+      - name: contact_id
+        sql: contact_id
+        type: number
+        public: false
+      - name: employee_role_id
+        sql: employee_role_id
+        type: number
+        public: false
+      - name: limit_to_shop_id
+        sql: limit_to_shop_id
+        type: number
+        public: false
+        description: Store the employee is restricted to, when limited.
+      - name: last_shop_id
+        sql: last_shop_id
+        type: number
+        public: false
+      - name: last_register_id
+        sql: last_register_id
+        type: number
+        public: false
+      - name: last_sale_id
+        sql: last_sale_id
+        type: number
+        public: false
+      - name: clock_in_employee_hours_id
+        sql: clock_in_employee_hours_id
+        type: number
+        public: false
+
+    measures:
+      - name: count
+        type: count
+        description: Number of staff members on file.
+      - name: active_count
+        type: count
+        description: Staff not archived.
+        filters:
+          - sql: "COALESCE({CUBE}.archived, false) = false"
+
+    segments:
+      - name: active_employees
+        sql: "COALESCE({CUBE}.archived, false) = false"
+        description: Staff not archived.
+
+  - name: tax_categories
+    title: Tax categories
+    public: false
+    description: >
+      Tax setups applied to sales: whether prices are tax inclusive and the tax1/
+      tax2 names and rates. Sales join here.
+    meta:
+      ai_context: >
+        is_tax_inclusive tells you whether displayed prices include tax. Rates
+        are fractions (0.1 = 10% GST).
+    sql: >
+      SELECT t.* FROM source_lightspeed_official.ls_tax_categories t
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: tax_category_id
+        sql: tax_category_id
+        type: number
+        description: Lightspeed's identifier for the tax category.
+      - name: is_tax_inclusive
+        sql: is_tax_inclusive
+        type: boolean
+        description: Whether prices under this category include tax.
+      - name: tax1_name
+        sql: tax1_name
+        type: string
+        description: Name of the primary tax (for example GST).
+      - name: tax2_name
+        sql: tax2_name
+        type: string
+        description: Name of the secondary tax, when used.
+      - name: tax1_rate
+        sql: tax1_rate
+        type: number
+        description: Primary tax rate as a fraction.
+      - name: tax2_rate
+        sql: tax2_rate
+        type: number
+        description: Secondary tax rate as a fraction.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+
+    measures:
+      - name: count
+        type: count
+        description: Number of tax categories.
+
+  - name: tax_classes
+    title: Tax classes
+    public: false
+    description: >
+      Item-level tax classes (for example "Standard goods", "Labor"). Items and
+      sale lines join here.
+    sql: >
+      SELECT t.* FROM source_lightspeed_official.ls_tax_classes t
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: tax_class_id
+        sql: tax_class_id
+        type: number
+        description: Lightspeed's identifier for the tax class.
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Tax class
+        description: Tax class name.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        public: false
+
+    measures:
+      - name: count
+        type: count
+        description: Number of tax classes.
+
+  - name: tax_category_classes
+    title: Tax category class rates
+    public: false
+    description: >
+      Rate matrix linking tax categories to tax classes: the effective tax1/tax2
+      rate for each class within each category.
+    sql: >
+      SELECT t.* FROM source_lightspeed_official.ls_tax_category_classes t
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: tax_categories
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {tax_categories}.tenant_id
+          AND {CUBE}.tax_category_id = {tax_categories}.tax_category_id
+      - name: tax_classes
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {tax_classes}.tenant_id
+          AND {CUBE}.tax_class_id = {tax_classes}.tax_class_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: tax_category_class_id
+        sql: tax_category_class_id
+        type: number
+        description: Lightspeed's identifier for the rate entry.
+      - name: tax_category_id
+        sql: tax_category_id
+        type: number
+        public: false
+      - name: tax_class_id
+        sql: tax_class_id
+        type: number
+        public: false
+      - name: tax1_rate
+        sql: tax1_rate
+        type: number
+        description: Effective primary tax rate for this class in this category, as a fraction.
+      - name: tax2_rate
+        sql: tax2_rate
+        type: number
+        description: Effective secondary tax rate, as a fraction.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of category-class rate entries.

@@ -16,6 +16,7 @@ const connectionIds = Object.freeze({
   xeroAustralia: "01J00000000000000000000011",
   xeroNewZealand: "01J00000000000000000000012",
   disconnectedXero: "01J00000000000000000000013",
+  shopify: "01J00000000000000000000014",
 });
 
 function multiAccountWorkspace() {
@@ -75,6 +76,16 @@ function multiAccountWorkspace() {
           progress: 1,
         }],
       },
+      {
+        connection_id: connectionIds.shopify,
+        connector_key: "shopify",
+        display_name: "albert-bikes.myshopify.com",
+        status: "connected",
+        auth_health: "healthy",
+        manual_ingestion_start_required: true,
+        ingestion_state: "awaiting_manual_start",
+        readiness: [],
+      },
     ],
     dossier: null,
     identity_review_tasks: [],
@@ -97,9 +108,9 @@ test("the workspace preserves every current Xero organisation as a connection-bo
     xero.connections.map(({ auth }) => auth.accountName),
     ["Albert Retail Australia Pty Ltd", "Albert Retail New Zealand Limited"],
   );
-  assert.equal(xero.additionalConnectionLabel, undefined);
+  assert.equal("additionalConnectionLabel" in xero ? xero.additionalConnectionLabel : undefined, undefined);
   assert.equal(lightspeed?.connections.length, 1);
-  assert.equal(lightspeed?.additionalConnectionLabel, undefined);
+  assert.equal(lightspeed && "additionalConnectionLabel" in lightspeed ? lightspeed.additionalConnectionLabel : undefined, undefined);
   assert.equal(
     workspace.providers.flatMap(({ connections }) => connections)
       .some(({ connectionId }) => connectionId === connectionIds.disconnectedXero),
@@ -144,9 +155,96 @@ test("a pending OAuth session with no discovered accounts keeps connection contr
 
   assert.deepEqual(workspace.oauthSelections, []);
   assert.equal(
-    workspace.providers.find(({ id }) => id === "lightspeed")?.connections.length,
-    0,
+    workspace.providers.find(({ id }) => id === "lightspeed"),
+    undefined,
   );
+});
+
+test("the connections catalog hides native Deputy, Xero, and Lightspeed R-Series cards", () => {
+  const workspace = toConnectionsWorkspace({
+    tenant_id: "01J00000000000000000000001",
+    tenant_name: "Albert Retail Group",
+    connections: [],
+    dossier: null,
+    identity_review_tasks: [],
+    blocking_answers: {},
+    oauth_sessions: [],
+  }, "Australia/Melbourne");
+  const catalogIds = workspace.providers.map(({ id }) => id);
+
+  assert.equal(catalogIds.includes("lightspeed"), false);
+  assert.equal(catalogIds.includes("xero"), false);
+  assert.equal(catalogIds.includes("deputy"), false);
+  assert.equal(catalogIds.includes("stripe"), false);
+  assert.ok(catalogIds.includes("fivetran-xero"));
+  assert.ok(catalogIds.includes("fivetran-lightspeed"));
+  assert.ok(catalogIds.includes("fivetran-deputy"));
+  assert.ok(catalogIds.includes("fivetran-stripe"));
+  assert.match(connectionsComponent, /SUPERSEDED_NATIVE_PROVIDER_IDS/u);
+  assert.match(connectionsComponent, /isVisibleConnectionProvider/u);
+  assert.doesNotMatch(
+    connectionsComponent,
+    /id: "lightspeed" as const/u,
+  );
+  assert.doesNotMatch(
+    connectionsComponent,
+    /id: "xero" as const/u,
+  );
+  assert.doesNotMatch(
+    connectionsComponent,
+    /id: "deputy" as const/u,
+  );
+});
+
+test("an authorized Shopify store is projected as connected while awaiting explicit ingestion", () => {
+  const workspace = multiAccountWorkspace();
+  const shopify = workspace.providers.find((provider) => provider.id === "shopify");
+
+  assert.ok(shopify);
+  assert.equal("comingSoon" in shopify ? shopify.comingSoon : undefined, undefined);
+  assert.equal(shopify.connections.length, 1);
+  assert.deepEqual(shopify.connections[0], {
+    connectionId: connectionIds.shopify,
+    ingestionState: "awaiting_manual_start",
+    manualIngestionStartRequired: true,
+    auth: {
+      state: "healthy",
+      label: "Connected",
+      detail: "albert-bikes.myshopify.com",
+      accountName: "albert-bikes.myshopify.com",
+      checkedAt: undefined,
+    },
+    domains: [],
+  });
+});
+
+test("Momence is presented as an ingestible studio source with an explicit-start connection flow", () => {
+  const workspace = toConnectionsWorkspace({
+    tenant_id: "01J00000000000000000000001",
+    tenant_name: "Albert Yoga",
+    connections: [],
+    dossier: null,
+    identity_review_tasks: [],
+    blocking_answers: {},
+    oauth_sessions: [],
+  }, "Australia/Melbourne");
+  const momence = workspace.providers.find((provider) => provider.id === "momence");
+
+  assert.ok(momence);
+  assert.equal(
+    momence.description,
+    "Classes, bookings, memberships, customers, instructors, locations, and payments.",
+  );
+  assert.equal(
+    momence.connectDetail,
+    "Connect a Momence studio, then choose when ingestion starts.",
+  );
+  assert.equal("comingSoon" in momence ? momence.comingSoon : undefined, undefined);
+  assert.match(
+    connectionsComponent,
+    /description: "Classes, bookings, memberships, customers, instructors, locations, and payments\."/u,
+  );
+  assert.doesNotMatch(connectionsComponent, /Momence support is coming soon/u);
 });
 
 test("the Connections component exposes per-account manage, sync progress, and disconnect actions", () => {
@@ -173,6 +271,18 @@ test("the Connections component exposes per-account manage, sync progress, and d
     /provider\.id === "shopify" && !shopifyShopDomain\.trim\(\)/u,
   );
   assert.match(connectionsComponent, /data-connection-id=\{connection\.connectionId\}/u);
+  assert.match(connectionsComponent, /data-ingestion-state=\{connection\.ingestionState\}/u);
+  assert.match(connectionsComponent, /connection\.manualIngestionStartRequired === true/u);
+  assert.match(connectionsComponent, /"Start ingestion"/u);
+  assert.match(
+    connectionsComponent,
+    /initialStart && providerId !== "shopify"\s*\n\s*\? "\/api\/connections\/start-ingestion"\s*\n\s*: "\/api\/connections\/sync"/u,
+  );
+  assert.match(
+    connectionsComponent,
+    /requestManualSync\(\s*connection\.connectionId,\s*true,\s*provider\.id/u,
+  );
+  assert.match(connectionsComponent, /\[connectionId\]: \{ status: "requesting" \}/u);
   assert.match(connectionsComponent, /ConnectionSyncProgress/u);
   assert.match(connectionsComponent, /CONNECTION_VIEWS = \["apps"\]/u);
   assert.doesNotMatch(connectionsComponent, /activeView === "review"/u);
@@ -180,6 +290,23 @@ test("the Connections component exposes per-account manage, sync progress, and d
   assert.match(dashPage, /new URL\(`\/api\/oauth\/\$\{providerId\}\/start`, window\.location\.origin\)/u);
   assert.match(dashPage, /start\.searchParams\.set\("shop", shop\)/u);
   assert.match(dashPage, /window\.location\.assign\(start\.toString\(\)\)/u);
+});
+
+test("manual Start ingestion uses the dash CTA, theme, focus and reduced-motion system", () => {
+  assert.match(
+    dashStyles,
+    /\.connectionsStartIngestionAction\s*\{[\s\S]*background:\s*var\(--dash-contrast\)[\s\S]*color:\s*var\(--dash-on-contrast\)/u,
+  );
+  assert.match(dashStyles, /\.connectionsShopDomainInput\s*\{[\s\S]*border-radius:\s*10px/u);
+  assert.match(dashStyles, /\.connectionsProviderActionPrimary:focus-visible/u);
+  assert.match(
+    dashStyles,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.connectionsProviderActionPrimary,[\s\S]*transition:\s*none/u,
+  );
+  assert.match(
+    dashPage,
+    /case "connected_without_sync":[\s\S]*Data will not be ingested until you choose Start ingestion\./u,
+  );
 });
 
 test("app cards use fat animated blue progress bars with a domain hover popup", () => {

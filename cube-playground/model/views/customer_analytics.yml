@@ -1,0 +1,206 @@
+views:
+  - name: customer_analytics
+    title: Customer analytics
+    description: >
+      Customer-centric surface: profiles, types, geography and contactability,
+      refund-safe lifetime behaviour (purchase recency/frequency, signed net
+      spend and repeat rate), store credit, and safe custom-field/note metadata.
+      Exact contact details, street address, date of birth, source customer IDs,
+      custom values and note text are deliberately excluded. Fact grain is one
+      row per customer profile.
+    meta:
+      ai_context: >
+        Use for "who are my customers" questions: top customers by lifetime value,
+        new vs returning, fixed recency/frequency bands, customers lapsed for
+        more than 180 days, broad geography, aggregate contactability and credit
+        balances. purchase_count/first_purchase_at/last_purchase_at exclude
+        refunds; lifetime_net_spend is signed and refunds subtract. The guarded
+        90-day repeat rate includes only profiles whose full observation window
+        has elapsed. For revenue in a specific period grouped by customer,
+        prefer sales_analytics so the period filter applies to sales.
+        Contactability does not prove marketing consent. Custom-field and note
+        text are not available here. Geography is NOT captured for this tenant:
+        contacts_city / state / postcode / country are blank on every contact,
+        so say the data does not record where customers live rather than
+        reporting "unknown" as a location. Store credit and gift cards:
+        gift_card_liability (value still loaded on gift cards, a positive
+        amount), store_credit_owed_to_customers and on_account_receivable are
+        credit-account totals - query them on their own, without customer
+        dimensions, because gift cards sold to walk-ins have no customer
+        profile. credit_accounts_balance on a customer row is signed the
+        Lightspeed way: negative = the shop owes the customer.
+
+    cubes:
+      # lightspeed_r_tenant owns the view's tenant_id: customers, credit
+      # accounts (including gift cards sold to walk-ins, which have no customer
+      # profile), custom-field values and notes all reach it through tenant-only
+      # many_to_one joins, so the injected tenant pin never drops rows from a
+      # grain that has no customer link.
+      - join_path: lightspeed_r_tenant
+        includes:
+          - tenant_id
+      - join_path: customers
+        includes:
+          - first_name
+          - last_name
+          - full_name
+          - company
+          - archived
+          - created_at
+          - updated_at
+          - first_purchase_at
+          - second_purchase_at
+          - last_purchase_at
+          - days_to_second_purchase
+          - purchase_count
+          - refund_count
+          - activity_transaction_count
+          - lifetime_net_spend
+          - lifetime_purchase_value
+          - lifetime_refund_value
+          - lifetime_revenue
+          - lifetime_transactions
+          - lifetime_gross_profit
+          - is_repeat_customer
+          - days_since_last_purchase
+          - recency_band
+          - frequency_band
+          - is_lapsed_180_days
+          - is_mature_90_day_customer
+          - repeated_within_90_days_flag
+          - customer_count
+          - active_customer_count
+          - customers_with_purchases
+          - repeat_customers
+          - repeat_purchase_rate_pct
+          - mature_90_day_customers
+          - repeated_within_90_days
+          - repeat_within_90_days_pct
+          - total_lifetime_revenue
+          - total_lifetime_net_spend
+          - total_lifetime_purchase_value
+          - total_lifetime_refund_value
+          - average_lifetime_revenue
+          - average_lifetime_transactions
+          - active_customers
+          - business_customers
+          - lapsed_180_days
+      - join_path: customers.customer_types
+        prefix: true
+        includes:
+          - name
+      - join_path: customers.contacts
+        prefix: true
+        includes:
+          - city
+          - state
+          - state_code
+          - postcode
+          - country
+          - country_code
+          - no_email
+          - no_mail
+          - no_phone
+          - has_email
+      - join_path: customers.credit_accounts
+        prefix: true
+        includes:
+          - name
+          - is_gift_card
+          - balance
+          - archived
+      # Store-credit and gift-card liability at credit-account grain, queried
+      # on its own (not through a customer) so unlinked gift cards count.
+      - join_path: credit_accounts
+        includes:
+          - gift_card_liability
+          - outstanding_gift_cards
+          - store_credit_owed_to_customers
+          - on_account_receivable
+          - name: account_count
+            alias: credit_account_count
+      - join_path: customer_custom_field_values
+        prefix: true
+        includes:
+          - data_type
+          - deleted
+          - count
+      - join_path: customer_notes
+        prefix: true
+        includes:
+          - note_count
+          - latest_note_at
+
+    folders:
+      - name: Profile
+        includes:
+          - full_name
+          - first_name
+          - last_name
+          - company
+          - archived
+          - created_at
+          - customer_types_name
+      - name: Lifetime behaviour
+        includes:
+          - first_purchase_at
+          - second_purchase_at
+          - last_purchase_at
+          - days_to_second_purchase
+          - purchase_count
+          - refund_count
+          - activity_transaction_count
+          - lifetime_net_spend
+          - lifetime_purchase_value
+          - lifetime_refund_value
+          - lifetime_revenue
+          - lifetime_transactions
+          - lifetime_gross_profit
+          - is_repeat_customer
+          - days_since_last_purchase
+          - recency_band
+          - frequency_band
+          - is_lapsed_180_days
+          - is_mature_90_day_customer
+          - repeated_within_90_days_flag
+          - customers_with_purchases
+          - repeat_customers
+          - repeat_purchase_rate_pct
+          - mature_90_day_customers
+          - repeated_within_90_days
+          - repeat_within_90_days_pct
+          - total_lifetime_revenue
+          - total_lifetime_net_spend
+          - total_lifetime_purchase_value
+          - total_lifetime_refund_value
+          - average_lifetime_revenue
+          - average_lifetime_transactions
+      - name: Geography and contact
+        includes:
+          - contacts_city
+          - contacts_state
+          - contacts_state_code
+          - contacts_postcode
+          - contacts_country
+          - contacts_country_code
+          - contacts_has_email
+          - contacts_no_email
+          - contacts_no_mail
+          - contacts_no_phone
+      - name: Credit and gift cards
+        includes:
+          - gift_card_liability
+          - outstanding_gift_cards
+          - store_credit_owed_to_customers
+          - on_account_receivable
+          - credit_account_count
+          - credit_accounts_name
+          - credit_accounts_is_gift_card
+          - credit_accounts_balance
+      - name: Safe custom-field and note metadata
+        includes:
+          - customer_custom_field_values_data_type
+          - customer_custom_field_values_deleted
+          - customer_custom_field_values_count
+          - customer_notes_note_count
+          - customer_notes_latest_note_at

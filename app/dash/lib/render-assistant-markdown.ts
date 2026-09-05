@@ -3,7 +3,14 @@ type LinkMode = "anchor" | "text";
 interface RenderAssistantMarkdownOptions {
   compact?: boolean;
   linkMode?: LinkMode;
+  /** Optional HTML (icons) appended inside the last header cell of each data table. */
+  tableSourceBadgesHtml?: string;
 }
+
+export type AssistantMarkdownSections = Readonly<{
+  lead: string;
+  detail: string;
+}>;
 
 function escapeHtml(value: string): string {
   return value
@@ -21,7 +28,7 @@ function renderEmphasis(escaped: string): string {
 }
 
 function renderBareUrls(escaped: string, linkMode: LinkMode): string {
-  const urlPattern = /https?:\/\/[^\s<]+/g;
+  const urlPattern = /https?:\/\/[^\s<\u0000]+/g;
   if (linkMode === "text") return escaped.replace(urlPattern, "");
   return escaped.replace(urlPattern, (url) => {
     const trimmedUrl = url.replace(/[.,;:!?)]$/, "");
@@ -45,21 +52,25 @@ function renderTextSegment(segment: string, linkMode: LinkMode): string {
     lastIndex = index + match[0].length;
   }
   output += renderBareUrls(renderEmphasis(escapeHtml(segment.slice(lastIndex))), linkMode);
-  return output;
+  // Models indent financial-statement lines with `&nbsp;` entities. Escaping
+  // turned them into literal "&nbsp;" text; restoring exactly this one entity
+  // keeps the escape hatch closed while letting the indentation render.
+  return output.replaceAll("&amp;nbsp;", "&nbsp;");
 }
 
 function renderInlineMarkdown(value: string, linkMode: LinkMode): string {
-  const codePattern = /`([^`]+?)`/g;
-  let output = "";
-  let lastIndex = 0;
-  for (const match of value.matchAll(codePattern)) {
-    const index = match.index ?? 0;
-    output += renderTextSegment(value.slice(lastIndex, index), linkMode);
-    output += `<code>${escapeHtml(match[1]!)}</code>`;
-    lastIndex = index + match[0].length;
-  }
-  output += renderTextSegment(value.slice(lastIndex), linkMode);
-  return output;
+  // Protect code and escaped punctuation before emphasis/link parsing. The
+  // sentinel cannot collide with input, and restored atoms are HTML-escaped.
+  // This keeps governed names such as "A*B" literal inside a composed table.
+  const atoms: string[] = [];
+  const protectedText = value.replaceAll("\u0000", "\uFFFD")
+    .replace(/`([^`]+?)`|\\([\\`*_{}[\]()<>|#+.!-])/gu, (_match, code: string | undefined, literal: string | undefined) => {
+      const index = atoms.length;
+      atoms.push(code !== undefined ? `<code>${escapeHtml(code)}</code>` : escapeHtml(literal!));
+      return `\u0000${index}\u0000`;
+    });
+  return renderTextSegment(protectedText, linkMode)
+    .replace(/\u0000(\d+)\u0000/gu, (_match, index: string) => atoms[Number(index)]!);
 }
 
 function splitTableRow(line: string): string[] {
@@ -75,7 +86,7 @@ function splitTableRow(line: string): string[] {
 }
 
 function isTableRow(line: string): boolean {
-  return splitTableRow(line).length >= 2;
+  return splitTableRow(line).length >= 1;
 }
 
 /**
@@ -116,7 +127,13 @@ function renderList(items: string[], ordered: boolean, options: Required<RenderA
 }
 
 function renderTable(headers: string[], rows: string[][], options: Required<RenderAssistantMarkdownOptions>): string {
-  const head = headers.map((cell) => `<th>${renderInlineMarkdown(cell, options.linkMode)}</th>`).join("");
+  const badges = options.tableSourceBadgesHtml.trim();
+  const head = headers.map((cell, index) => {
+    const label = renderInlineMarkdown(cell, options.linkMode);
+    const isLast = index === headers.length - 1;
+    if (!isLast || !badges) return `<th>${label}</th>`;
+    return `<th><span class="answerTableHeaderRow"><span class="answerTableHeaderLabel">${label}</span>${badges}</span></th>`;
+  }).join("");
   const body = rows.map((row) => {
     // A ragged row must not shift its neighbours' figures into the wrong
     // column: pad short rows and drop cells past the last header.
@@ -136,6 +153,65 @@ const headingPattern = /^\s*(#{1,6})\s+(.+)$/;
 const unorderedItemPattern = /^\s*[-*]\s+(.+)$/;
 const orderedItemPattern = /^\s*\d+[.)]\s+(.+)$/;
 
+/**
+ * Older saved answers sometimes contain human-looking section labels without
+ * Markdown markers ("What is sound", "Issues to fix"). Promote only familiar
+ * report cues that occupy their own paragraph; arbitrary product names and
+ * one-line answers must remain prose.
+ */
+const implicitSectionCuePattern = /^(?:summary|overview|headline|the\s+bottom\s+line|key\s+(?:findings|takeaways|issues|risks|opportunities)|what\s+(?:is\s+sound|looks\s+(?:sound|good)|stands\s+out|needs\s+attention|to\s+(?:fix|confirm|fix\s+or\s+confirm)|is\s+not\s+covered|was\s+not\s+covered|is\s+missing)|issues?(?:\s+to\s+fix\s+or\s+confirm)?|problems?|risks?|opportunities?|recommendations?|actions?|priorities?|priority\s+actions?|prioritised\s+actions?|next\s+steps?|limitations?|caveats?|data\s+gaps?|gaps?|not\s+covered|highest-impact\s+actions?)$/iu;
+
+function isImplicitSectionHeading(lines: readonly string[], index: number): boolean {
+  const line = (lines[index] ?? "").trim();
+  if (!line || line.length > 64 || !/^[A-Z]/u.test(line)) return false;
+  if (/[.!?;:]$/u.test(line) || /[|`<>]/u.test(line)) return false;
+  if (line.split(/\s+/u).length > 9 || !implicitSectionCuePattern.test(line)) return false;
+
+  // It must be a standalone paragraph followed by real answer content. The
+  // exact cue allowlist keeps an isolated business entity as normal prose; a
+  // leading cue is allowed because table placement may render report detail as
+  // a separate Markdown fragment.
+  if (index >= lines.length - 1) return false;
+  if ((index > 0 && (lines[index - 1] ?? "").trim()) || (lines[index + 1] ?? "").trim()) return false;
+  const hasContentAfter = lines.slice(index + 1).some((candidate) => candidate.trim());
+  return hasContentAfter;
+}
+
+/**
+ * Separates the opening takeaway from a longer report. Structured answer
+ * tables sit after that takeaway: either at the first heading, or after the
+ * first paragraph when the rest is more prose (a caveat, not a new section).
+ */
+export function splitAssistantMarkdownLead(markdown: string): AssistantMarkdownSections {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (headingPattern.test(lines[index] ?? "") || isImplicitSectionHeading(lines, index)) {
+      const lead = lines.slice(0, index).join("\n").trim();
+      // The table belongs after an opening takeaway, never between two sections
+      // when the model started the answer with a heading.
+      if (!lead) return { lead: markdown.trim(), detail: "" };
+      return {
+        lead,
+        detail: lines.slice(index).join("\n").trim(),
+      };
+    }
+  }
+
+  let start = 0;
+  while (start < lines.length && !lines[start]?.trim()) start += 1;
+  let end = start;
+  while (end < lines.length && lines[end]?.trim()) end += 1;
+  let rest = end;
+  while (rest < lines.length && !lines[rest]?.trim()) rest += 1;
+  if (start < end && rest < lines.length) {
+    return {
+      lead: lines.slice(start, end).join("\n").trim(),
+      detail: lines.slice(rest).join("\n").trim(),
+    };
+  }
+  return { lead: markdown.trim(), detail: "" };
+}
+
 /** Bike Insights New / Genie markdown renderer, adapted for Albert answers. */
 export function renderAssistantMarkdown(
   markdown: string,
@@ -144,6 +220,7 @@ export function renderAssistantMarkdown(
   const resolved: Required<RenderAssistantMarkdownOptions> = {
     compact: options.compact ?? false,
     linkMode: options.linkMode ?? "anchor",
+    tableSourceBadgesHtml: options.tableSourceBadgesHtml ?? "",
   };
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const blocks: string[] = [];
@@ -159,6 +236,12 @@ export function renderAssistantMarkdown(
     const heading = headingPattern.exec(line);
     if (heading) {
       blocks.push(renderHeading(heading[1]!.length, heading[2]!, resolved));
+      index += 1;
+      continue;
+    }
+
+    if (!resolved.compact && isImplicitSectionHeading(lines, index)) {
+      blocks.push(renderHeading(2, line.trim(), resolved));
       index += 1;
       continue;
     }
@@ -202,6 +285,7 @@ export function renderAssistantMarkdown(
       // happens to contain a pipe is prose, not the start of a table.
       if (
         headingPattern.test(next)
+        || (!resolved.compact && isImplicitSectionHeading(lines, index))
         || startsTable(lines, index)
         || unorderedItemPattern.test(next)
         || orderedItemPattern.test(next)

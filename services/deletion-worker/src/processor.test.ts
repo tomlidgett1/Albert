@@ -5,6 +5,7 @@ import {
   ProductionCredentialRevoker,
   type DeletionControlPort,
 } from "./processor.js";
+import type { WorkerCredentialVault } from "../../../packages/connector-sdk/src/index.js";
 import type { DeletionClaim } from "./store.js";
 
 const claim: DeletionClaim = Object.freeze({
@@ -118,7 +119,14 @@ test("remote revocation evidence survives a post-destruction retry", async () =>
       }),
     },
     () => { throw new Error("the destroyed vault must not be reopened"); },
-    { lightspeedClientId: "test", lightspeedClientSecret: "test", xeroClientId: "test" },
+    {
+      lightspeedClientId: "test",
+      lightspeedClientSecret: "test",
+      squareClientId: "test",
+      squareClientSecret: "test",
+      squareRedirectUri: "https://albert.example/api/oauth/square/callback",
+      xeroClientId: "test",
+    },
   );
 
   const evidence = await revoker.revoke(claim);
@@ -146,7 +154,14 @@ test("watchdog credential destruction remains explicit on retry", async () => {
       }),
     },
     () => { throw new Error("the forcibly destroyed vault must not be reopened"); },
-    { lightspeedClientId: "test", lightspeedClientSecret: "test", xeroClientId: "test" },
+    {
+      lightspeedClientId: "test",
+      lightspeedClientSecret: "test",
+      squareClientId: "test",
+      squareClientSecret: "test",
+      squareRedirectUri: "https://albert.example/api/oauth/square/callback",
+      xeroClientId: "test",
+    },
   );
 
   const evidence = await revoker.revoke(claim);
@@ -160,6 +175,167 @@ test("watchdog credential destruction remains explicit on retry", async () => {
     forcedLocalDestruction: true,
     reason: "remote_revocation_grace_expired",
   });
+});
+
+test("Square deletion revokes only Albert's access token before local destruction", async () => {
+  const originalFetch = globalThis.fetch;
+  const destroyed: string[] = [];
+  const requests: Array<Readonly<{ url: string; authorization: string | null; body: unknown }>> = [];
+  globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers);
+    requests.push(Object.freeze({
+      url: String(input),
+      authorization: headers.get("authorization"),
+      body: JSON.parse(String(init?.body)),
+    }));
+    return new Response("{}", {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const vault = {
+      read: async (credentialRef: string) => ({
+        credentialRef,
+        revision: "1",
+        secret: {
+          provider: "square",
+          accessToken: "square-access-token",
+          refreshToken: "square-refresh-token",
+          tokenType: "Bearer" as const,
+          expiresAt: "2026-09-01T00:00:00.000Z",
+          scopes: ["MERCHANT_PROFILE_READ"],
+          metadata: { merchantId: "merchant-1" },
+        },
+      }),
+      destroy: async (credentialRef: string) => { destroyed.push(credentialRef); },
+    } as unknown as WorkerCredentialVault;
+    const revoker = new ProductionCredentialRevoker(
+      {
+        revocationContext: async () => ({
+          priorStatus: "pending",
+          priorProgress: {},
+          targets: [{
+            tenantId: claim.tenantId,
+            connectionId: claim.connectionId!,
+            connectionGeneration: 3,
+            connectorId: "square" as const,
+            credentialRef: "credential-square-1",
+          }],
+        }),
+      },
+      () => vault,
+      {
+        lightspeedClientId: "test",
+        lightspeedClientSecret: "test",
+        squareClientId: "square-client",
+        squareClientSecret: "square-secret",
+        squareRedirectUri: "https://albert.example/api/oauth/square/callback",
+        xeroClientId: "test",
+      },
+    );
+
+    const evidence = await revoker.revoke(claim);
+
+    assert.deepEqual(requests, [{
+      url: "https://connect.squareup.com/oauth2/revoke",
+      authorization: "Client square-secret",
+      body: {
+        client_id: "square-client",
+        access_token: "square-access-token",
+        revoke_only_access_token: true,
+      },
+    }]);
+    assert.deepEqual(destroyed, ["credential-square-1"]);
+    assert.deepEqual(evidence.targets, [{
+      provider: "square",
+      connectionGeneration: 3,
+      status: "succeeded",
+    }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Momence deletion destroys the local credential and records vendor revocation as unsupported", async () => {
+  const destroyed: string[] = [];
+  const vault = {
+    destroy: async (credentialRef: string) => { destroyed.push(credentialRef); },
+  } as unknown as WorkerCredentialVault;
+  const revoker = new ProductionCredentialRevoker(
+    {
+      revocationContext: async () => ({
+        priorStatus: "pending",
+        priorProgress: {},
+        targets: [{
+          tenantId: claim.tenantId,
+          connectionId: claim.connectionId!,
+          connectionGeneration: 4,
+          connectorId: "momence" as const,
+          credentialRef: "credential-momence-1",
+        }],
+      }),
+    },
+    () => vault,
+    {
+      lightspeedClientId: "test",
+      lightspeedClientSecret: "test",
+      squareClientId: "test",
+      squareClientSecret: "test",
+      squareRedirectUri: "https://albert.example/api/oauth/square/callback",
+      xeroClientId: "test",
+    },
+  );
+
+  const evidence = await revoker.revoke(claim);
+
+  assert.deepEqual(destroyed, ["credential-momence-1"]);
+  assert.deepEqual(evidence.targets, [{
+    provider: "momence",
+    connectionGeneration: 4,
+    status: "unsupported",
+  }]);
+});
+
+test("Shopify disconnect destroys the local grant without performing irreversible app uninstall", async () => {
+  const destroyed: string[] = [];
+  const vault = {
+    read: async () => { throw new Error("Shopify disconnect must not open credential plaintext"); },
+    destroy: async (credentialRef: string) => { destroyed.push(credentialRef); },
+  } as unknown as WorkerCredentialVault;
+  const revoker = new ProductionCredentialRevoker(
+    {
+      revocationContext: async () => ({
+        priorStatus: "pending",
+        priorProgress: {},
+        targets: [{
+          tenantId: claim.tenantId,
+          connectionId: claim.connectionId!,
+          connectionGeneration: 5,
+          connectorId: "shopify" as const,
+          credentialRef: "credential-shopify-1",
+        }],
+      }),
+    },
+    () => vault,
+    {
+      lightspeedClientId: "test",
+      lightspeedClientSecret: "test",
+      squareClientId: "test",
+      squareClientSecret: "test",
+      squareRedirectUri: "https://albert.example/api/oauth/square/callback",
+      xeroClientId: "test",
+    },
+  );
+
+  const evidence = await revoker.revoke(claim);
+
+  assert.deepEqual(destroyed, ["credential-shopify-1"]);
+  assert.deepEqual(evidence.targets, [{
+    provider: "shopify",
+    connectionGeneration: 5,
+    status: "unsupported",
+  }]);
 });
 
 test("deletion processor orders quiescence, purge, cross-store verification, and immutable proof", async () => {

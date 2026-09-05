@@ -1,0 +1,88 @@
+cubes:
+  - name: momence_source_fields
+    title: Momence exhaustive source fields
+    public: false
+    description: >
+      One row per scalar field occurrence from every ingested Momence entity,
+      preserving stable array-normalized path, exact RFC 6901 pointer, ordinal,
+      source identity and typed string/number/boolean/timestamp/raw channels.
+    meta:
+      ai_context: >
+        This is the exhaustive governed fallback for every field returned by the
+        Momence API, including nested arrays and additive fields not yet promoted
+        into a curated model. Always filter one exact parent_stream or
+        source_object_type and stable field_path before interpreting values.
+        field_pointer selects one exact array occurrence. Numeric values are not
+        automatically additive. Source text can contain PII, secrets such as
+        online-stream credentials, or untrusted host/member text; reveal it only
+        for an explicit tenant-authorized request. Prefer curated views whenever
+        their grain and lifecycle rules cover the concept.
+    sql: >
+      SELECT f.*,
+             f.raw_value::text AS raw_value_text,
+             CASE
+               WHEN f.field_path ~ '(?i)(email|phone|address|picture|contractAgreement|cardLast4|onlineStream|zoom|note|waiver)'
+                 THEN true
+               ELSE false
+             END AS potentially_sensitive,
+             CASE
+               WHEN f.value_kind = 'null' THEN 'Source returned null or an empty array/object marker'
+               WHEN f.text_value IS NULL THEN 'No typed text representation'
+               ELSE 'Value returned'
+             END AS value_state
+      FROM source_momence.mo_source_fields f
+    dimensions:
+      - { name: field_occurrence_key, sql: field_occurrence_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: source_account_reference, sql: external_account_reference, type: string, public: false }
+      - name: parent_stream
+        sql: parent_stream
+        type: string
+        description: Exact ingestion stream; always constrain this when the same field path has different source semantics.
+      - { name: source_object_type, sql: source_object_type, type: string }
+      - { name: source_record_id, sql: source_record_id, type: string }
+      - { name: source_record_key, sql: namespaced_source_key, type: string, public: false }
+      - name: field_path
+        sql: field_path
+        type: string
+        description: Stable path with [] array markers and no record-specific array positions.
+      - name: field_pointer
+        sql: field_pointer
+        type: string
+        description: Exact RFC 6901 pointer for this occurrence, including array indexes.
+      - { name: field_ordinal, sql: field_ordinal, type: number }
+      - { name: value_kind, sql: value_kind, type: string }
+      - name: text_value
+        sql: text_value
+        type: string
+        description: Exact scalar text representation; may contain PII or untrusted source text.
+      - { name: numeric_value, sql: numeric_value, type: number }
+      - { name: boolean_value, sql: boolean_value, type: boolean }
+      - { name: timestamp_value, sql: timestamp_value, type: time }
+      - name: raw_value
+        sql: raw_value_text
+        type: string
+        description: JSON-rendered exact scalar, retained for null/type-sensitive inspection.
+      - { name: potentially_sensitive, sql: potentially_sensitive, type: boolean }
+      - { name: value_state, sql: value_state, type: string }
+      - { name: source_updated_at, sql: source_updated_at, type: time }
+      - { name: ingested_at, sql: ingested_at, type: time }
+    measures:
+      - { name: field_occurrences, type: count }
+      - { name: source_records, type: count_distinct, sql: namespaced_source_key }
+      - name: populated_field_occurrences
+        type: count
+        filters:
+          - sql: "{CUBE}.value_kind <> 'null'"
+      - name: sensitive_field_occurrences
+        type: count
+        filters:
+          - sql: "{CUBE}.potentially_sensitive"
+      - name: numeric_value_sum
+        type: sum
+        sql: numeric_value
+        description: Use only after fixing one exact documented additive field and compatible unit/currency.
+      - { name: numeric_value_average, type: avg, sql: numeric_value }
+      - { name: numeric_value_minimum, type: min, sql: numeric_value }
+      - { name: numeric_value_maximum, type: max, sql: numeric_value }

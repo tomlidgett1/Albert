@@ -1,0 +1,507 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import test from "node:test";
+
+import type { Agent, AgentOutputType, Runner } from "@openai/agents";
+
+import { loadAgentConfig } from "../../packages/albert-v3/src/agent-config/loader.ts";
+import type { CubeCatalogue, CubeLoadResponse } from "../../packages/albert-v3/src/cube/types.ts";
+import type { ValidatedCubeQuery } from "../../packages/albert-v3/src/cube/client.ts";
+import { createV3CommentaryState } from "../../packages/albert-v3/src/engine/commentary.ts";
+import type { V3ToolRoute } from "../../packages/albert-v3/src/engine/connector-routing.ts";
+import type { V3TurnContext } from "../../packages/albert-v3/src/engine/context.ts";
+import {
+  elevatedLaneEffort,
+  finalAnswerSchema,
+  laneModelSettings,
+  renderRequestContext,
+  runAnalyticalLane,
+  runQuickLane,
+  type LaneRunInput,
+} from "../../packages/albert-v3/src/engine/lanes.ts";
+import { intentSchema } from "../../packages/albert-v3/src/engine/orchestrator.ts";
+import {
+  createV3Tools,
+  executeGovernedCubeQuery,
+  relaxDateConstraints,
+} from "../../packages/albert-v3/src/engine/tools.ts";
+
+const read = (path: string) => readFileSync(resolve(path), "utf8");
+const config = loadAgentConfig();
+
+const VIEW = "xero_finance_analytics";
+const DUE_ON = `${VIEW}.due_on`;
+
+test("relaxDateConstraints strips date windows and groups monthly on the constrained member", () => {
+  const relaxed = relaxDateConstraints({
+    measures: [`${VIEW}.total_amount_due`],
+    dimensions: [`${VIEW}.invoice_number`],
+    segments: [`${VIEW}.bills`, `${VIEW}.outstanding`],
+    timeDimensions: [{ dimension: DUE_ON, dateRange: ["2026-08-13", "2026-08-31"] }],
+    filters: [{ member: `${VIEW}.invoice_status`, operator: "equals", values: ["AUTHORISED"] }],
+    timezone: "Australia/Melbourne",
+  });
+  assert.ok(relaxed);
+  assert.equal(relaxed.member, DUE_ON);
+  assert.equal(relaxed.dropped.length, 1);
+  assert.equal(relaxed.windowStart, "2026-08-13");
+  assert.equal(relaxed.windowEnd, "2026-08-31");
+  // The diagnostic keeps everything that defines what the data is (measures,
+  // segments, non-date filters) and drops only the date window and the
+  // row-level dimensions.
+  assert.deepEqual(relaxed.diagnostic.measures, [`${VIEW}.total_amount_due`]);
+  assert.deepEqual(relaxed.diagnostic.segments, [`${VIEW}.bills`, `${VIEW}.outstanding`]);
+  assert.equal(relaxed.diagnostic.dimensions, undefined);
+  assert.deepEqual(relaxed.diagnostic.timeDimensions, [{ dimension: DUE_ON, granularity: "month" }]);
+  assert.deepEqual(relaxed.diagnostic.filters, [
+    { member: `${VIEW}.invoice_status`, operator: "equals", values: ["AUTHORISED"] },
+  ]);
+  assert.deepEqual(relaxed.diagnostic.order, { [DUE_ON]: "asc" });
+  assert.equal(relaxed.diagnostic.timezone, "Australia/Melbourne");
+});
+
+test("relaxDateConstraints also relaxes date-operator filters, which bypass timeDimensions", () => {
+  const relaxed = relaxDateConstraints({
+    measures: [`${VIEW}.total_amount_due`],
+    filters: [
+      { member: DUE_ON, operator: "inDateRange", values: ["2026-08-13", "2026-08-31"] },
+      { member: `${VIEW}.invoice_status`, operator: "equals", values: ["AUTHORISED"] },
+    ],
+  });
+  assert.ok(relaxed);
+  assert.equal(relaxed.member, DUE_ON);
+  assert.equal(relaxed.windowStart, "2026-08-13");
+  assert.equal(relaxed.windowEnd, "2026-08-31");
+  assert.deepEqual(relaxed.diagnostic.timeDimensions, [{ dimension: DUE_ON, granularity: "month" }]);
+  assert.deepEqual(relaxed.diagnostic.filters, [
+    { member: `${VIEW}.invoice_status`, operator: "equals", values: ["AUTHORISED"] },
+  ]);
+});
+
+test("relaxDateConstraints refuses queries it cannot relax faithfully", () => {
+  // No date constraint at all: emptiness is not explained by a window.
+  assert.equal(relaxDateConstraints({
+    measures: [`${VIEW}.total_amount_due`],
+    filters: [{ member: `${VIEW}.invoice_status`, operator: "equals", values: ["PAID"] }],
+  }), null);
+  // A date operator nested in a boolean group cannot be dropped without
+  // changing the group's meaning.
+  assert.equal(relaxDateConstraints({
+    measures: [`${VIEW}.total_amount_due`],
+    filters: [{
+      or: [
+        { member: DUE_ON, operator: "beforeDate", values: ["2026-08-01"] },
+        { member: `${VIEW}.invoice_status`, operator: "equals", values: ["PAID"] },
+      ],
+    }],
+  }), null);
+});
+
+function stubContext(input: Readonly<{
+  loadQuery: (query: unknown) => Promise<Readonly<{
+    validated: ValidatedCubeQuery | undefined;
+    result: CubeLoadResponse;
+  }>>;
+}>): V3TurnContext {
+  const catalogue: CubeCatalogue = { views: [], fetchedAt: "2026-08-13T00:00:00.000Z" };
+  return {
+    cube: {
+      loadQuery: input.loadQuery,
+      fetchCatalogue: async () => catalogue,
+    } as unknown as V3TurnContext["cube"],
+    config,
+    promptCachePartition: "fixturetenant",
+    toolRoute: route(),
+    emit: async (event) => ({
+      ...event,
+      id: "01K2K2A6S9W9M4FW4NG4TDD9E1",
+      sequence: 1,
+      occurredAt: "2026-08-13T00:00:00.000Z",
+    } as never),
+    budget: { maxQueries: 3, executed: 0 },
+    connectorFreshness: [],
+    sourceFindings: [],
+    commentary: createV3CommentaryState(false),
+    executedQueries: [],
+    tableResults: new Map(),
+    priorResults: new Map(),
+    chartedResultIds: new Set(),
+  };
+}
+
+test("a zero-row date-windowed query ships with a free diagnostic showing where the data falls", async () => {
+  const seen: unknown[] = [];
+  const windowedQuery = {
+    measures: [`${VIEW}.total_amount_due`],
+    segments: [`${VIEW}.bills`],
+    timeDimensions: [{ dimension: DUE_ON, dateRange: "2026-08-13,2026-08-31" }],
+  };
+  const context = stubContext({
+    loadQuery: async (query) => {
+      seen.push(query);
+      const windowed = JSON.stringify(query).includes("2026-08-13");
+      const validated: ValidatedCubeQuery = {
+        query: query as ValidatedCubeQuery["query"],
+        view: VIEW,
+        cubes: ["xero_invoices"],
+        members: [`${VIEW}.total_amount_due`, DUE_ON],
+      };
+      return {
+        validated,
+        result: {
+          ok: true,
+          rows: windowed
+            ? []
+            : [
+                { [`${DUE_ON}.month`]: "2026-06-01T00:00:00.000", [`${VIEW}.total_amount_due`]: "1200" },
+                { [`${DUE_ON}.month`]: "2026-07-01T00:00:00.000", [`${VIEW}.total_amount_due`]: "23844" },
+              ],
+          annotation: {},
+          executionMs: 5,
+          cached: false,
+        },
+      };
+    },
+  });
+  const output = await executeGovernedCubeQuery(context, {
+    topic: "Outstanding bills due 13-31 August",
+    ...windowedQuery,
+  });
+  assert.equal(output.ok, true);
+  assert.equal(output.rowCount, 0);
+  const diagnostic = output.emptyResultDiagnostic as Record<string, unknown>;
+  assert.ok(diagnostic, "an empty windowed result must carry its own explanation");
+  assert.equal(diagnostic.rowCount, 2);
+  // Both months fall before the window, so the nearest-before marker is July
+  // and every row survives into the model payload.
+  assert.equal(diagnostic.nearestDataBeforeWindow, "2026-07-01");
+  assert.equal(diagnostic.nearestDataAfterWindow, undefined);
+  assert.equal((diagnostic.rows as unknown[]).length, 2);
+  assert.match(String(diagnostic.note), /months of this data closest to the window/u);
+  assert.match(String(diagnostic.note), /anything unpaid there is still owed now/u);
+  // The diagnostic is free: only the original query consumed budget.
+  assert.equal(context.budget.executed, 1);
+  assert.equal(context.emptyResultDiagnostics, 1);
+  assert.equal(seen.length, 2);
+  // The diagnostic run itself was date-unconstrained and month-grouped.
+  assert.match(JSON.stringify(seen[1]), /"granularity":"month"/u);
+  assert.doesNotMatch(JSON.stringify(seen[1]), /2026-08-13/u);
+});
+
+test("a non-empty result never triggers the diagnostic", async () => {
+  let calls = 0;
+  const context = stubContext({
+    loadQuery: async (query) => {
+      calls += 1;
+      return {
+        validated: {
+          query: query as ValidatedCubeQuery["query"],
+          view: VIEW,
+          cubes: ["xero_invoices"],
+          members: [`${VIEW}.total_amount_due`],
+        },
+        result: {
+          ok: true,
+          rows: [{ [`${VIEW}.total_amount_due`]: "250" }],
+          annotation: {},
+          executionMs: 5,
+          cached: false,
+        },
+      };
+    },
+  });
+  const output = await executeGovernedCubeQuery(context, {
+    topic: "Outstanding bills due 13-31 August",
+    measures: [`${VIEW}.total_amount_due`],
+    timeDimensions: [{ dimension: DUE_ON, dateRange: "2026-08-13,2026-08-31" }],
+  });
+  assert.equal(output.ok, true);
+  assert.equal(output.emptyResultDiagnostic, undefined);
+  assert.equal(calls, 1);
+  assert.equal(context.emptyResultDiagnostics ?? 0, 0);
+});
+
+function route(): V3ToolRoute {
+  return Object.freeze({
+    cube: true,
+    shopifyQL: false,
+    shopifyAdmin: false,
+    activeCubeConnectors: Object.freeze(["xero"]),
+    preferredCubeConnectors: Object.freeze([]),
+    unavailableRequestedConnectors: Object.freeze([]),
+    mode: "cube" as const,
+    reasons: Object.freeze(["persistence contract fixture"]),
+  }) as V3ToolRoute;
+}
+
+async function captureLaneInstructions(
+  lane: "quick" | "analytical",
+): Promise<string> {
+  let captured: Agent<unknown, AgentOutputType> | undefined;
+  const runner = {
+    run: async (agent: Agent<unknown, AgentOutputType>) => {
+      captured = agent;
+      return {
+        finalOutput: {
+          answer: "Fixture answer.",
+          state: "Verified",
+          followUps: ["Show me the detail"],
+          assumptionsDisclosed: [],
+        },
+      };
+    },
+  } as unknown as Runner;
+  const toolRoute = route();
+  const context: V3TurnContext = {
+    cube: {} as V3TurnContext["cube"],
+    config,
+    promptCachePartition: "fixturetenant",
+    toolRoute,
+    emit: async (event) => ({
+      ...event,
+      id: "01K2K2A6S9W9M4FW4NG4TDD9E1",
+      sequence: 1,
+      occurredAt: "2026-08-13T00:00:00.000Z",
+    } as never),
+    budget: { maxQueries: 8, executed: 0 },
+    connectorFreshness: [],
+    sourceFindings: [],
+    commentary: createV3CommentaryState(lane === "analytical"),
+    executedQueries: [],
+    tableResults: new Map(),
+    priorResults: new Map(),
+    chartedResultIds: new Set(),
+  };
+  const input: LaneRunInput = {
+    runner,
+    preferences: { model: "gpt-5.6-luna", reasoningEffort: "medium", fastMode: false },
+    config,
+    catalogue: { views: [], fetchedAt: "2026-08-13T00:00:00.000Z" },
+    context,
+    conversation: [],
+    intent: {
+      lane,
+      resolvedQuestion: "What invoices do we have due end of August?",
+      ownerGoal: "Plan which supplier payments must go out this month.",
+      answerShape: "breakdown",
+      answerMustCover: ["Anything already overdue and unpaid"],
+      assumptions: [],
+      clarificationQuestion: null,
+      clarificationOptions: [],
+      recipe: null,
+      recipeDateRange: null,
+      recipeEntity: null,
+      nativeCapability: null,
+    },
+  };
+  await (lane === "quick" ? runQuickLane : runAnalyticalLane)(input);
+  assert.ok(captured);
+  if (typeof captured.instructions !== "string") throw new Error("dynamic instructions");
+  return captured.instructions;
+}
+
+test("the quick lane can escalate instead of hedging; the analytical lane must resolve", async () => {
+  assert.ok(finalAnswerSchema.shape.state.options.includes("Escalate"));
+
+  const quick = await captureLaneInstructions("quick");
+  assert.match(quick, /return state=Escalate/u);
+  assert.match(quick, /Escalating always\s+beats hedging/u);
+  assert.match(quick, /lead to investigate, not an answer to report/u);
+  assert.match(quick, /Money owed stays owed until paid/u);
+  assert.doesNotMatch(quick, /Do not over-investigate\./u);
+
+  const analytical = await captureLaneInstructions("analytical");
+  assert.match(analytical, /never return state=Escalate/u);
+  assert.match(analytical, /lead to investigate, not an answer to report/u);
+  assert.match(analytical, /Money owed stays owed until paid/u);
+});
+
+test("the intent agent infers a goal and useful-answer criteria that reach every lane", () => {
+  const shape = intentSchema.shape;
+  assert.ok(shape.ownerGoal);
+  assert.ok(shape.answerMustCover);
+
+  const context = renderRequestContext({
+    config,
+    question: "What bills are due in August?",
+    ownerGoal: "Plan which supplier payments must go out this month.",
+    answerMustCover: ["Anything already overdue and unpaid", "What falls due inside August"],
+  });
+  assert.match(context, /Owner's practical goal: Plan which supplier payments/u);
+  assert.match(context, /A useful answer must cover:\n- Anything already overdue and unpaid\n- What falls due inside August/u);
+
+  const orchestrator = read("packages/albert-v3/src/engine/orchestrator.ts");
+  assert.match(orchestrator, /answerMustCover: up to 4 short points/u);
+});
+
+test("the user's reasoning effort is a floor for lane effort, never silently downgraded", () => {
+  assert.equal(elevatedLaneEffort("low", "max"), "max");
+  assert.equal(elevatedLaneEffort("low", "high"), "high");
+  assert.equal(elevatedLaneEffort("high", "low"), "high");
+  assert.equal(elevatedLaneEffort("medium", undefined), "medium");
+  const settings = laneModelSettings(
+    { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: false },
+    "low",
+  );
+  assert.equal(settings.reasoning?.effort, "max");
+});
+
+test("the visible plan tool ships on the analytical lane and its events pass the persistence gate", () => {
+  const names = (lane: "quick" | "analytical") =>
+    createV3Tools({ route: route(), lane, purpose: "answer" }).map((tool) => tool.name);
+  assert.ok(names("analytical").includes("update_plan"));
+  assert.equal(names("quick").includes("update_plan"), false);
+
+  // The analytical prompt instructs the model to maintain the plan, and the
+  // control-plane append gate accepts 'plan' events (migration 0140).
+  const lanes = read("packages/albert-v3/src/engine/lanes.ts");
+  assert.match(lanes, /call update_plan with the unchanged stable step ids/u);
+  const migration = read("infra/migrations/control-plane/0140_m8_plan_trace_events.sql");
+  assert.match(migration, /'progress', 'narrative', 'plan', 'query', 'table', 'chart',/u);
+});
+
+test("connector sync watermarks reach the model, the tool results, and the answer state", async () => {
+  const { groundedAnswerState } = await import("../../packages/albert-v3/src/engine/grounding.ts");
+  // A confident emptiness reaching past the watermark downgrades to Qualified.
+  assert.equal(groundedAnswerState({
+    lane: "quick", requested: "Verified", queriesExecuted: 2, rowsSeen: 0, freshnessQualified: true,
+  }), "Qualified");
+  assert.equal(groundedAnswerState({
+    lane: "quick", requested: "Verified", queriesExecuted: 2, rowsSeen: 5,
+  }), "Verified");
+
+  const { renderConnectorFreshness } = await import("../../packages/albert-v3/src/engine/lanes.ts");
+  const block = renderConnectorFreshness([
+    { connector: "deputy", domain: "timesheets", dataThrough: "2026-08-01T14:00:00Z" },
+    { connector: "deputy", domain: "rosters", dataThrough: "2026-08-13T09:00:00Z" },
+  ]);
+  assert.match(block, /deputy timesheets: synced through 2026-08-01/u);
+  assert.match(block, /never zero/u);
+  assert.equal(renderConnectorFreshness([]), "");
+
+  // The routing read now carries freshness instead of discarding it.
+  const webRepository = read("services/control-plane/src/web-repository.ts");
+  assert.match(webRepository, /data_ready_through/u);
+  assert.match(webRepository, /loadConnectorRouting/u);
+  const route = read("app/api/v3-conversation/route.ts");
+  assert.match(route, /connectorFreshness/u);
+});
+
+test("an evidence reviewer gates the answer and can re-enter the analytical lane once", async () => {
+  const engine = read("packages/albert-v3/src/engine/engine.ts");
+  assert.match(engine, /reviewEvidenceSufficiency/u);
+  assert.match(engine, /verdict === "investigate"/u);
+  // The review runs between lane execution and answer finalisation, refills
+  // the budget, and never loops (the revised answer is not re-reviewed).
+  assert.match(engine, /An internal reviewer judged the draft below insufficient/u);
+  assert.match(engine, /An unexplained zero is not an answer/u);
+  // The reviewer sees a row sample of each presented table, never a silent
+  // truncation: it is told the true row count and that a shorter sample is
+  // presentation, not missing evidence. Turn 01M095F8M1… showed 12 of 25 rows
+  // beside a 25-row query and the reviewer demanded the "13 rows not shown".
+  assert.match(engine, /totalRows: table\.rows\.length/u);
+  assert.match(engine, /slice\(0, REVIEWER_TABLE_SAMPLE_ROWS\)/u);
+  assert.match(engine, /sample shorter than totalRows, is never missing evidence/u);
+  const { REVIEWER_TABLE_SAMPLE_ROWS } = await import("../../packages/albert-v3/src/engine/engine.js");
+  assert.ok(REVIEWER_TABLE_SAMPLE_ROWS >= 25, "a default limit-25 breakdown must be seen whole");
+});
+
+test("the source-finding ledger reaches prompts, the tool ships, and support roles cap effort", async () => {
+  const { renderSourceFindings } = await import("../../packages/albert-v3/src/engine/lanes.ts");
+  const block = renderSourceFindings([
+    { concept: "worked hours", finding: "Deputy timesheets are authoritative; Square timecards run high.", recordedAt: "2026-08-13T00:00:00Z" },
+  ]);
+  assert.match(block, /\[worked hours\] Deputy timesheets are authoritative/u);
+  assert.match(block, /record_source_finding/u);
+  assert.equal(renderSourceFindings([]), "");
+
+  const names = createV3Tools({ route: route(), lane: "quick", purpose: "answer" }).map((tool) => tool.name);
+  assert.ok(names.includes("record_source_finding"));
+  const investigation = createV3Tools({ route: route(), lane: "quick", purpose: "investigation" }).map((tool) => tool.name);
+  assert.equal(investigation.includes("record_source_finding"), false);
+
+  // The user's effort floor applies to investigation; support roles stay capped.
+  const capped = laneModelSettings(
+    { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: false },
+    "medium",
+    { maxEffort: "medium" },
+  );
+  assert.equal(capped.reasoning?.effort, "medium");
+
+  // Turn exhaustion escalates or composes from evidence instead of failing.
+  const lanes = read("packages/albert-v3/src/engine/lanes.ts");
+  assert.match(lanes, /max turns/iu);
+  const engine = read("packages/albert-v3/src/engine/engine.ts");
+  assert.match(engine, /composeFromGatheredEvidence\(laneInput\)/u);
+});
+
+test("charts are gated by answer shape and by a perceptual floor on the data", async () => {
+  // Shape gate: fact/list questions never see the chart tool at all.
+  const withCharts = createV3Tools({ route: route(), lane: "quick", purpose: "answer", chartable: true })
+    .map((tool) => tool.name);
+  const withoutCharts = createV3Tools({ route: route(), lane: "quick", purpose: "answer", chartable: false })
+    .map((tool) => tool.name);
+  assert.ok(withCharts.includes("make_chart"));
+  assert.equal(withoutCharts.includes("make_chart"), false);
+  assert.ok(intentSchema.shape.answerShape);
+
+  // Perceptual floor: too few points, or bars of identical height, are
+  // rejected by the runtime regardless of model judgment.
+  const makeChart = createV3Tools({ route: route(), lane: "analytical", purpose: "answer" })
+    .find((tool) => tool.name === "make_chart");
+  assert.ok(makeChart && makeChart.type === "function");
+  const chartContext = stubContext({ loadQuery: async () => { throw new Error("unused"); } });
+  const baseTable = {
+    tableEventId: "evt", caption: "t", columnKeys: ["who", "hours"],
+    numericColumnKeys: ["hours"],
+    columns: [
+      { key: "who", label: "Who", type: "string" as const },
+      { key: "hours", label: "Hours", type: "number" as const },
+    ],
+    provenance: {
+      sources: [], timeRange: { label: "x", start: "unknown", end: "unknown", timezone: "UTC" },
+      definitions: [], semanticBundleHash: "x", identityGraph: { version: 0, hash: "x" },
+    },
+    presentation: "evidence" as const,
+  };
+  chartContext.tableResults.set("res_one_row", {
+    ...baseTable, resultId: "res_one_row", rowCount: 1,
+    rows: [{ who: "Leigh Phillips", hours: 8 }],
+  });
+  chartContext.tableResults.set("res_flat_bars", {
+    ...baseTable, resultId: "res_flat_bars", rowCount: 5,
+    rows: Array.from({ length: 5 }, (_, index) => ({ who: `Staff ${index}`, hours: 8 })),
+  });
+  chartContext.tableResults.set("res_varied", {
+    ...baseTable, resultId: "res_varied", rowCount: 5,
+    rows: Array.from({ length: 5 }, (_, index) => ({ who: `Staff ${index}`, hours: 4 + index })),
+  });
+  const run = async (resultId: string) => {
+    const raw = await (makeChart.invoke as (ctx: unknown, args: string) => Promise<unknown>)(
+      { context: chartContext },
+      JSON.stringify({ resultId, chartType: "bar", caption: "Hours by staff", xKey: "who", yKey: "hours" }),
+    );
+    return (typeof raw === "string" ? JSON.parse(raw) : raw) as { ok: boolean; error?: string };
+  };
+  const oneRow = await run("res_one_row");
+  assert.equal(oneRow.ok, false);
+  assert.match(String(oneRow.error), /fewer than \d points/u);
+  const flat = await run("res_flat_bars");
+  assert.equal(flat.ok, false);
+  assert.match(String(flat.error), /same height/u);
+  const varied = await run("res_varied");
+  assert.equal(varied.ok, true);
+});
+
+test("the engine escalates a quick turn on state=Escalate with a refilled budget and never ships Escalate", () => {
+  const engine = read("packages/albert-v3/src/engine/engine.ts");
+  // Escalation triggers the analytical rerun alongside the existing
+  // no-answer/no-query fallbacks.
+  assert.match(engine, /askedToEscalate = lane === "quick" && finalAnswer\?\.state === "Escalate"/u);
+  assert.match(engine, /!finalAnswer \|\| ranNoQueries \|\| askedToEscalate/u);
+  // A surprise refills the budget rather than inheriting the spent quick allowance.
+  assert.match(engine, /context\.budget\.executed \+ config\.lanes\.analytical\.maxQueries/u);
+  // Escalate is engine-internal and is coerced before the answer ships.
+  assert.match(engine, /finalAnswer\.state === "Escalate" \? "Exploratory" : finalAnswer\.state/u);
+});

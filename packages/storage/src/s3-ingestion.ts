@@ -96,7 +96,7 @@ export class S3RawIngestionObjectStore implements RawObjectStore {
         // must still validate on another.
         let receivedText: string;
         try {
-          receivedText = gunzipSync(received).toString("utf8");
+          receivedText = Buffer.from(gunzipSync(received)).toString("utf8");
         } catch {
           throw new Error("sentinel_mismatch");
         }

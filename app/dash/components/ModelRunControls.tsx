@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -12,6 +13,12 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   ALBERT_MODELS,
+  CLAUDE_HAIKU_4_5_MODEL_ID,
+  CLAUDE_SONNET_5_MODEL_ID,
+  isAnthropicModel,
+  modelSupportsFastMode,
+  normalizeAgentPreferences,
+  reasoningEffortsForModel,
   type AgentRunPreferences,
   type AlbertModelId,
   type ReasoningEffort,
@@ -21,6 +28,21 @@ import styles from "../dash.module.css";
 type ModelRunControlsProps = {
   value: AgentRunPreferences;
   onChange: (value: AgentRunPreferences) => void;
+  allowedModelIds?: readonly AlbertModelId[];
+  allowedReasoningEfforts?: readonly ReasoningEffort[];
+  /** Codex-only planning preflight. Omit for Albert/V3 and comparison controls. */
+  solPlannerEnabled?: boolean;
+  onSolPlannerChange?: (enabled: boolean) => void;
+  /** Codex-only GPT-5.6 Responses Pro mode. Omit outside Codex. */
+  proModeEnabled?: boolean;
+  onProModeChange?: (enabled: boolean) => void;
+  superAgentEnabled?: boolean;
+  onSuperAgentChange?: (enabled: boolean) => void;
+  swarmEnabled?: boolean;
+  onSwarmChange?: (enabled: boolean) => void;
+  /** Development inspector: request, response headers, SSE frames and trace events. */
+  rawDebugOpen?: boolean;
+  onRawDebugChange?: (open: boolean) => void;
   disabled?: boolean;
   runActive?: boolean;
   popoverPlacement?: "above" | "below";
@@ -38,8 +60,15 @@ const EFFORT_OPTIONS = [
   { id: "none", label: "None" },
 ] as const satisfies ReadonlyArray<{ id: ReasoningEffort; label: string }>;
 
-/** Left-to-right model tabs: efficient → balanced → frontier. */
-const MODEL_TAB_ORDER = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"] as const satisfies ReadonlyArray<AlbertModelId>;
+/** Left-to-right model tabs: GPT family, then the additional providers. */
+const MODEL_TAB_ORDER = [
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "grok-4.6",
+  CLAUDE_SONNET_5_MODEL_ID,
+  CLAUDE_HAIKU_4_5_MODEL_ID,
+] as const satisfies ReadonlyArray<AlbertModelId>;
 
 const EFFORT_LABELS: Record<ReasoningEffort, string> = Object.fromEntries(
   EFFORT_OPTIONS.map(({ id, label }) => [id, label]),
@@ -62,11 +91,12 @@ function FastModeIcon({ className }: { className?: string }) {
 }
 
 const PILL_EASE = [0.22, 1, 0.36, 1] as const;
-const POPOVER_WIDTH = 196;
+const POPOVER_WIDTH = 252;
 
 type PopoverCoords = {
   left: number;
   width: number;
+  maxHeight: number;
   top?: number;
   bottom?: number;
 };
@@ -74,6 +104,18 @@ type PopoverCoords = {
 export function ModelRunControls({
   value,
   onChange,
+  allowedModelIds,
+  allowedReasoningEfforts,
+  solPlannerEnabled = false,
+  onSolPlannerChange,
+  proModeEnabled = false,
+  onProModeChange,
+  superAgentEnabled = false,
+  onSuperAgentChange,
+  swarmEnabled = false,
+  onSwarmChange,
+  rawDebugOpen = false,
+  onRawDebugChange,
   disabled = false,
   popoverPlacement = "above",
   popoverAlign = "trigger-end",
@@ -82,46 +124,63 @@ export function ModelRunControls({
   const [popoverEntered, setPopoverEntered] = useState(false);
   const [triggerWidth, setTriggerWidth] = useState<number | null>(null);
   const [popoverCoords, setPopoverCoords] = useState<PopoverCoords | null>(null);
+  const [flipPopoverBelow, setFlipPopoverBelow] = useState(false);
   const reduceMotion = useReducedMotion();
   const popoverId = useId().replaceAll(":", "");
   const areaRef = useRef<HTMLDivElement>(null);
   const modelTabsRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const summaryMeasureRef = useRef<HTMLSpanElement>(null);
   const selectedEffortRef = useRef<HTMLButtonElement>(null);
   const closeTimerRef = useRef<number | null>(null);
 
-  const clearCloseTimer = () => {
+  const clearCloseTimer = useCallback(() => {
     if (closeTimerRef.current !== null) {
       window.clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
     }
-  };
+  }, []);
 
-  const closePopover = () => {
+  const closePopover = useCallback(() => {
     clearCloseTimer();
     setPopoverEntered(false);
+    setFlipPopoverBelow(false);
     closeTimerRef.current = window.setTimeout(() => {
       setOpen(false);
       setPopoverCoords(null);
       closeTimerRef.current = null;
     }, reduceMotion ? 0 : 180);
-  };
+  }, [clearCloseTimer, reduceMotion]);
 
-  const openPopover = () => {
+  const openPopover = useCallback(() => {
+    const reopeningMidClose = closeTimerRef.current !== null;
     clearCloseTimer();
+    if (reopeningMidClose) {
+      // Reopening during the exit animation: `open` never flipped to false,
+      // so the enter effect will not re-run. The popover is still mounted
+      // and positioned — return it to its entered state directly.
+      setPopoverEntered(true);
+      return;
+    }
     setPopoverEntered(false);
+    setFlipPopoverBelow(false);
     setOpen(true);
-  };
+  }, [clearCloseTimer]);
 
   const modelTabs = useMemo(
-    () => MODEL_TAB_ORDER.map((id) => ALBERT_MODELS.find((model) => model.id === id)!),
-    [],
+    () => {
+      const allowed = allowedModelIds ? new Set<AlbertModelId>(allowedModelIds) : null;
+      return MODEL_TAB_ORDER
+        .filter((id) => !allowed || allowed.has(id))
+        .map((id) => ALBERT_MODELS.find((model) => model.id === id)!);
+    },
+    [allowedModelIds],
   );
 
   const selectedModel = useMemo(
-    () => ALBERT_MODELS.find((model) => model.id === value.model) ?? ALBERT_MODELS[0],
-    [value.model],
+    () => modelTabs.find((model) => model.id === value.model) ?? modelTabs[0] ?? ALBERT_MODELS[0],
+    [modelTabs, value.model],
   );
 
   const selectedModelIndex = useMemo(
@@ -129,11 +188,29 @@ export function ModelRunControls({
     [modelTabs, value.model],
   );
 
+  const effortOptions = useMemo(
+    () => {
+      const allowed = new Set(reasoningEffortsForModel(value.model));
+      const configured = allowedReasoningEfforts ? new Set(allowedReasoningEfforts) : null;
+      return EFFORT_OPTIONS.filter((effort) => allowed.has(effort.id) && (!configured || configured.has(effort.id)));
+    },
+    [allowedReasoningEfforts, value.model],
+  );
+  const showFastMode = modelSupportsFastMode(value.model);
+
   const effortLabel = EFFORT_LABELS[value.reasoningEffort] ?? value.reasoningEffort;
 
-  const triggerSummary = value.fastMode
-    ? `${selectedModel.label} · ${effortLabel} · Fast mode`
-    : `${selectedModel.label} · ${effortLabel}`;
+  const showRunModes = Boolean(onSuperAgentChange || onSwarmChange);
+
+  const triggerSummary = [
+    selectedModel.label,
+    effortLabel,
+    value.fastMode ? "Fast mode" : null,
+    onSuperAgentChange && superAgentEnabled ? "Super agent" : null,
+    onSwarmChange && swarmEnabled ? "Swarm" : null,
+    onProModeChange && proModeEnabled ? "Pro reasoning" : null,
+    onSolPlannerChange && solPlannerEnabled ? "Sol planner" : null,
+  ].filter(Boolean).join(" · ");
 
   useLayoutEffect(() => {
     const summary = summaryMeasureRef.current;
@@ -151,7 +228,19 @@ export function ModelRunControls({
     measure();
     const frame = window.requestAnimationFrame(measure);
     return () => window.cancelAnimationFrame(frame);
-  }, [effortLabel, selectedModel.label, value.fastMode]);
+  }, [
+    effortLabel,
+    onProModeChange,
+    onSolPlannerChange,
+    onSuperAgentChange,
+    onSwarmChange,
+    proModeEnabled,
+    selectedModel.label,
+    solPlannerEnabled,
+    superAgentEnabled,
+    swarmEnabled,
+    value.fastMode,
+  ]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -161,6 +250,13 @@ export function ModelRunControls({
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
       const width = Math.min(POPOVER_WIDTH, window.innerWidth - 24);
+      const popoverHeight = popoverRef.current?.scrollHeight ?? 0;
+      const aboveSpace = Math.max(0, rect.top - 22);
+      const belowSpace = Math.max(0, window.innerHeight - rect.bottom - 22);
+      const shouldFlipBelow = popoverPlacement === "above"
+        && popoverHeight > aboveSpace
+        && belowSpace > aboveSpace;
+      setFlipPopoverBelow((current) => (current === shouldFlipBelow ? current : shouldFlipBelow));
       const shell =
         popoverAlign === "shell-start"
           ? trigger.closest<HTMLElement>('[data-edit-open="true"]')
@@ -169,13 +265,14 @@ export function ModelRunControls({
       const left = shellRect
         ? Math.max(12, Math.min(shellRect.left, window.innerWidth - width - 12))
         : Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12));
-      if (popoverPlacement === "below") {
-        setPopoverCoords({ top: rect.bottom + 10, left, width });
+      if (popoverPlacement === "below" || shouldFlipBelow) {
+        setPopoverCoords({ top: rect.bottom + 10, left, width, maxHeight: Math.max(120, belowSpace) });
       } else {
         setPopoverCoords({
           bottom: Math.max(12, window.innerHeight - rect.top + 10),
           left,
           width,
+          maxHeight: Math.max(120, aboveSpace),
         });
       }
     };
@@ -191,20 +288,21 @@ export function ModelRunControls({
     open,
     popoverAlign,
     popoverPlacement,
+    flipPopoverBelow,
     triggerWidth,
     effortLabel,
+    proModeEnabled,
     selectedModel.label,
+    solPlannerEnabled,
+    superAgentEnabled,
+    swarmEnabled,
     value.fastMode,
   ]);
 
   useLayoutEffect(() => {
-    if (!open) {
-      setPopoverEntered(false);
-      return;
-    }
+    if (!open) return;
 
     // Paint the closed fixed position first, then enter so the slide transition runs.
-    setPopoverEntered(false);
     let enterFrame = 0;
     const prepFrame = window.requestAnimationFrame(() => {
       enterFrame = window.requestAnimationFrame(() => setPopoverEntered(true));
@@ -215,7 +313,13 @@ export function ModelRunControls({
     };
   }, [open]);
 
-  useEffect(() => () => clearCloseTimer(), []);
+  useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
+
+  useEffect(() => {
+    if (!open || !popoverEntered) return;
+    const focusFrame = window.requestAnimationFrame(() => selectedEffortRef.current?.focus());
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [open, popoverEntered]);
 
   useEffect(() => {
     if (!open) return;
@@ -235,21 +339,26 @@ export function ModelRunControls({
 
     document.addEventListener("pointerdown", closeOnOutsidePress);
     document.addEventListener("keydown", closeOnEscape);
-    const focusTimer = window.requestAnimationFrame(() => selectedEffortRef.current?.focus());
 
     return () => {
       document.removeEventListener("pointerdown", closeOnOutsidePress);
       document.removeEventListener("keydown", closeOnEscape);
-      window.cancelAnimationFrame(focusTimer);
     };
-  }, [open, reduceMotion]);
+  }, [closePopover, open]);
 
   const updateModel = (model: AlbertModelId) => {
-    onChange({ ...value, model });
+    // Haiku's manual thinking budgets make Max minutes-slow, so it starts at
+    // Low. Sonnet's adaptive thinking self-regulates and keeps the selection.
+    const switchingToHaiku = model === CLAUDE_HAIKU_4_5_MODEL_ID && value.model !== CLAUDE_HAIKU_4_5_MODEL_ID;
+    onChange(normalizeAgentPreferences({
+      ...value,
+      model,
+      ...(switchingToHaiku ? { reasoningEffort: "low", fastMode: false } : {}),
+    }));
   };
 
   const updateReasoning = (reasoningEffort: ReasoningEffort) => {
-    onChange({ ...value, reasoningEffort });
+    onChange(normalizeAgentPreferences({ ...value, reasoningEffort }));
   };
 
   const moveModelFocus = (event: ReactKeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
@@ -286,19 +395,20 @@ export function ModelRunControls({
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-controls={popoverId}
-        aria-label={`Run settings: ${selectedModel.label}, ${value.fastMode ? "Fast mode" : "Standard speed"}, ${value.reasoningEffort} reasoning`}
+        aria-label={`Run settings: ${selectedModel.label}, ${value.fastMode ? "Fast mode" : "Standard speed"}, ${value.reasoningEffort} reasoning${onSuperAgentChange ? `, Super agent ${superAgentEnabled ? "on" : "off"}` : ""}${onSwarmChange ? `, Swarm ${swarmEnabled ? "on" : "off"}` : ""}${onProModeChange ? `, Pro reasoning ${proModeEnabled ? "on" : "off"}` : ""}${onSolPlannerChange ? `, Sol planner ${solPlannerEnabled ? "on" : "off"}` : ""}`}
         data-testid="model-run-controls-trigger"
         title={triggerSummary}
         style={triggerWidth ? { width: triggerWidth } : undefined}
         data-width-ready={triggerWidth ? "true" : undefined}
         onClick={() => {
-          if (open) closePopover();
+          // While the exit animation runs, `open` is still true for 180ms; a
+          // click in that window means "open it again", not "close it more".
+          if (open && closeTimerRef.current === null) closePopover();
           else openPopover();
         }}
       >
         <span className={styles.modelControlsSummaryMeasure} ref={summaryMeasureRef} aria-hidden="true">
-          <strong className={styles.modelControlsModelName}>{selectedModel.label}</strong>
-          <span className={styles.modelControlsSummarySep}>·</span>
+          <span className={styles.modelControlsModelName}>{selectedModel.label}</span>
           <span className={styles.modelControlsSummaryMeta}>{effortLabel}</span>
           {value.fastMode ? (
             <span className={styles.modelControlsFastSlot}>
@@ -307,8 +417,7 @@ export function ModelRunControls({
           ) : null}
         </span>
         <span className={styles.modelControlsSummary}>
-          <strong className={styles.modelControlsModelName}>{selectedModel.label}</strong>
-          <span className={styles.modelControlsSummarySep} aria-hidden="true">·</span>
+          <span className={styles.modelControlsModelName}>{selectedModel.label}</span>
           <span className={styles.modelControlsSummaryMeta}>{effortLabel}</span>
           <AnimatePresence initial={false}>
             {value.fastMode ? (
@@ -329,10 +438,11 @@ export function ModelRunControls({
       </button>
 
       <div
+        ref={popoverRef}
         id={popoverId}
         className={[
           styles.modelControlsPopover,
-          popoverPlacement === "below" ? styles.modelControlsPopoverBelow : "",
+          popoverPlacement === "below" || flipPopoverBelow ? styles.modelControlsPopoverBelow : "",
           popoverAlign === "shell-start" ? styles.modelControlsPopoverShellStart : "",
           popoverEntered ? styles.modelControlsPopoverOpen : "",
           open && popoverCoords ? styles.modelControlsPopoverFixed : "",
@@ -349,16 +459,65 @@ export function ModelRunControls({
                 left: popoverCoords.left,
                 right: "auto",
                 width: popoverCoords.width,
+                maxHeight: popoverCoords.maxHeight,
               }
             : undefined
         }
       >
+        {showRunModes ? (
+        <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-mode`}>
+          <p className={styles.modelControlsSectionTitle} id={`${popoverId}-mode`}>
+            Mode
+          </p>
+          <div className={styles.modelControlsMenuList}>
+            {onSuperAgentChange ? (
+              <button
+                className={styles.modelControlsMenuRow}
+                type="button"
+                role="switch"
+                aria-checked={superAgentEnabled}
+                aria-label="Super agent"
+                title="Run the next question through five sequential deep passes for up to 45 minutes"
+                onClick={() => onSuperAgentChange(!superAgentEnabled)}
+              >
+                <span>Super agent</span>
+                <span
+                  className={`${styles.modelControlsToggle} ${superAgentEnabled ? styles.modelControlsToggleOn : ""}`}
+                  aria-hidden="true"
+                >
+                  <i />
+                </span>
+              </button>
+            ) : null}
+            {onSwarmChange ? (
+              <button
+                className={styles.modelControlsMenuRow}
+                type="button"
+                role="switch"
+                aria-checked={swarmEnabled}
+                aria-label="Swarm"
+                title="Split a hard question across specialists, then combine their findings"
+                onClick={() => onSwarmChange(!swarmEnabled)}
+              >
+                <span>Swarm</span>
+                <span
+                  className={`${styles.modelControlsToggle} ${swarmEnabled ? styles.modelControlsToggleOn : ""}`}
+                  aria-hidden="true"
+                >
+                  <i />
+                </span>
+              </button>
+            ) : null}
+          </div>
+        </section>
+        ) : null}
+
         <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-effort`}>
           <p className={styles.modelControlsSectionTitle} id={`${popoverId}-effort`}>
             Effort
           </p>
           <div className={styles.modelControlsMenuList} role="group" aria-label="Reasoning effort">
-            {EFFORT_OPTIONS.map((effort) => {
+            {effortOptions.map((effort) => {
               const selected = effort.id === value.reasoningEffort;
               return (
                 <button
@@ -385,31 +544,85 @@ export function ModelRunControls({
           </div>
         </section>
 
+        {showFastMode || onProModeChange || onSolPlannerChange ? (
         <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-options`}>
           <p className={styles.modelControlsSectionTitle} id={`${popoverId}-options`}>
             Options
           </p>
           <div className={styles.modelControlsMenuList}>
-            <button
-              className={styles.modelControlsMenuRow}
-              type="button"
-              role="switch"
-              aria-checked={value.fastMode}
-              aria-label="Fast mode"
-              title="Fast mode"
-              data-processing-speed={value.fastMode ? "fast" : "standard"}
-              onClick={() => onChange({ ...value, fastMode: !value.fastMode })}
-            >
-              <span>Fast</span>
-              <span
-                className={`${styles.modelControlsToggle} ${value.fastMode ? styles.modelControlsToggleOn : ""}`}
-                aria-hidden="true"
+            {showFastMode ? (
+              <button
+                className={styles.modelControlsMenuRow}
+                type="button"
+                role="switch"
+                aria-checked={value.fastMode}
+                aria-label="Fast mode"
+                title="Fast mode"
+                data-processing-speed={value.fastMode ? "fast" : "standard"}
+                onClick={() => onChange(normalizeAgentPreferences({ ...value, fastMode: !value.fastMode }))}
               >
-                <i />
-              </span>
-            </button>
+                <span>Fast</span>
+                <span
+                  className={`${styles.modelControlsToggle} ${value.fastMode ? styles.modelControlsToggleOn : ""}`}
+                  aria-hidden="true"
+                >
+                  <i />
+                </span>
+              </button>
+            ) : null}
+            {onProModeChange ? (
+              <button
+                className={styles.modelControlsMenuRow}
+                type="button"
+                role="switch"
+                aria-checked={proModeEnabled}
+                aria-label="Pro reasoning"
+                title="Use GPT-5.6 reasoning.mode pro independently of the selected effort"
+                data-pro-reasoning={proModeEnabled ? "on" : "off"}
+                onClick={() => onProModeChange(!proModeEnabled)}
+              >
+                <span>Pro reasoning</span>
+                <span
+                  className={`${styles.modelControlsToggle} ${proModeEnabled ? styles.modelControlsToggleOn : ""}`}
+                  aria-hidden="true"
+                >
+                  <i />
+                </span>
+              </button>
+            ) : null}
+            {onSolPlannerChange ? (
+              <button
+                className={styles.modelControlsMenuRow}
+                type="button"
+                role="switch"
+                aria-checked={solPlannerEnabled}
+                aria-label="Sol planner"
+                title="Use GPT-5.6 Sol at Max to outline each Codex analysis before the selected model answers"
+                data-sol-planner={solPlannerEnabled ? "on" : "off"}
+                onClick={() => onSolPlannerChange(!solPlannerEnabled)}
+              >
+                <span>Sol · Max planner</span>
+                <span
+                  className={`${styles.modelControlsToggle} ${solPlannerEnabled ? styles.modelControlsToggleOn : ""}`}
+                  aria-hidden="true"
+                >
+                  <i />
+                </span>
+              </button>
+            ) : null}
+            {onProModeChange ? (
+              <p className={styles.modelControlsDisclosure} role="note">
+                Pro performs more model work for higher reliability. It is independent of effort and can add substantial latency and token usage.
+              </p>
+            ) : null}
+            {onSolPlannerChange ? (
+              <p className={styles.modelControlsDisclosure} role="note">
+                Uses GPT-5.6 Sol at Max for a short checklist, then hands the question to the selected model.
+              </p>
+            ) : null}
           </div>
         </section>
+        ) : null}
 
         <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-model`}>
           <p className={styles.modelControlsSectionTitle} id={`${popoverId}-model`}>
@@ -421,6 +634,7 @@ export function ModelRunControls({
               className={styles.modelControlsModelTabs}
               role="radiogroup"
               aria-label="Model"
+              style={{ gridTemplateColumns: `repeat(${modelTabs.length}, minmax(0, 1fr))` }}
             >
               <span
                 className={styles.modelControlsModelTabIndicator}
@@ -440,17 +654,53 @@ export function ModelRunControls({
                     role="radio"
                     tabIndex={selected ? 0 : -1}
                     aria-checked={selected}
+                    aria-label={model.label}
                     data-model-id={model.id}
+                    data-model-provider={model.provider}
                     onClick={() => updateModel(model.id)}
                     onKeyDown={(event) => moveModelFocus(event, index)}
                   >
-                    {model.label}
+                    {model.shortLabel}
                   </button>
                 );
               })}
             </div>
+            {isAnthropicModel(value.model) ? (
+              <p className={styles.modelControlsDisclosure} role="note">
+                Data is processed globally by Anthropic, not in Australia. Haiku starts at Low;
+                High and Max can take minutes. Fast mode is unavailable.
+              </p>
+            ) : null}
           </div>
         </section>
+
+        {onRawDebugChange ? (
+        <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-developer`}>
+          <p className={styles.modelControlsSectionTitle} id={`${popoverId}-developer`}>
+            Developer
+          </p>
+          <div className={styles.modelControlsMenuList}>
+            <button
+              className={styles.modelControlsMenuRow}
+              type="button"
+              role="switch"
+              aria-checked={rawDebugOpen}
+              aria-label="Raw debugger"
+              title="Development inspector: request, response headers, SSE frames, and trace events"
+              data-testid="model-run-controls-raw-debugger"
+              onClick={() => onRawDebugChange(!rawDebugOpen)}
+            >
+              <span>Raw debugger</span>
+              <span
+                className={`${styles.modelControlsToggle} ${rawDebugOpen ? styles.modelControlsToggleOn : ""}`}
+                aria-hidden="true"
+              >
+                <i />
+              </span>
+            </button>
+          </div>
+        </section>
+        ) : null}
       </div>
     </div>
   );

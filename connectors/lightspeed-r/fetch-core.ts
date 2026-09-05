@@ -172,6 +172,10 @@ const SPARSE_RELATIONS: ReadonlySet<string> = new Set([
   // roots would stage zero rows unnoticed — accepted for optional enrichment
   // tables whose absence never distorts the core economics.
   "Customer.Note",
+  // Custom field values exist only on accounts that configured custom fields
+  // (live 2026-08-17: CustomField.json 404s on the account and every Customer
+  // page came back without CustomFieldValues, which failed the walk).
+  "Customer.CustomFieldValues",
   "Item.ItemComponents",
   "Item.ItemFees",
   "Item.ItemVendorNums",

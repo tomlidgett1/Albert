@@ -1,5 +1,4 @@
 export * from "./analytical-store.js";
-export * from "./canonical-contract.js";
 export * from "./connector-quality.js";
 export * from "./control-plane-store.js";
 export * from "./config.js";

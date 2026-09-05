@@ -8,7 +8,10 @@ import {
 } from "./database.js";
 import { startOperatorDiagnosticNodeServer } from "./node-server.js";
 
-type ClosablePool = DiagnosticPgPool & Readonly<{ end(): Promise<void> }>;
+type ClosablePool = DiagnosticPgPool & Readonly<{
+  end(): Promise<void>;
+  on(event: "error", listener: (error: Error) => void): void;
+}>;
 type PgModule = Readonly<{
   Pool: new (options: Readonly<{
     connectionString: string;
@@ -16,6 +19,7 @@ type PgModule = Readonly<{
     application_name: string;
     connectionTimeoutMillis: number;
     idleTimeoutMillis: number;
+    ssl?: Readonly<{ rejectUnauthorized: boolean }>;
   }>) => ClosablePool;
 }>;
 
@@ -44,20 +48,18 @@ export async function startOperatorDiagnosticServiceFromEnvironment(
     throw new Error("ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET must be at least 32 bytes.");
   }
   const pg = await loadPg();
-  const controlPool = new pg.Pool({
-    connectionString: required(environment, "OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL"),
-    max: boundedInteger(environment.ALBERT_OPERATOR_DIAGNOSTIC_POOL_SIZE, 4, 1, 8),
-    application_name: "albert-operator-diagnostic-control",
-    connectionTimeoutMillis: 2_000,
-    idleTimeoutMillis: 30_000,
-  });
-  const analyticalPool = new pg.Pool({
-    connectionString: required(environment, "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL"),
-    max: boundedInteger(environment.ALBERT_OPERATOR_DIAGNOSTIC_POOL_SIZE, 4, 1, 8),
-    application_name: "albert-operator-diagnostic-read",
-    connectionTimeoutMillis: 2_000,
-    idleTimeoutMillis: 30_000,
-  });
+  const controlPool = createDiagnosticPool(
+    pg,
+    required(environment, "OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL"),
+    "albert-operator-diagnostic-control",
+    environment,
+  );
+  const analyticalPool = createDiagnosticPool(
+    pg,
+    required(environment, "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL"),
+    "albert-operator-diagnostic-read",
+    environment,
+  );
   try {
     return await startOperatorDiagnosticNodeServer({
       controlStore: new PostgresOperatorDiagnosticControlStore(controlPool),
@@ -81,6 +83,36 @@ async function loadPg(): Promise<PgModule> {
   const resolved = pgModule.default ?? pgModule;
   if (!resolved.Pool) throw new Error("The operator diagnostic image must provide pg.");
   return resolved as PgModule;
+}
+
+function compatiblePostgresUrl(connectionString: string): string {
+  const url = new URL(connectionString);
+  const sslMode = url.searchParams.get("sslmode")?.toLowerCase();
+  if (!sslMode) {
+    url.searchParams.set("sslmode", "require");
+  }
+  if ((url.searchParams.get("sslmode") ?? "require").toLowerCase() === "require" && !url.searchParams.has("uselibpqcompat")) {
+    url.searchParams.set("uselibpqcompat", "true");
+  }
+  return url.toString();
+}
+
+function createDiagnosticPool(
+  pg: PgModule,
+  connectionString: string,
+  applicationName: string,
+  environment: NodeJS.ProcessEnv,
+): ClosablePool {
+  const pool = new pg.Pool({
+    connectionString: compatiblePostgresUrl(connectionString),
+    max: boundedInteger(environment.ALBERT_OPERATOR_DIAGNOSTIC_POOL_SIZE, 4, 1, 8),
+    application_name: applicationName,
+    connectionTimeoutMillis: 4_000,
+    idleTimeoutMillis: 30_000,
+    ssl: { rejectUnauthorized: false },
+  });
+  pool.on("error", () => undefined);
+  return pool;
 }
 
 function required(environment: NodeJS.ProcessEnv, name: string): string {

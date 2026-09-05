@@ -3,7 +3,7 @@ kill_signal = "SIGTERM"
 kill_timeout = 30
 
 [build]
-  dockerfile = "Dockerfile.services"
+  dockerfile = "../../Dockerfile.services"
 
 [env]
   ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
@@ -34,7 +34,7 @@ kill_timeout = 30
     interval = "15s"
     method = "GET"
     path = "/readyz"
-    timeout = "3s"
+    timeout = "8s"
 
 [checks]
   [checks.readiness]
@@ -43,7 +43,7 @@ kill_timeout = 30
     method = "get"
     path = "/readyz"
     port = 8790
-    timeout = "3s"
+    timeout = "8s"
     type = "http"
     processes = ["app"]
 

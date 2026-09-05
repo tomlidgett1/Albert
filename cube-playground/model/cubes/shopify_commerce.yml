@@ -1,0 +1,1343 @@
+cubes:
+  - name: shopify_orders
+    title: Shopify orders
+    public: false
+    description: >
+      One row per Shopify order. Original amounts describe the order when
+      placed; current amounts reflect edits, refunds, and returns at the latest
+      source observation. Test and cancelled orders remain visible but are
+      excluded from default commerce measures.
+    meta:
+      ai_context: >
+        Use processed_at as the default trading time. Headline total sales is
+        current_total_sales in shop currency. original_total_sales is the
+        order-time amount and must not be presented as current revenue after a
+        refund. Always group or filter by currency_code when several shops or
+        currencies contribute.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'order_id', to_jsonb(t)->>'id') AS cc_order_id,
+             COALESCE(to_jsonb(t)->>'customer_id', to_jsonb(t)->>'customer_graphql_id') AS cc_customer_id,
+             to_jsonb(t)->>'location_id' AS cc_location_id,
+             COALESCE(to_jsonb(t)->>'name', to_jsonb(t)->>'order_name') AS cc_name,
+             COALESCE(to_jsonb(t)->>'display_financial_status', to_jsonb(t)->>'financial_status') AS cc_financial_status,
+             COALESCE(to_jsonb(t)->>'display_fulfillment_status', to_jsonb(t)->>'fulfillment_status') AS cc_fulfillment_status,
+             COALESCE(to_jsonb(t)->>'currency_code', to_jsonb(t)->>'currency') AS cc_currency,
+             COALESCE(to_jsonb(t)->>'presentment_currency_code', to_jsonb(t)->>'presentment_currency') AS cc_presentment_currency,
+             NULLIF(to_jsonb(t)->>'created_at', '')::timestamptz AS cc_created_at,
+             NULLIF(to_jsonb(t)->>'processed_at', '')::timestamptz AS cc_processed_at,
+             NULLIF(to_jsonb(t)->>'updated_at', '')::timestamptz AS cc_updated_at,
+             NULLIF(to_jsonb(t)->>'cancelled_at', '')::timestamptz AS cc_cancelled_at,
+             NULLIF(to_jsonb(t)->>'closed_at', '')::timestamptz AS cc_closed_at,
+             NULLIF(COALESCE(to_jsonb(t)->>'subtotal_amount', to_jsonb(t)->>'subtotal_price'), '')::numeric AS cc_subtotal,
+             NULLIF(COALESCE(to_jsonb(t)->>'total_discounts_amount', to_jsonb(t)->>'total_discounts'), '')::numeric AS cc_discounts,
+             NULLIF(COALESCE(to_jsonb(t)->>'total_shipping_amount', to_jsonb(t)->>'total_shipping_price'), '')::numeric AS cc_shipping,
+             NULLIF(COALESCE(to_jsonb(t)->>'total_tax_amount', to_jsonb(t)->>'total_tax'), '')::numeric AS cc_tax,
+             NULLIF(COALESCE(to_jsonb(t)->>'total_refunded_amount', to_jsonb(t)->>'total_refunded'), '')::numeric AS cc_refunded,
+             NULLIF(COALESCE(to_jsonb(t)->>'total_outstanding_amount', to_jsonb(t)->>'total_outstanding'), '')::numeric AS cc_outstanding,
+             NULLIF(COALESCE(to_jsonb(t)->>'total_price_amount', to_jsonb(t)->>'total_price'), '')::numeric AS cc_total_price,
+             NULLIF(COALESCE(to_jsonb(t)->>'current_subtotal_amount', to_jsonb(t)->>'current_subtotal_price'), '')::numeric AS cc_current_subtotal,
+             NULLIF(COALESCE(to_jsonb(t)->>'current_total_discounts_amount', to_jsonb(t)->>'current_total_discounts'), '')::numeric AS cc_current_discounts,
+             NULLIF(COALESCE(to_jsonb(t)->>'current_total_tax_amount', to_jsonb(t)->>'current_total_tax'), '')::numeric AS cc_current_tax,
+             NULLIF(COALESCE(to_jsonb(t)->>'current_total_price_amount', to_jsonb(t)->>'current_total_price'), '')::numeric AS cc_current_total,
+             COALESCE((to_jsonb(t)->>'test')::boolean, false) AS cc_test,
+             COALESCE((to_jsonb(t)->>'taxes_included')::boolean, false) AS cc_taxes_included,
+             COALESCE((to_jsonb(t)->>'confirmed')::boolean, false) AS cc_confirmed,
+             COALESCE((to_jsonb(t)->>'fully_paid')::boolean, false) AS cc_fully_paid
+      FROM source_shopify.shopify_orders t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+    joins:
+      - name: shopify_customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_customers}.tenant_id
+          AND {CUBE}.connection_id = {shopify_customers}.connection_id
+          AND {CUBE}.cc_customer_id = {shopify_customers}.cc_customer_id
+      - name: shopify_locations
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_locations}.tenant_id
+          AND {CUBE}.connection_id = {shopify_locations}.connection_id
+          AND {CUBE}.cc_location_id = {shopify_locations}.cc_location_id
+      - name: shopify_shop
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_shop}.tenant_id
+          AND {CUBE}.connection_id = {shopify_shop}.connection_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: order_id
+        sql: cc_order_id
+        type: string
+      - name: legacy_resource_id
+        sql: "to_jsonb({CUBE})->>'legacy_resource_id'"
+        type: string
+      - name: order_name
+        sql: cc_name
+        type: string
+        description: Merchant-visible Shopify order name, commonly #1001.
+      - name: order_number
+        sql: "NULLIF(to_jsonb({CUBE})->>'number', '')::numeric"
+        type: number
+      - name: confirmation_number
+        sql: "to_jsonb({CUBE})->>'confirmation_number'"
+        type: string
+      - name: email
+        sql: "to_jsonb({CUBE})->>'email'"
+        type: string
+        public: false
+      - name: phone
+        sql: "to_jsonb({CUBE})->>'phone'"
+        type: string
+        public: false
+      - name: note
+        sql: "to_jsonb({CUBE})->>'note'"
+        type: string
+        public: false
+      - name: billing_address
+        sql: "to_jsonb({CUBE})->>'billing_address'"
+        type: string
+        public: false
+      - name: shipping_address
+        sql: "to_jsonb({CUBE})->>'shipping_address'"
+        type: string
+        public: false
+      - name: customer_id
+        sql: cc_customer_id
+        type: string
+        public: false
+      - name: location_id
+        sql: cc_location_id
+        type: string
+        public: false
+      - name: app_id
+        sql: "to_jsonb({CUBE})->>'app_id'"
+        type: string
+      - name: channel_name
+        sql: "COALESCE(to_jsonb({CUBE})->>'channel_name', 'Unknown')"
+        type: string
+      - name: source_name
+        sql: "COALESCE(to_jsonb({CUBE})->>'source_name', 'unknown')"
+        type: string
+      - name: financial_status
+        sql: "UPPER(COALESCE({CUBE}.cc_financial_status, 'UNKNOWN'))"
+        type: string
+      - name: fulfillment_status
+        sql: "UPPER(COALESCE({CUBE}.cc_fulfillment_status, 'UNKNOWN'))"
+        type: string
+      - name: cancel_reason
+        sql: "to_jsonb({CUBE})->>'cancel_reason'"
+        type: string
+      - name: currency_code
+        sql: cc_currency
+        type: string
+      - name: presentment_currency_code
+        sql: cc_presentment_currency
+        type: string
+      - name: created_at
+        sql: cc_created_at
+        type: time
+      - name: processed_at
+        sql: cc_processed_at
+        type: time
+        title: Processed at (trading time)
+      - name: updated_at
+        sql: cc_updated_at
+        type: time
+      - name: cancelled_at
+        sql: cc_cancelled_at
+        type: time
+      - name: closed_at
+        sql: cc_closed_at
+        type: time
+      - name: test
+        sql: cc_test
+        type: boolean
+      - name: taxes_included
+        sql: cc_taxes_included
+        type: boolean
+      - name: confirmed
+        sql: cc_confirmed
+        type: boolean
+      - name: fully_paid
+        sql: cc_fully_paid
+        type: boolean
+      - name: tags
+        sql: "COALESCE(to_jsonb({CUBE})->>'tags', '[]')"
+        type: string
+      - name: order_state
+        sql: >
+          CASE
+            WHEN {CUBE}.cc_test THEN 'Test'
+            WHEN {CUBE}.cc_cancelled_at IS NOT NULL OR UPPER(COALESCE({CUBE}.cc_financial_status, '')) = 'VOIDED' THEN 'Cancelled or voided'
+            WHEN UPPER(COALESCE({CUBE}.cc_fulfillment_status, '')) IN ('FULFILLED', 'RESTOCKED') THEN 'Fulfilled'
+            WHEN UPPER(COALESCE({CUBE}.cc_fulfillment_status, '')) IN ('PARTIALLY_FULFILLED', 'IN_PROGRESS', 'ON_HOLD') THEN 'In fulfilment'
+            ELSE 'Open'
+          END
+        type: string
+    measures:
+      - name: distinct_protected_subjects
+        type: count_distinct
+        sql: "COALESCE({CUBE}.cc_customer_id, {CUBE}.cc_order_id)"
+        public: false
+        description: "Private k-anonymity population: distinct customer when present, otherwise distinct order."
+      - name: orders
+        type: count
+        filters:
+          - sql: >
+              NOT {CUBE}.cc_test
+              AND {CUBE}.cc_cancelled_at IS NULL
+              AND UPPER(COALESCE({CUBE}.cc_financial_status, '')) <> 'VOIDED'
+      - name: original_gross_merchandise_sales
+        type: sum
+        sql: "COALESCE({CUBE}.cc_subtotal, 0) + COALESCE({CUBE}.cc_discounts, 0)"
+        format: currency
+        description: Order-time merchandise subtotal before discounts, excluding shipping and tax.
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL"
+      - name: original_net_merchandise_sales
+        type: sum
+        sql: cc_subtotal
+        format: currency
+        description: Order-time merchandise subtotal after discounts, before shipping and tax.
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL"
+      - name: current_net_merchandise_sales
+        type: sum
+        sql: cc_current_subtotal
+        format: currency
+        description: Current merchandise subtotal after edits, refunds, returns and discounts.
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL"
+      - name: discounts
+        type: sum
+        sql: cc_discounts
+        format: currency
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL"
+      - name: current_discounts
+        type: sum
+        sql: cc_current_discounts
+        format: currency
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL"
+      - name: shipping
+        type: sum
+        sql: cc_shipping
+        format: currency
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL"
+      - name: tax
+        type: sum
+        sql: cc_tax
+        format: currency
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL"
+      - name: current_tax
+        type: sum
+        sql: cc_current_tax
+        format: currency
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL"
+      - name: original_total_sales
+        type: sum
+        sql: cc_total_price
+        format: currency
+        description: Order-time total including merchandise, discounts, shipping and tax.
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL"
+      - name: current_total_sales
+        type: sum
+        sql: cc_current_total
+        format: currency
+        description: Current total after order edits, refunds and returns. Default Shopify sales measure.
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL"
+      - name: refunded_amount
+        type: sum
+        sql: cc_refunded
+        format: currency
+        description: Positive source-reported amount refunded; never infer this from order total deltas.
+        filters:
+          - sql: "NOT {CUBE}.cc_test"
+      - name: outstanding_amount
+        type: sum
+        sql: cc_outstanding
+        format: currency
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL"
+      - name: average_order_value
+        type: number
+        sql: "{current_total_sales} / NULLIF({orders}, 0)"
+        format: currency
+      - name: cancelled_orders
+        type: count
+        filters:
+          - sql: >
+              NOT {CUBE}.cc_test AND (
+                {CUBE}.cc_cancelled_at IS NOT NULL
+                OR UPPER(COALESCE({CUBE}.cc_financial_status, '')) = 'VOIDED'
+              )
+      - name: cancellation_rate_pct
+        type: number
+        sql: "100.0 * {cancelled_orders} / NULLIF({orders} + {cancelled_orders}, 0)"
+        format: percent
+      - name: refunded_orders
+        type: count
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND COALESCE({CUBE}.cc_refunded, 0) > 0"
+      - name: refund_incidence_pct
+        type: number
+        sql: "100.0 * {refunded_orders} / NULLIF({orders}, 0)"
+        format: percent
+      - name: paid_orders
+        type: count
+        filters:
+          - sql: >
+              NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL
+              AND UPPER(COALESCE({CUBE}.cc_financial_status, '')) IN ('PAID', 'PARTIALLY_REFUNDED', 'REFUNDED')
+      - name: fulfilled_orders
+        type: count
+        filters:
+          - sql: >
+              NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL
+              AND UPPER(COALESCE({CUBE}.cc_fulfillment_status, '')) = 'FULFILLED'
+      - name: unfulfilled_orders
+        type: count
+        filters:
+          - sql: >
+              NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL
+              AND UPPER(COALESCE({CUBE}.cc_fulfillment_status, '')) IN ('UNFULFILLED', 'UNKNOWN')
+    segments:
+      - name: valid_orders
+        sql: >
+          NOT {CUBE}.cc_test AND {CUBE}.cc_cancelled_at IS NULL
+          AND UPPER(COALESCE({CUBE}.cc_financial_status, '')) <> 'VOIDED'
+      - name: orders_with_refunds
+        sql: "COALESCE({CUBE}.cc_refunded, 0) > 0"
+
+  - name: shopify_order_lines
+    title: Shopify order lines
+    public: false
+    description: One row per Shopify line item with product, quantity, pricing and discount evidence.
+    meta:
+      ai_context: >
+        Product performance lives here. Original totals are before returns;
+        current_quantity is the quantity still retained on the order. Use the
+        joined order processed_at as the trading time and exclude test/cancelled
+        orders through the default measures.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'line_item_id', to_jsonb(t)->>'id') AS cc_line_item_id,
+             to_jsonb(t)->>'order_id' AS cc_order_id,
+             to_jsonb(t)->>'product_id' AS cc_product_id,
+             to_jsonb(t)->>'variant_id' AS cc_variant_id,
+             to_jsonb(t)->>'location_id' AS cc_location_id,
+             to_jsonb(t)->>'customer_id' AS cc_customer_id,
+             to_jsonb(t)->>'channel_name' AS cc_channel_name,
+             to_jsonb(t)->>'source_name' AS cc_source_name,
+             NULLIF(to_jsonb(t)->>'order_created_at', '')::timestamptz AS cc_order_created_at,
+             NULLIF(to_jsonb(t)->>'order_processed_at', '')::timestamptz AS cc_order_processed_at,
+             NULLIF(to_jsonb(t)->>'order_closed_at', '')::timestamptz AS cc_order_closed_at,
+             NULLIF(to_jsonb(t)->>'order_cancelled_at', '')::timestamptz AS cc_order_cancelled_at,
+             to_jsonb(t)->>'order_financial_status' AS cc_order_financial_status,
+             to_jsonb(t)->>'order_fulfillment_status' AS cc_order_fulfillment_status,
+             to_jsonb(t)->>'currency_code' AS cc_currency_code,
+             COALESCE((to_jsonb(t)->>'taxes_included')::boolean, false) AS cc_taxes_included,
+             COALESCE((to_jsonb(t)->>'order_test')::boolean, false) AS cc_order_test,
+             NULLIF(to_jsonb(t)->>'quantity', '')::numeric AS cc_quantity,
+             NULLIF(to_jsonb(t)->>'current_quantity', '')::numeric AS cc_current_quantity,
+             NULLIF(to_jsonb(t)->>'refundable_quantity', '')::numeric AS cc_refundable_quantity,
+             NULLIF(to_jsonb(t)->>'fulfillable_quantity', '')::numeric AS cc_fulfillable_quantity,
+             NULLIF(to_jsonb(t)->>'unfulfilled_quantity', '')::numeric AS cc_unfulfilled_quantity,
+             NULLIF(to_jsonb(t)->>'original_unit_price_amount', '')::numeric AS cc_original_unit_price,
+             NULLIF(to_jsonb(t)->>'discounted_unit_price_amount', '')::numeric AS cc_discounted_unit_price,
+             NULLIF(to_jsonb(t)->>'original_total_amount', '')::numeric AS cc_original_total,
+             NULLIF(to_jsonb(t)->>'discounted_total_amount', '')::numeric AS cc_discounted_total,
+             NULLIF(to_jsonb(t)->>'total_discount_amount', '')::numeric AS cc_discount,
+             NULLIF(to_jsonb(t)->>'total_tax_amount', '')::numeric AS cc_total_tax
+      FROM source_shopify.shopify_order_lines t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+        AND COALESCE(t.collection_complete, false) = false
+        AND EXISTS (
+          SELECT 1 FROM source_shopify.shopify_orders o
+          WHERE o.tenant_id=t.tenant_id AND o.connection_id=t.connection_id
+            AND o.id=t.order_id AND NOT o.tombstone
+        )
+    joins:
+      - name: shopify_orders
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_orders}.tenant_id
+          AND {CUBE}.connection_id = {shopify_orders}.connection_id
+          AND {CUBE}.cc_order_id = {shopify_orders}.cc_order_id
+      - name: shopify_products
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_products}.tenant_id
+          AND {CUBE}.connection_id = {shopify_products}.connection_id
+          AND {CUBE}.cc_product_id = {shopify_products}.cc_product_id
+      - name: shopify_product_variants
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_product_variants}.tenant_id
+          AND {CUBE}.connection_id = {shopify_product_variants}.connection_id
+          AND {CUBE}.cc_variant_id = {shopify_product_variants}.cc_variant_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: collection_scan_id
+        sql: collection_scan_id
+        type: string
+        public: false
+        description: Internal identity of the complete parent-order collection observation.
+      - name: collection_complete
+        sql: collection_complete
+        type: boolean
+        public: false
+        description: Internal completion marker; marker rows are excluded from this cube.
+      - name: line_item_id
+        sql: cc_line_item_id
+        type: string
+      - name: order_id
+        sql: cc_order_id
+        type: string
+        public: false
+      - name: product_id
+        sql: cc_product_id
+        type: string
+        public: false
+      - name: variant_id
+        sql: cc_variant_id
+        type: string
+        public: false
+      - name: location_id
+        sql: cc_location_id
+        type: string
+        public: false
+      - name: customer_id
+        sql: cc_customer_id
+        type: string
+        public: false
+      - name: channel_name
+        sql: cc_channel_name
+        type: string
+      - name: source_name
+        sql: cc_source_name
+        type: string
+      - name: order_created_at
+        sql: cc_order_created_at
+        type: time
+      - name: order_processed_at
+        sql: cc_order_processed_at
+        type: time
+      - name: order_closed_at
+        sql: cc_order_closed_at
+        type: time
+      - name: order_cancelled_at
+        sql: cc_order_cancelled_at
+        type: time
+      - name: order_financial_status
+        sql: cc_order_financial_status
+        type: string
+      - name: order_fulfillment_status
+        sql: cc_order_fulfillment_status
+        type: string
+      - name: currency_code
+        sql: cc_currency_code
+        type: string
+      - name: taxes_included
+        sql: cc_taxes_included
+        type: boolean
+      - name: order_test
+        sql: cc_order_test
+        type: boolean
+      - name: line_name
+        sql: "COALESCE(to_jsonb({CUBE})->>'name', to_jsonb({CUBE})->>'title')"
+        type: string
+      - name: title
+        sql: "to_jsonb({CUBE})->>'title'"
+        type: string
+      - name: sku
+        sql: "to_jsonb({CUBE})->>'sku'"
+        type: string
+      - name: vendor
+        sql: "to_jsonb({CUBE})->>'vendor'"
+        type: string
+      - name: quantity
+        sql: cc_quantity
+        type: number
+      - name: current_quantity
+        sql: cc_current_quantity
+        type: number
+      - name: refundable_quantity
+        sql: cc_refundable_quantity
+        type: number
+      - name: fulfillable_quantity
+        sql: cc_fulfillable_quantity
+        type: number
+      - name: unfulfilled_quantity
+        sql: cc_unfulfilled_quantity
+        type: number
+      - name: requires_shipping
+        sql: "COALESCE((to_jsonb({CUBE})->>'requires_shipping')::boolean, false)"
+        type: boolean
+      - name: taxable
+        sql: "COALESCE((to_jsonb({CUBE})->>'taxable')::boolean, false)"
+        type: boolean
+      - name: original_unit_price
+        sql: cc_original_unit_price
+        type: number
+        format: currency
+      - name: discounted_unit_price
+        sql: cc_discounted_unit_price
+        type: number
+        format: currency
+      - name: original_total
+        sql: cc_original_total
+        type: number
+        format: currency
+      - name: discounted_total
+        sql: cc_discounted_total
+        type: number
+        format: currency
+      - name: total_discount
+        sql: cc_discount
+        type: number
+        format: currency
+      - name: total_tax
+        sql: cc_total_tax
+        type: number
+        format: currency
+      - name: is_partially_or_fully_returned
+        sql: "COALESCE({CUBE}.cc_current_quantity, 0) < COALESCE({CUBE}.cc_quantity, 0)"
+        type: boolean
+    measures:
+      - name: distinct_protected_subjects
+        type: count_distinct
+        sql: "COALESCE({CUBE}.cc_customer_id, {CUBE}.cc_order_id)"
+        public: false
+        description: "Private k-anonymity population: distinct customer when present, otherwise distinct order."
+      - name: line_count
+        type: count
+        filters:
+          - sql: "NOT {shopify_orders}.cc_test AND {shopify_orders}.cc_cancelled_at IS NULL"
+      - name: units_ordered
+        type: sum
+        sql: cc_quantity
+        filters:
+          - sql: "NOT {shopify_orders}.cc_test AND {shopify_orders}.cc_cancelled_at IS NULL"
+      - name: current_units
+        type: sum
+        sql: cc_current_quantity
+        filters:
+          - sql: "NOT {shopify_orders}.cc_test AND {shopify_orders}.cc_cancelled_at IS NULL"
+      - name: returned_units
+        type: sum
+        sql: "GREATEST(COALESCE({CUBE}.cc_quantity, 0) - COALESCE({CUBE}.cc_current_quantity, 0), 0)"
+        filters:
+          - sql: "NOT {shopify_orders}.cc_test"
+      - name: fulfillable_units
+        type: sum
+        sql: cc_fulfillable_quantity
+        filters:
+          - sql: "NOT {shopify_orders}.cc_test AND {shopify_orders}.cc_cancelled_at IS NULL"
+      - name: unfulfilled_units
+        type: sum
+        sql: cc_unfulfilled_quantity
+        filters:
+          - sql: "NOT {shopify_orders}.cc_test AND {shopify_orders}.cc_cancelled_at IS NULL"
+      - name: gross_product_sales
+        type: sum
+        sql: cc_original_total
+        format: currency
+        description: Merchandise value before line discounts and returns.
+        filters:
+          - sql: "NOT {shopify_orders}.cc_test AND {shopify_orders}.cc_cancelled_at IS NULL"
+      - name: line_discounts
+        type: sum
+        sql: cc_discount
+        format: currency
+        filters:
+          - sql: "NOT {shopify_orders}.cc_test AND {shopify_orders}.cc_cancelled_at IS NULL"
+      - name: line_tax
+        type: sum
+        sql: cc_total_tax
+        format: currency
+        filters:
+          - sql: "NOT {shopify_orders}.cc_test AND {shopify_orders}.cc_cancelled_at IS NULL"
+      - name: net_product_sales_before_returns
+        type: sum
+        sql: cc_discounted_total
+        format: currency
+        filters:
+          - sql: "NOT {shopify_orders}.cc_test AND {shopify_orders}.cc_cancelled_at IS NULL"
+      - name: average_selling_price
+        type: number
+        sql: "{net_product_sales_before_returns} / NULLIF({units_ordered}, 0)"
+        format: currency
+      - name: distinct_products_sold
+        type: count_distinct
+        sql: cc_product_id
+        filters:
+          - sql: "NOT {shopify_orders}.cc_test AND {shopify_orders}.cc_cancelled_at IS NULL"
+      - name: return_affected_lines
+        type: count
+        filters:
+          - sql: >
+              NOT {shopify_orders}.cc_test
+              AND COALESCE({CUBE}.cc_current_quantity, 0) < COALESCE({CUBE}.cc_quantity, 0)
+
+  - name: shopify_transactions
+    title: Shopify payment transactions
+    public: false
+    description: One row per Shopify order transaction, including sale, capture, refund, void and gateway outcome.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'transaction_id', to_jsonb(t)->>'id') AS cc_transaction_id,
+             to_jsonb(t)->>'order_id' AS cc_order_id,
+             to_jsonb(t)->>'parent_transaction_id' AS cc_parent_transaction_id,
+             UPPER(COALESCE(to_jsonb(t)->>'kind', 'UNKNOWN')) AS cc_kind,
+             UPPER(COALESCE(to_jsonb(t)->>'status', 'UNKNOWN')) AS cc_status,
+             to_jsonb(t)->>'location_id' AS cc_location_id,
+             to_jsonb(t)->>'channel_name' AS cc_channel_name,
+             to_jsonb(t)->>'source_name' AS cc_source_name,
+             NULLIF(to_jsonb(t)->>'amount', '')::numeric AS cc_amount,
+             COALESCE(to_jsonb(t)->>'currency_code', to_jsonb(t)->>'currency') AS cc_currency,
+             NULLIF(to_jsonb(t)->>'created_at', '')::timestamptz AS cc_created_at,
+             NULLIF(to_jsonb(t)->>'processed_at', '')::timestamptz AS cc_processed_at,
+             COALESCE((to_jsonb(t)->>'test')::boolean, false) AS cc_test
+      FROM source_shopify.shopify_transactions t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+        AND COALESCE(t.collection_complete, false) = false
+        AND EXISTS (
+          SELECT 1 FROM source_shopify.shopify_orders o
+          WHERE o.tenant_id=t.tenant_id AND o.connection_id=t.connection_id
+            AND o.id=t.order_id AND NOT o.tombstone
+        )
+    joins:
+      - name: shopify_orders
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_orders}.tenant_id
+          AND {CUBE}.connection_id = {shopify_orders}.connection_id
+          AND {CUBE}.cc_order_id = {shopify_orders}.cc_order_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: collection_scan_id
+        sql: collection_scan_id
+        type: string
+        public: false
+      - name: collection_complete
+        sql: collection_complete
+        type: boolean
+        public: false
+      - name: transaction_id
+        sql: cc_transaction_id
+        type: string
+      - name: order_id
+        sql: cc_order_id
+        type: string
+        public: false
+      - name: parent_transaction_id
+        sql: cc_parent_transaction_id
+        type: string
+      - name: created_at
+        sql: cc_created_at
+        type: time
+      - name: processed_at
+        sql: cc_processed_at
+        type: time
+      - name: kind
+        sql: cc_kind
+        type: string
+      - name: status
+        sql: cc_status
+        type: string
+      - name: location_id
+        sql: cc_location_id
+        type: string
+        public: false
+      - name: channel_name
+        sql: cc_channel_name
+        type: string
+      - name: source_name
+        sql: cc_source_name
+        type: string
+      - name: gateway
+        sql: "COALESCE(to_jsonb({CUBE})->>'gateway', 'Unknown')"
+        type: string
+      - name: payment_method
+        sql: "COALESCE(to_jsonb({CUBE})->>'payment_method', 'Unknown')"
+        type: string
+      - name: payment_id
+        sql: "to_jsonb({CUBE})->>'payment_id'"
+        type: string
+      - name: authorization_code
+        sql: "to_jsonb({CUBE})->>'authorization_code'"
+        type: string
+        public: false
+      - name: currency_code
+        sql: cc_currency
+        type: string
+      - name: amount
+        sql: cc_amount
+        type: number
+        format: currency
+      - name: test
+        sql: cc_test
+        type: boolean
+      - name: manually_capturable
+        sql: "COALESCE((to_jsonb({CUBE})->>'manually_capturable')::boolean, false)"
+        type: boolean
+      - name: maximum_refundable
+        sql: "NULLIF(to_jsonb({CUBE})->>'maximum_refundable', '')::numeric"
+        type: number
+        format: currency
+    measures:
+      - name: distinct_protected_subjects
+        type: count_distinct
+        sql: cc_order_id
+        public: false
+        description: "Private k-anonymity population at the distinct order subject grain."
+      - name: transaction_count
+        type: count
+        filters:
+          - sql: "NOT {CUBE}.cc_test"
+      - name: successful_transactions
+        type: count
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_status = 'SUCCESS'"
+      - name: failed_transactions
+        type: count
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_status IN ('FAILURE', 'ERROR')"
+      - name: captured_amount
+        type: sum
+        sql: cc_amount
+        format: currency
+        filters:
+          - sql: >
+              NOT {CUBE}.cc_test AND {CUBE}.cc_status = 'SUCCESS'
+              AND {CUBE}.cc_kind IN ('SALE', 'CAPTURE')
+      - name: captured_transactions
+        type: count
+        filters:
+          - sql: >
+              NOT {CUBE}.cc_test AND {CUBE}.cc_status = 'SUCCESS'
+              AND {CUBE}.cc_kind IN ('SALE', 'CAPTURE')
+      - name: authorised_amount
+        type: sum
+        sql: cc_amount
+        format: currency
+        filters:
+          - sql: >
+              NOT {CUBE}.cc_test AND {CUBE}.cc_status = 'SUCCESS'
+              AND {CUBE}.cc_kind = 'AUTHORIZATION'
+      - name: refunded_transaction_amount
+        type: sum
+        sql: cc_amount
+        format: currency
+        filters:
+          - sql: >
+              NOT {CUBE}.cc_test AND {CUBE}.cc_status = 'SUCCESS'
+              AND {CUBE}.cc_kind = 'REFUND'
+      - name: voided_transactions
+        type: count
+        filters:
+          - sql: "NOT {CUBE}.cc_test AND {CUBE}.cc_kind = 'VOID'"
+      - name: payment_success_rate_pct
+        type: number
+        sql: "100.0 * {successful_transactions} / NULLIF({transaction_count}, 0)"
+        format: percent
+      - name: average_capture_amount
+        type: number
+        sql: "{captured_amount} / NULLIF({captured_transactions}, 0)"
+        format: currency
+
+  - name: shopify_refund_lines
+    title: Shopify refund lines
+    public: false
+    description: One row per refunded line allocation with quantity, restock treatment, subtotal and tax.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'refund_line_id', to_jsonb(t)->>'id') AS cc_refund_line_id,
+             to_jsonb(t)->>'refund_id' AS cc_refund_id,
+             to_jsonb(t)->>'order_id' AS cc_order_id,
+             COALESCE(to_jsonb(t)->>'line_item_id', to_jsonb(t)->>'line_id') AS cc_line_item_id,
+             to_jsonb(t)->>'variant_id' AS cc_variant_id,
+             to_jsonb(t)->>'location_id' AS cc_location_id,
+             to_jsonb(t)->>'order_location_id' AS cc_order_location_id,
+             to_jsonb(t)->>'currency_code' AS cc_currency_code,
+             NULLIF(to_jsonb(t)->>'quantity', '')::numeric AS cc_quantity,
+             NULLIF(to_jsonb(t)->>'subtotal_amount', '')::numeric AS cc_subtotal,
+             NULLIF(to_jsonb(t)->>'tax_amount', '')::numeric AS cc_tax,
+             NULLIF(to_jsonb(t)->>'total_amount', '')::numeric AS cc_total,
+             NULLIF(to_jsonb(t)->>'refunded_at', '')::timestamptz AS cc_refunded_at
+      FROM source_shopify.shopify_refund_lines t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+        AND COALESCE(t.collection_complete, false) = false
+        AND EXISTS (
+          SELECT 1 FROM source_shopify.shopify_orders o
+          WHERE o.tenant_id=t.tenant_id AND o.connection_id=t.connection_id
+            AND o.id=t.order_id AND NOT o.tombstone
+        )
+    joins:
+      - name: shopify_orders
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_orders}.tenant_id
+          AND {CUBE}.connection_id = {shopify_orders}.connection_id
+          AND {CUBE}.cc_order_id = {shopify_orders}.cc_order_id
+      - name: shopify_order_lines
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_order_lines}.tenant_id
+          AND {CUBE}.connection_id = {shopify_order_lines}.connection_id
+          AND {CUBE}.cc_line_item_id = {shopify_order_lines}.cc_line_item_id
+      - name: shopify_locations
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_locations}.tenant_id
+          AND {CUBE}.connection_id = {shopify_locations}.connection_id
+          AND {CUBE}.cc_location_id = {shopify_locations}.cc_location_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: collection_scan_id
+        sql: collection_scan_id
+        type: string
+        public: false
+      - name: collection_complete
+        sql: collection_complete
+        type: boolean
+        public: false
+      - name: refund_line_id
+        sql: cc_refund_line_id
+        type: string
+      - name: refund_id
+        sql: cc_refund_id
+        type: string
+      - name: order_id
+        sql: cc_order_id
+        type: string
+        public: false
+      - name: line_item_id
+        sql: cc_line_item_id
+        type: string
+        public: false
+      - name: variant_id
+        sql: cc_variant_id
+        type: string
+        public: false
+      - name: location_id
+        sql: cc_location_id
+        type: string
+        public: false
+      - name: order_location_id
+        sql: cc_order_location_id
+        type: string
+        public: false
+      - name: currency_code
+        sql: cc_currency_code
+        type: string
+      - name: refunded_at
+        sql: cc_refunded_at
+        type: time
+      - name: restock_type
+        sql: "UPPER(COALESCE(to_jsonb({CUBE})->>'restock_type', 'UNKNOWN'))"
+        type: string
+      - name: quantity
+        sql: cc_quantity
+        type: number
+    measures:
+      - name: distinct_protected_subjects
+        type: count_distinct
+        sql: cc_order_id
+        public: false
+        description: "Private k-anonymity population at the distinct order subject grain."
+      - name: refund_line_count
+        type: count
+      - name: refunded_units
+        type: sum
+        sql: cc_quantity
+      - name: refund_subtotal
+        type: sum
+        sql: cc_subtotal
+        format: currency
+      - name: refund_tax
+        type: sum
+        sql: cc_tax
+        format: currency
+      - name: refund_total
+        type: sum
+        sql: cc_total
+        format: currency
+      - name: restocked_units
+        type: sum
+        sql: cc_quantity
+        filters:
+          - sql: "UPPER(COALESCE(to_jsonb({CUBE})->>'restock_type', '')) IN ('RETURN', 'CANCEL', 'LEGACY_RESTOCK')"
+
+  - name: shopify_fulfillments
+    title: Shopify fulfilments
+    public: false
+    description: One row per Shopify fulfilment with status, quantity, carrier tracking and delivery milestones.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'fulfillment_id', to_jsonb(t)->>'id') AS cc_fulfillment_id,
+             to_jsonb(t)->>'order_id' AS cc_order_id,
+             to_jsonb(t)->>'location_id' AS cc_location_id,
+             UPPER(COALESCE(to_jsonb(t)->>'status', 'UNKNOWN')) AS cc_status,
+             UPPER(COALESCE(to_jsonb(t)->>'display_status', 'UNKNOWN')) AS cc_display_status,
+             NULLIF(to_jsonb(t)->>'total_quantity', '')::numeric AS cc_quantity,
+             NULLIF(to_jsonb(t)->>'created_at', '')::timestamptz AS cc_created_at,
+             NULLIF(to_jsonb(t)->>'updated_at', '')::timestamptz AS cc_updated_at,
+             NULLIF(to_jsonb(t)->>'delivered_at', '')::timestamptz AS cc_delivered_at,
+             NULLIF(to_jsonb(t)->>'estimated_delivery_at', '')::timestamptz AS cc_estimated_delivery_at,
+             NULLIF(to_jsonb(t)->>'in_transit_at', '')::timestamptz AS cc_in_transit_at,
+             (
+               SELECT NULLIF(to_jsonb(o)->>'processed_at', '')::timestamptz
+               FROM source_shopify.shopify_orders o
+               WHERE o.tenant_id=t.tenant_id AND o.connection_id=t.connection_id
+                 AND o.id=t.order_id AND NOT o.tombstone
+               LIMIT 1
+             ) AS cc_order_processed_at
+      FROM source_shopify.shopify_fulfillments t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+        AND COALESCE(t.collection_complete, false) = false
+        AND EXISTS (
+          SELECT 1 FROM source_shopify.shopify_orders o
+          WHERE o.tenant_id=t.tenant_id AND o.connection_id=t.connection_id
+            AND o.id=t.order_id AND NOT o.tombstone
+        )
+    joins:
+      - name: shopify_orders
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_orders}.tenant_id
+          AND {CUBE}.connection_id = {shopify_orders}.connection_id
+          AND {CUBE}.cc_order_id = {shopify_orders}.cc_order_id
+      - name: shopify_locations
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_locations}.tenant_id
+          AND {CUBE}.connection_id = {shopify_locations}.connection_id
+          AND {CUBE}.cc_location_id = {shopify_locations}.cc_location_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: collection_scan_id
+        sql: collection_scan_id
+        type: string
+        public: false
+      - name: collection_complete
+        sql: collection_complete
+        type: boolean
+        public: false
+      - name: fulfillment_id
+        sql: cc_fulfillment_id
+        type: string
+      - name: order_id
+        sql: cc_order_id
+        type: string
+        public: false
+      - name: location_id
+        sql: cc_location_id
+        type: string
+        public: false
+      - name: fulfillment_name
+        sql: "to_jsonb({CUBE})->>'name'"
+        type: string
+      - name: status
+        sql: cc_status
+        type: string
+      - name: display_status
+        sql: cc_display_status
+        type: string
+      - name: service_handle
+        sql: "to_jsonb({CUBE})->>'service_handle'"
+        type: string
+      - name: tracking_info
+        sql: "COALESCE(to_jsonb({CUBE})->>'tracking_info', '[]')"
+        type: string
+      - name: created_at
+        sql: cc_created_at
+        type: time
+      - name: updated_at
+        sql: cc_updated_at
+        type: time
+      - name: in_transit_at
+        sql: cc_in_transit_at
+        type: time
+      - name: delivered_at
+        sql: cc_delivered_at
+        type: time
+      - name: estimated_delivery_at
+        sql: cc_estimated_delivery_at
+        type: time
+      - name: delivery_timeliness
+        sql: >
+          CASE
+            WHEN {CUBE}.cc_delivered_at IS NULL THEN 'Not delivered'
+            WHEN {CUBE}.cc_estimated_delivery_at IS NULL THEN 'No estimate'
+            WHEN {CUBE}.cc_delivered_at <= {CUBE}.cc_estimated_delivery_at THEN 'On time'
+            ELSE 'Late'
+          END
+        type: string
+    measures:
+      - name: distinct_protected_subjects
+        type: count_distinct
+        sql: cc_order_id
+        public: false
+        description: "Private k-anonymity population at the distinct order subject grain."
+      - name: fulfillments
+        type: count
+      - name: fulfilled_units
+        type: sum
+        sql: cc_quantity
+      - name: delivered_fulfillments
+        type: count
+        filters:
+          - sql: "{CUBE}.cc_delivered_at IS NOT NULL"
+      - name: open_fulfillments
+        type: count
+        filters:
+          - sql: "{CUBE}.cc_delivered_at IS NULL AND {CUBE}.cc_status NOT IN ('CANCELLED', 'FAILURE')"
+      - name: late_deliveries
+        type: count
+        filters:
+          - sql: >
+              {CUBE}.cc_delivered_at IS NOT NULL
+              AND {CUBE}.cc_estimated_delivery_at IS NOT NULL
+              AND {CUBE}.cc_delivered_at > {CUBE}.cc_estimated_delivery_at
+      - name: on_time_deliveries
+        type: count
+        filters:
+          - sql: >
+              {CUBE}.cc_delivered_at IS NOT NULL
+              AND {CUBE}.cc_estimated_delivery_at IS NOT NULL
+              AND {CUBE}.cc_delivered_at <= {CUBE}.cc_estimated_delivery_at
+      - name: deliveries_with_estimate
+        type: count
+        filters:
+          - sql: >
+              {CUBE}.cc_delivered_at IS NOT NULL
+              AND {CUBE}.cc_estimated_delivery_at IS NOT NULL
+      - name: average_hours_to_fulfil
+        type: avg
+        sql: >
+          EXTRACT(EPOCH FROM ({CUBE}.cc_created_at - {CUBE}.cc_order_processed_at)) / 3600.0
+        filters:
+          - sql: "{CUBE}.cc_created_at IS NOT NULL AND {CUBE}.cc_order_processed_at IS NOT NULL"
+      - name: average_hours_to_deliver
+        type: avg
+        sql: "EXTRACT(EPOCH FROM ({CUBE}.cc_delivered_at - {CUBE}.cc_created_at)) / 3600.0"
+        filters:
+          - sql: "{CUBE}.cc_delivered_at IS NOT NULL AND {CUBE}.cc_created_at IS NOT NULL"
+      - name: on_time_delivery_rate_pct
+        type: number
+        sql: "100.0 * {on_time_deliveries} / NULLIF({deliveries_with_estimate}, 0)"
+        format: percent
+
+  - name: shopify_returns
+    title: Shopify returns
+    public: false
+    description: One row per Shopify return workflow with lifecycle status and aggregate item/refund counts.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'return_id', to_jsonb(t)->>'id') AS cc_return_id,
+             to_jsonb(t)->>'order_id' AS cc_order_id,
+             UPPER(COALESCE(to_jsonb(t)->>'status', 'UNKNOWN')) AS cc_status,
+             NULLIF(to_jsonb(t)->>'created_at', '')::timestamptz AS cc_created_at,
+             NULLIF(to_jsonb(t)->>'updated_at', '')::timestamptz AS cc_updated_at,
+             NULLIF(to_jsonb(t)->>'closed_at', '')::timestamptz AS cc_closed_at,
+             NULLIF(to_jsonb(t)->>'total_quantity', '')::numeric AS cc_total_quantity,
+             NULLIF(to_jsonb(t)->>'exchange_line_item_count', '')::numeric AS cc_exchange_lines,
+             NULLIF(to_jsonb(t)->>'return_line_item_count', '')::numeric AS cc_return_lines,
+             NULLIF(to_jsonb(t)->>'refund_count', '')::numeric AS cc_refund_count
+      FROM source_shopify.shopify_returns t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+        AND COALESCE(t.collection_complete, false) = false
+        AND EXISTS (
+          SELECT 1 FROM source_shopify.shopify_orders o
+          WHERE o.tenant_id=t.tenant_id AND o.connection_id=t.connection_id
+            AND o.id=t.order_id AND NOT o.tombstone
+        )
+    joins:
+      - name: shopify_orders
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_orders}.tenant_id
+          AND {CUBE}.connection_id = {shopify_orders}.connection_id
+          AND {CUBE}.cc_order_id = {shopify_orders}.cc_order_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: collection_scan_id
+        sql: collection_scan_id
+        type: string
+        public: false
+      - name: collection_complete
+        sql: collection_complete
+        type: boolean
+        public: false
+      - name: return_id
+        sql: cc_return_id
+        type: string
+      - name: order_id
+        sql: cc_order_id
+        type: string
+        public: false
+      - name: return_name
+        sql: "to_jsonb({CUBE})->>'name'"
+        type: string
+      - name: status
+        sql: cc_status
+        type: string
+      - name: created_at
+        sql: cc_created_at
+        type: time
+      - name: updated_at
+        sql: cc_updated_at
+        type: time
+      - name: closed_at
+        sql: cc_closed_at
+        type: time
+    measures:
+      - name: distinct_protected_subjects
+        type: count_distinct
+        sql: cc_order_id
+        public: false
+        description: "Private k-anonymity population at the distinct order subject grain."
+      - name: returns
+        type: count
+      - name: open_returns
+        type: count
+        filters:
+          - sql: "{CUBE}.cc_closed_at IS NULL AND {CUBE}.cc_status NOT IN ('CLOSED', 'CANCELLED')"
+      - name: closed_returns
+        type: count
+        filters:
+          - sql: "{CUBE}.cc_closed_at IS NOT NULL OR {CUBE}.cc_status = 'CLOSED'"
+      - name: returned_quantity
+        type: sum
+        sql: cc_total_quantity
+      - name: return_line_items
+        type: sum
+        sql: cc_return_lines
+      - name: exchange_line_items
+        type: sum
+        sql: cc_exchange_lines
+      - name: linked_refunds
+        type: sum
+        sql: cc_refund_count
+      - name: average_hours_to_close_return
+        type: avg
+        sql: "EXTRACT(EPOCH FROM ({CUBE}.cc_closed_at - {CUBE}.cc_created_at)) / 3600.0"
+        filters:
+          - sql: "{CUBE}.cc_closed_at IS NOT NULL AND {CUBE}.cc_created_at IS NOT NULL"
+
+  - name: shopify_discounts
+    title: Shopify discounts
+    public: false
+    description: One row per Shopify discount definition with lifecycle, combination rules, usage and attributed sales.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'discount_id', to_jsonb(t)->>'id') AS cc_discount_id,
+             COALESCE(to_jsonb(t)->>'typename', to_jsonb(t)->>'type') AS cc_typename,
+             UPPER(COALESCE(to_jsonb(t)->>'status', 'UNKNOWN')) AS cc_status,
+             NULLIF(to_jsonb(t)->>'created_at', '')::timestamptz AS cc_created_at,
+             NULLIF(to_jsonb(t)->>'updated_at', '')::timestamptz AS cc_updated_at,
+             NULLIF(to_jsonb(t)->>'starts_at', '')::timestamptz AS cc_starts_at,
+             NULLIF(to_jsonb(t)->>'ends_at', '')::timestamptz AS cc_ends_at,
+             NULLIF(to_jsonb(t)->>'total_sales', '')::numeric AS cc_total_sales,
+             NULLIF(to_jsonb(t)->>'usage_limit', '')::numeric AS cc_usage_limit,
+             NULLIF(to_jsonb(t)->>'async_usage_count', '')::numeric AS cc_usage_count
+      FROM source_shopify.shopify_discounts t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+    joins:
+      - name: shopify_shop
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_shop}.tenant_id
+          AND {CUBE}.connection_id = {shopify_shop}.connection_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: discount_id
+        sql: cc_discount_id
+        type: string
+      - name: discount_type
+        sql: cc_typename
+        type: string
+      - name: title
+        sql: "to_jsonb({CUBE})->>'title'"
+        type: string
+      - name: status
+        sql: cc_status
+        type: string
+      - name: discount_classes
+        sql: "COALESCE(to_jsonb({CUBE})->>'discount_classes', '[]')"
+        type: string
+      - name: combines_with
+        sql: "COALESCE(to_jsonb({CUBE})->>'combines_with', jsonb_build_object()::text)"
+        type: string
+      - name: created_at
+        sql: cc_created_at
+        type: time
+      - name: updated_at
+        sql: cc_updated_at
+        type: time
+      - name: starts_at
+        sql: cc_starts_at
+        type: time
+      - name: ends_at
+        sql: cc_ends_at
+        type: time
+      - name: lifecycle
+        sql: >
+          CASE
+            WHEN {CUBE}.cc_status IN ('EXPIRED', 'DISABLED') THEN INITCAP(LOWER({CUBE}.cc_status))
+            WHEN {CUBE}.cc_starts_at IS NOT NULL AND {CUBE}.cc_starts_at > NOW() THEN 'Scheduled'
+            WHEN {CUBE}.cc_ends_at IS NOT NULL AND {CUBE}.cc_ends_at < NOW() THEN 'Expired'
+            ELSE 'Active'
+          END
+        type: string
+    measures:
+      - name: discount_definitions
+        type: count
+      - name: active_discounts
+        type: count
+        filters:
+          - sql: >
+              {CUBE}.cc_status NOT IN ('EXPIRED', 'DISABLED')
+              AND ({CUBE}.cc_starts_at IS NULL OR {CUBE}.cc_starts_at <= NOW())
+              AND ({CUBE}.cc_ends_at IS NULL OR {CUBE}.cc_ends_at >= NOW())
+      - name: scheduled_discounts
+        type: count
+        filters:
+          - sql: "{CUBE}.cc_starts_at > NOW()"
+      - name: attributed_discount_sales
+        type: sum
+        sql: cc_total_sales
+        format: currency
+      - name: discount_uses
+        type: sum
+        sql: cc_usage_count
+      - name: average_sales_per_use
+        type: number
+        sql: "{attributed_discount_sales} / NULLIF({discount_uses}, 0)"
+        format: currency
+      - name: remaining_usage_capacity
+        type: sum
+        sql: "GREATEST(COALESCE({CUBE}.cc_usage_limit, 0) - COALESCE({CUBE}.cc_usage_count, 0), 0)"
+        filters:
+          - sql: "{CUBE}.cc_usage_limit IS NOT NULL"

@@ -1,0 +1,25 @@
+views:
+  - name: square_customer_analytics
+    title: Square customer directory analytics
+    description: Square Customer Directory profile counts, creation source, contactability and geography.
+    meta:
+      ai_context: >
+        Use for customer-directory composition. Period spend by customer belongs
+        in square_sales_analytics. Direct contact details are PII and intentionally
+        absent here; use the exhaustive explorer only for an explicit authorized request.
+    cubes:
+      - join_path: square_customers
+        includes:
+          - tenant_id
+          - display_name
+          - company_name
+          - creation_source
+          - email_unsubscribed
+          - locality
+          - region
+          - postcode
+          - country
+          - created_at
+          - updated_at
+          - customers
+          - contactable_customers

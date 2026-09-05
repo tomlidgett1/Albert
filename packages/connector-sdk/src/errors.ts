@@ -46,6 +46,7 @@ export class ConnectorHttpError extends ConnectorError {
       retryable?: boolean;
       retryAfterMs?: number;
       requestId?: string;
+      details?: Readonly<Record<string, string | number | boolean | null>>;
       cause?: unknown;
     }> = {},
   ) {

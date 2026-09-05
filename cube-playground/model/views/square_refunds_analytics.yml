@@ -1,0 +1,28 @@
+views:
+  - name: square_refunds_analytics
+    title: Square refunds analytics
+    description: Completed Square refund value/count, reason, destination, location and linked/unlinked status.
+    meta:
+      ai_context: >
+        Refunds are payment-level money-out events, not product allocations.
+        Use completed_at (Square refund updated_at) and status COMPLETED. Never
+        claim a refunded product/category from this view without an actual order-return line.
+    cubes:
+      - join_path: square_refunds
+        includes:
+          - tenant_id
+          - status
+          - reason
+          - destination_type
+          - currency
+          - created_at
+          - completed_at
+          - is_unlinked
+          - refund_attempts
+          - completed_refunds
+          - unlinked_refunds
+          - refund_value
+      - join_path: square_refunds.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]
+

@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { cache } from "react";
 import { createClient } from "../../../utils/supabase/server.js";
+import { disconnectFivetranXero, OAuthFlowError } from "../../oauth/src/worker-rpc.js";
 import { toConnectionsWorkspace } from "./connections-workspace.js";
 
 const tenantContextSchema = z.object({
@@ -18,6 +20,9 @@ const runtimeProfileSchema = z.object({
   model: z.string().nullish(),
   reasoningEffort: z.string().nullish(),
   fastMode: z.boolean().nullish(),
+  runtime: z.string().nullish(),
+  analyticalRuntime: z.string().nullish(),
+  provider: z.string().nullish(),
 });
 
 const conversationSummarySchema = z.object({
@@ -59,9 +64,9 @@ const answerLineageSchema = z.object({
   conversationId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
   turnId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
   turnNumber: z.number().int().positive(),
-  answerState: z.enum(["verified", "qualified", "exploratory", "clarification", "unavailable"]),
+  answerState: z.enum(["verified", "derived", "qualified", "exploratory", "clarification", "no_data", "unavailable"]),
   question: z.string().min(1).max(40_000),
-  finalNarrative: z.string().min(1).max(4_000),
+  finalNarrative: z.string().min(1).max(16_000),
   interpretedPlan: z.record(z.string(), z.unknown()),
   validationOutcomes: z.array(z.unknown()),
   provenance: z.record(z.string(), z.unknown()),
@@ -70,13 +75,13 @@ const answerLineageSchema = z.object({
   artifactDigest: z.string().regex(/^[a-f0-9]{64}$/),
   queries: z.array(z.object({
     queryAuditId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
-    route: z.enum(["semantic", "source_exploration", "sql_first"]),
+    route: z.enum(["semantic", "semantic_v2", "source_exploration", "sql_first"]),
     topic: z.string().nullable(),
     bundleHash: z.string().regex(/^[a-f0-9]{64}$/),
     registryVersion: z.string().min(1),
     compilerOutputHash: z.string().regex(/^[a-f0-9]{64}$/),
     resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
-    answerState: z.enum(["verified", "qualified", "exploratory", "clarification", "unavailable"]),
+    answerState: z.enum(["verified", "derived", "qualified", "exploratory", "clarification", "no_data", "unavailable"]),
     validation: z.record(z.string(), z.unknown()),
   }).strict()).max(20),
   finalizedAt: z.string(),
@@ -86,6 +91,27 @@ const connectionDisconnectSchema = z.object({
   deletionRequestId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
   status: z.enum(["queued", "running", "retry_wait", "verifying", "failed"]),
 }).strict();
+
+const connectorRoutingWorkspaceSchema = z.object({
+  connections: z.array(z.object({
+    connector_key: z.string().trim().min(1).max(80),
+    status: z.enum(["pending", "connected", "degraded", "blocked", "disconnected"]),
+    readiness: z.array(z.object({
+      domain: z.string().trim().min(1).max(80),
+      data_ready_through: z.string().nullable().optional(),
+    }).passthrough()).default([]),
+  }).passthrough()).default([]),
+}).passthrough();
+
+export type ConnectorRouting = Readonly<{
+  activeConnectors: readonly string[];
+  /** Per connector+domain sync watermarks; data past a watermark is unsynced, not zero. */
+  freshness: readonly Readonly<{
+    connector: string;
+    domain: string;
+    dataThrough: string | null;
+  }>[];
+}>;
 
 const tenantDeletionReceiptSchema = z.object({
   deletionRequestId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
@@ -126,13 +152,45 @@ export const ALBERT_RATE_LIMIT_POLICIES = Object.freeze({
   "conversation.turn": Object.freeze({ limit: 20, windowSeconds: 60 }),
   // Cheap nano titles; keep separate so sidebar backfill cannot starve turns.
   "conversation.title": Object.freeze({ limit: 40, windowSeconds: 60 }),
+  "conversation.transcribe": Object.freeze({ limit: 30, windowSeconds: 60 }),
+  // Each mint opens a ~10-minute realtime voice session; clicks, not polling.
+  "conversation.voice_session": Object.freeze({ limit: 10, windowSeconds: 60 }),
   "oauth.start": Object.freeze({ limit: 5, windowSeconds: 600 }),
   "oauth.callback": Object.freeze({ limit: 10, windowSeconds: 600 }),
   "oauth.select": Object.freeze({ limit: 10, windowSeconds: 600 }),
   "oauth.disconnect": Object.freeze({ limit: 5, windowSeconds: 3_600 }),
   "review.mutation": Object.freeze({ limit: 30, windowSeconds: 60 }),
+  "dashboard.mutation": Object.freeze({ limit: 60, windowSeconds: 60 }),
+  "dashboard.refresh": Object.freeze({ limit: 12, windowSeconds: 60 }),
+  "test-chart.generate": Object.freeze({ limit: 20, windowSeconds: 60 }),
   // A backfill is expensive and vendor-rate-limited; cap it far below click speed.
   "connection.manual_sync": Object.freeze({ limit: 6, windowSeconds: 3_600 }),
+  "connection.start_ingestion": Object.freeze({ limit: 6, windowSeconds: 3_600 }),
+  // Live Fivetran readout polled by the Connections card while a load runs.
+  "connection.fivetran_status": Object.freeze({ limit: 30, windowSeconds: 60 }),
+  // A proactive run is a whole research fleet; far below click speed.
+  "proactive.run": Object.freeze({ limit: 6, windowSeconds: 3_600 }),
+  // A swarm starts 2-5 Codex turns; keep it well below click speed.
+  "swarm.run": Object.freeze({ limit: 10, windowSeconds: 3_600 }),
+  // A Dashboard Master session is an hour-long fleet; a handful per day.
+  "dashboard_master.refresh": Object.freeze({ limit: 6, windowSeconds: 86_400 }),
+  // Each build is a full architect turn (up to 30 governed queries); generous
+  // enough to iterate on a dashboard all day, far below click speed.
+  "dashboard.build": Object.freeze({ limit: 24, windowSeconds: 86_400 }),
+  // Luna rewrite of homepage next questions; cache hits never consume this.
+  "conversation.recommended_analysis": Object.freeze({ limit: 12, windowSeconds: 3_600 }),
+  // Luna personalisation of the Discover library; cache hits never consume this.
+  "conversation.discover_prompts": Object.freeze({ limit: 8, windowSeconds: 3_600 }),
+  // Scheduled reports (ADR 0131): a create is one Luna parse; a manual run is a full Omni turn plus a text.
+  "scheduled.create": Object.freeze({ limit: 20, windowSeconds: 3_600 }),
+  "scheduled.mutation": Object.freeze({ limit: 60, windowSeconds: 60 }),
+  "scheduled.run": Object.freeze({ limit: 12, windowSeconds: 3_600 }),
+  // Alerts (ADR 0132): switches and recipients are cheap; a check is a
+  // lease, thirty governed queries and up to a few texts.
+  "alerts.mutation": Object.freeze({ limit: 60, windowSeconds: 60 }),
+  "alerts.check": Object.freeze({ limit: 12, windowSeconds: 3_600 }),
+  /** Deterministic element requeries (ADR 0134): each one runs a governed query. */
+  "dashboard.requery": Object.freeze({ limit: 240, windowSeconds: 3_600 }),
 } as const);
 
 export type AlbertRateLimitAction = keyof typeof ALBERT_RATE_LIMIT_POLICIES;
@@ -148,14 +206,21 @@ function singleton(value: unknown): unknown {
   return value;
 }
 
-export async function requireUser() {
+/**
+ * Authenticates once per request. Every repository function calls this, and
+ * `auth.getUser()` is a live network call to GoTrue, so without request-scoped
+ * memoisation a route doing K RPCs paid 2K serial round trips (ADR 0134).
+ * React's `cache()` is keyed to the request in the App Router, so the cookie
+ * store this reads is always the current request's.
+ */
+export const requireUser = cache(async () => {
   const supabase = await createClient();
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) throw new ControlPlaneError("Authentication is required.", 401);
   return { supabase, user: data.user };
-}
+});
 
-export async function currentTenantContext(): Promise<TenantContext | null> {
+export const currentTenantContext = cache(async (): Promise<TenantContext | null> => {
   const { supabase } = await requireUser();
   const { data, error } = await supabase.rpc("current_albert_context");
   if (error) {
@@ -169,7 +234,7 @@ export async function currentTenantContext(): Promise<TenantContext | null> {
   const parsed = tenantContextSchema.safeParse(candidate);
   if (!parsed.success) throw new ControlPlaneError("The organisation context is invalid.", 503);
   return parsed.data;
-}
+});
 
 export async function currentTenantDeletionReceipt(): Promise<TenantDeletionReceipt | null> {
   const { supabase } = await requireUser();
@@ -227,19 +292,219 @@ export async function bootstrapTenant(input: Readonly<{
   return parsed.data;
 }
 
+function isMissingRpc(error: { code?: string } | null): boolean {
+  return error?.code === "PGRST202" || error?.code === "42883";
+}
+
+async function loadFivetranWorkspaceConnections(
+  supabase: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<unknown[]> {
+  const { data, error } = await supabase.rpc("albert_fivetran_workspace_connections");
+  if (error) {
+    if (isMissingRpc(error)) return [];
+    throw new ControlPlaneError("Connection status could not be loaded.", 503);
+  }
+  if (!Array.isArray(data)) return [];
+  return data.filter((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+    return (row as { status?: unknown }).status !== "pending";
+  });
+}
+
+export async function isFivetranConnection(
+  connectionId: string,
+  supabaseClient?: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<boolean> {
+  const supabase = supabaseClient ?? (await requireUser()).supabase;
+  const { data, error } = await supabase.rpc("albert_is_fivetran_connection", {
+    p_connection_id: connectionId,
+  });
+  if (error) {
+    if (isMissingRpc(error)) return false;
+    throw new ControlPlaneError("Connection status could not be loaded.", 503);
+  }
+  return data === true;
+}
+
 export async function loadConnectionsWorkspace(): Promise<unknown> {
   const { supabase } = await requireUser();
   const context = await currentTenantContext();
   if (!context) throw new ControlPlaneError("Create your organisation before loading connections.", 409);
   const { data, error } = await supabase.rpc("albert_connections_workspace");
   if (error) throw new ControlPlaneError("Connection status could not be loaded.", 503);
-  return toConnectionsWorkspace(singleton(data), context.timezone);
+  const workspace = singleton(data);
+  if (!workspace || typeof workspace !== "object" || Array.isArray(workspace)) {
+    throw new ControlPlaneError("Connection status could not be loaded.", 503);
+  }
+  const record = workspace as Record<string, unknown>;
+  const existing = Array.isArray(record.connections) ? record.connections : [];
+  const fivetran = await loadFivetranWorkspaceConnections(supabase);
+  // A native connection whose grant Fivetran uses (Deputy) is an
+  // implementation detail of the Fivetran row: show one tile, not two.
+  const heldByFivetran = new Set(
+    fivetran.flatMap((row) => {
+      const metadata = row && typeof row === "object" && !Array.isArray(row)
+        ? (row as Record<string, unknown>).account_metadata
+        : undefined;
+      const native = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        ? (metadata as Record<string, unknown>).nativeConnectionId
+        : undefined;
+      return typeof native === "string" ? [native] : [];
+    }),
+  );
+  const visible = heldByFivetran.size === 0
+    ? existing
+    : existing.filter((row) => {
+      const id = row && typeof row === "object" && !Array.isArray(row)
+        ? (row as Record<string, unknown>).connection_id
+        : undefined;
+      return typeof id !== "string" || !heldByFivetran.has(id);
+    });
+  return toConnectionsWorkspace({
+    ...record,
+    connections: [...visible, ...fivetran],
+  }, context.timezone);
+}
+
+/**
+ * Return the authenticated tenant's connector keys that may still have a
+ * readable analytical surface. Pending connections have never become usable;
+ * disconnected connections are in the deletion lifecycle. Degraded and
+ * blocked connections remain visible because governed historical data can
+ * still be queryable with an explicit freshness qualification.
+ */
+export async function loadConnectorRouting(
+  supabaseClient?: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<ConnectorRouting> {
+  const supabase = supabaseClient ?? (await requireUser()).supabase;
+  const { data, error } = await supabase.rpc("albert_connections_workspace");
+  if (error) throw new ControlPlaneError("Connection routing state could not be loaded.", 503);
+  const parsed = connectorRoutingWorkspaceSchema.safeParse(singleton(data));
+  if (!parsed.success) {
+    throw new ControlPlaneError("Connection routing state returned invalid data.", 503);
+  }
+  const active = parsed.data.connections
+    .filter(({ status }) => status !== "pending" && status !== "disconnected");
+  // Several connections of one connector: the freshest watermark per domain
+  // reflects what is actually queryable.
+  const byConnectorDomain = new Map<string, { connector: string; domain: string; dataThrough: string | null }>();
+  for (const connection of active) {
+    for (const readiness of connection.readiness) {
+      const key = `${connection.connector_key} ${readiness.domain}`;
+      const existing = byConnectorDomain.get(key);
+      const candidate = readiness.data_ready_through ?? null;
+      if (!existing || (candidate !== null && (existing.dataThrough === null || candidate > existing.dataThrough))) {
+        byConnectorDomain.set(key, {
+          connector: connection.connector_key,
+          domain: readiness.domain,
+          dataThrough: candidate,
+        });
+      }
+    }
+  }
+  let freshness = [...byConnectorDomain.values()]
+    .sort((a, b) => a.connector.localeCompare(b.connector) || a.domain.localeCompare(b.domain));
+  if (!freshness.some((entry) => entry.dataThrough !== null)) {
+    // readiness is unpopulated for some tenants; fall back to the ingestion
+    // stream cursors so the agent still knows how fresh each source is.
+    const { data: fallback } = await supabase.rpc("albert_connector_freshness");
+    const parsed = connectorFreshnessSchema.safeParse(singleton(fallback));
+    if (parsed.success) {
+      freshness = parsed.data.map((entry) => ({
+        connector: entry.connector,
+        domain: entry.domain,
+        dataThrough: entry.dataThrough,
+      }));
+    }
+  }
+  return Object.freeze({
+    activeConnectors: Object.freeze([...new Set(
+      active.map(({ connector_key: connectorKey }) => connectorKey),
+    )].sort()),
+    freshness: Object.freeze(freshness),
+  });
+}
+
+const connectorFreshnessSchema = z.array(z.object({
+  connector: z.string().trim().min(1).max(80),
+  domain: z.string().trim().min(1).max(120),
+  dataThrough: z.string().nullable(),
+}).strict());
+
+const sourceFindingsSchema = z.array(z.object({
+  concept: z.string().trim().min(1).max(60),
+  finding: z.string().trim().min(1).max(500),
+  recordedAt: z.string(),
+}).strict());
+
+export type TenantSourceFindings = z.infer<typeof sourceFindingsSchema>;
+
+/** Durable source-topology facts recorded by earlier agent investigations. */
+export async function loadSourceFindings(
+  supabaseClient?: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<TenantSourceFindings> {
+  const supabase = supabaseClient ?? (await requireUser()).supabase;
+  const { data, error } = await supabase.rpc("albert_list_source_findings");
+  if (error) throw new ControlPlaneError("Source findings could not be loaded.", 503);
+  const parsed = sourceFindingsSchema.safeParse(singleton(data));
+  if (!parsed.success) throw new ControlPlaneError("Source findings returned invalid data.", 503);
+  return parsed.data;
+}
+
+export async function recordSourceFinding(
+  concept: string,
+  finding: string,
+  supabaseClient?: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<void> {
+  const supabase = supabaseClient ?? (await requireUser()).supabase;
+  const { error } = await supabase.rpc("albert_record_source_finding", {
+    p_concept: concept,
+    p_finding: finding,
+  });
+  if (error) throw new ControlPlaneError("The source finding could not be recorded.", 503);
+}
+
+export async function loadActiveConnectorKeys(
+  supabaseClient?: Awaited<ReturnType<typeof requireUser>>["supabase"],
+): Promise<readonly string[]> {
+  return (await loadConnectorRouting(supabaseClient)).activeConnectors;
 }
 
 export async function disconnectConnection(
   connectionId: string,
 ): Promise<z.infer<typeof connectionDisconnectSchema>> {
-  const { supabase } = await requireUser();
+  const { supabase, user } = await requireUser();
+  if (await isFivetranConnection(connectionId, supabase)) {
+    const context = await currentTenantContext();
+    if (!context) throw new ControlPlaneError("Create your organisation before disconnecting.", 409);
+    let nativeConnectionId: string | undefined;
+    try {
+      const result = await disconnectFivetranXero({
+        tenantId: context.tenant_id,
+        userId: user.id,
+        connectionId,
+      });
+      nativeConnectionId = result.nativeConnectionId;
+    } catch (error) {
+      const status = error instanceof OAuthFlowError ? error.status : 503;
+      throw new ControlPlaneError(
+        status === 403
+          ? "Owner or manager access is required."
+          : status === 404
+            ? "The connection was not found."
+            : "The connection could not be disconnected safely.",
+        status === 403 || status === 404 || status === 409 ? status : 503,
+      );
+    }
+    // Deputy via Fivetran: the grant lives on an Albert-native Deputy
+    // connection (ingestion held at manual). Disconnect it through the normal
+    // path so the credential is destroyed and its purge is queued.
+    if (nativeConnectionId && /^[0-9A-HJKMNP-TV-Z]{26}$/u.test(nativeConnectionId)) {
+      await supabase.rpc("albert_disconnect_connection", { p_connection_id: nativeConnectionId })
+        .then(() => undefined, () => undefined);
+    }
+    return { deletionRequestId: connectionId, status: "queued" };
+  }
   const { data, error } = await supabase.rpc("albert_disconnect_connection", {
     p_connection_id: connectionId,
   });
@@ -385,6 +650,51 @@ export async function consumeAlbertRateLimit(
     remaining: parsed.data.remaining,
     limit: policy.limit,
   });
+}
+
+const usageEntrySchema = z.object({
+  usageLedgerId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  conversationId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  turnId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  recordedAt: z.string(),
+  model: z.string().min(1),
+  fastMode: z.boolean(),
+  requests: z.coerce.number().int().nonnegative(),
+  inputTokens: z.coerce.number().int().nonnegative(),
+  outputTokens: z.coerce.number().int().nonnegative(),
+  cachedInputTokens: z.coerce.number().int().nonnegative(),
+  estimatedCostUsdMicros: z.coerce.number().int().nonnegative(),
+  query: z.string().nullable().transform((value) => value ?? ""),
+  conversationTitle: z.string().nullable(),
+}).strict();
+
+const usageWorkspaceSchema = z.object({
+  entries: z.array(usageEntrySchema),
+  totals: z.object({
+    queries: z.coerce.number().int().nonnegative(),
+    inputTokens: z.coerce.number().int().nonnegative(),
+    outputTokens: z.coerce.number().int().nonnegative(),
+    estimatedCostUsdMicros: z.coerce.number().int().nonnegative(),
+  }).strict(),
+}).strict();
+
+export type ModelUsageEntry = z.infer<typeof usageEntrySchema>;
+export type ModelUsageWorkspace = z.infer<typeof usageWorkspaceSchema>;
+
+export async function listModelUsage(limit = 100): Promise<ModelUsageWorkspace> {
+  const { supabase } = await requireUser();
+  const { data, error } = await supabase.rpc("albert_list_model_usage", {
+    p_limit: Math.max(1, Math.min(200, Math.trunc(limit))),
+  });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") {
+      throw new ControlPlaneError("The Albert control-plane migration is not deployed.", 503);
+    }
+    throw new ControlPlaneError("Usage history could not be loaded.", 503);
+  }
+  const parsed = usageWorkspaceSchema.safeParse(data);
+  if (!parsed.success) throw new ControlPlaneError("Usage history returned invalid state.", 503);
+  return parsed.data;
 }
 
 export class ControlPlaneError extends Error {

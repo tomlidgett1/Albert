@@ -1,0 +1,24 @@
+views:
+  - name: square_gift_card_activity_analytics
+    title: Square gift card activity analytics
+    description: Square gift-card activation, load, redemption, refund and other stored-value activity by date and store.
+    meta:
+      ai_context: >
+        Gift-card load/activation creates stored-value liability, not earned
+        sales. Redemption settles that liability against a purchase. Use event
+        counts by activity_type; uncommon money detail remains in the exhaustive
+        explorer because Square activity types do not share one safe sign convention.
+    cubes:
+      - join_path: square_gift_card_activities
+        includes:
+          - tenant_id
+          - activity_type
+          - created_at
+          - gift_card_activities
+          - activations
+          - loads
+          - redemptions
+          - gift_card_refunds
+      - join_path: square_gift_card_activities.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]

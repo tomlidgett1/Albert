@@ -1,0 +1,510 @@
+views:
+  - name: shopify_sales_analytics
+    title: Shopify sales analytics
+    description: >
+      Aggregate Shopify commerce surface sourced from protected order facts.
+      Current totals are the default for
+      headline sales; original totals retain the order-time state. Refunds are
+      source-reported and test/cancelled orders are excluded from sales measures.
+    meta:
+      ai_context: >
+        Default time is processed_at. Group currency amounts by currency_code.
+        Use product, payment, refund, fulfilment and return views for their own grains.
+        This is an aggregate-only protected-customer-data surface. Exact orders,
+        customers, tags and source identifiers are intentionally unavailable.
+      privacy_policy: aggregate_only
+      minimum_time_granularity: day
+      privacy_minimum_group_size: 5
+      privacy_population_measure: distinct_protected_subjects
+    cubes:
+      - join_path: shopify_orders
+        includes:
+          - tenant_id
+          - channel_name
+          - source_name
+          - financial_status
+          - fulfillment_status
+          - cancel_reason
+          - currency_code
+          - presentment_currency_code
+          - processed_at
+          - test
+          - taxes_included
+          - confirmed
+          - fully_paid
+          - order_state
+          - orders
+          - original_gross_merchandise_sales
+          - original_net_merchandise_sales
+          - current_net_merchandise_sales
+          - discounts
+          - current_discounts
+          - shipping
+          - tax
+          - current_tax
+          - original_total_sales
+          - current_total_sales
+          - refunded_amount
+          - outstanding_amount
+          - average_order_value
+          - cancelled_orders
+          - cancellation_rate_pct
+          - refunded_orders
+          - refund_incidence_pct
+          - paid_orders
+          - fulfilled_orders
+          - unfulfilled_orders
+          - valid_orders
+          - orders_with_refunds
+          - distinct_protected_subjects
+      - join_path: shopify_orders.shopify_locations
+        prefix: true
+        includes:
+          - province_code
+          - country_code
+      - join_path: shopify_orders.shopify_shop
+        prefix: true
+        includes:
+          - shop_currency
+          - shop_timezone
+
+  - name: shopify_product_sales_analytics
+    title: Shopify product sales analytics
+    description: Aggregate unit, discount and return performance sourced from protected order-line facts.
+    meta:
+      ai_context: >
+        Aggregate-only order-line analytics. Merchant-authored product and
+        variant labels, exact line/order identities and line-level money or
+        quantity values are unavailable.
+      privacy_policy: aggregate_only
+      minimum_time_granularity: day
+      privacy_minimum_group_size: 5
+      privacy_population_measure: distinct_protected_subjects
+    cubes:
+      - join_path: shopify_order_lines
+        includes:
+          - tenant_id
+          - requires_shipping
+          - taxable
+          - is_partially_or_fully_returned
+          - line_count
+          - units_ordered
+          - current_units
+          - returned_units
+          - fulfillable_units
+          - unfulfilled_units
+          - gross_product_sales
+          - line_discounts
+          - line_tax
+          - net_product_sales_before_returns
+          - average_selling_price
+          - distinct_products_sold
+          - return_affected_lines
+          - distinct_protected_subjects
+      - join_path: shopify_order_lines.shopify_orders
+        prefix: true
+        includes:
+          - processed_at
+          - currency_code
+          - channel_name
+          - financial_status
+          - fulfillment_status
+      - join_path: shopify_order_lines.shopify_products
+        prefix: true
+        includes:
+          - status
+
+  - name: shopify_payments_analytics
+    title: Shopify payments analytics
+    description: Aggregate payment authorisation, capture, failure, void and refund analysis.
+    meta:
+      ai_context: >
+        Aggregate-only payment analytics. Never expose or reconstruct a payment,
+        transaction or order identifier or a transaction-level amount.
+      privacy_policy: aggregate_only
+      minimum_time_granularity: day
+      privacy_minimum_group_size: 5
+      privacy_population_measure: distinct_protected_subjects
+    cubes:
+      - join_path: shopify_transactions
+        includes:
+          - tenant_id
+          - processed_at
+          - kind
+          - status
+          - gateway
+          - payment_method
+          - currency_code
+          - test
+          - manually_capturable
+          - transaction_count
+          - successful_transactions
+          - failed_transactions
+          - captured_amount
+          - captured_transactions
+          - authorised_amount
+          - refunded_transaction_amount
+          - voided_transactions
+          - payment_success_rate_pct
+          - average_capture_amount
+          - distinct_protected_subjects
+      - join_path: shopify_transactions.shopify_orders
+        prefix: true
+        includes:
+          - channel_name
+          - financial_status
+
+  - name: shopify_refunds_analytics
+    title: Shopify refunds analytics
+    description: Aggregate source truth for refunded units, money, tax and restocking.
+    meta:
+      ai_context: >
+        Aggregate-only refund analytics. Merchant-authored product labels and
+        exact refund, order and line identities remain unavailable.
+      privacy_policy: aggregate_only
+      minimum_time_granularity: day
+      privacy_minimum_group_size: 5
+      privacy_population_measure: distinct_protected_subjects
+    cubes:
+      - join_path: shopify_refund_lines
+        includes:
+          - tenant_id
+          - refunded_at
+          - restock_type
+          - refund_line_count
+          - refunded_units
+          - refund_subtotal
+          - refund_tax
+          - refund_total
+          - restocked_units
+          - distinct_protected_subjects
+      - join_path: shopify_refund_lines.shopify_orders
+        prefix: true
+        includes:
+          - currency_code
+          - channel_name
+
+  - name: shopify_fulfillment_analytics
+    title: Shopify fulfillment analytics
+    description: Aggregate dispatch, in-transit, delivery and service performance.
+    meta:
+      ai_context: >
+        Aggregate-only fulfilment analytics. Tracking values, fulfilment/order
+        identities and exact event timestamps are not public query results;
+        time is bucketed to day or coarser.
+      privacy_policy: aggregate_only
+      minimum_time_granularity: day
+      privacy_minimum_group_size: 5
+      privacy_population_measure: distinct_protected_subjects
+    cubes:
+      - join_path: shopify_fulfillments
+        includes:
+          - tenant_id
+          - status
+          - display_status
+          - created_at
+          - in_transit_at
+          - delivered_at
+          - estimated_delivery_at
+          - delivery_timeliness
+          - fulfillments
+          - fulfilled_units
+          - delivered_fulfillments
+          - open_fulfillments
+          - late_deliveries
+          - on_time_deliveries
+          - deliveries_with_estimate
+          - average_hours_to_fulfil
+          - average_hours_to_deliver
+          - on_time_delivery_rate_pct
+          - distinct_protected_subjects
+      - join_path: shopify_fulfillments.shopify_orders
+        prefix: true
+        includes:
+          - channel_name
+
+  - name: shopify_returns_analytics
+    title: Shopify returns analytics
+    description: Aggregate return lifecycle, quantities, exchanges, refund linkage and close time.
+    meta:
+      ai_context: >
+        Aggregate-only return lifecycle analytics. Exact return/order identities
+        and exact timestamps are unavailable; time is bucketed to day or coarser.
+      privacy_policy: aggregate_only
+      minimum_time_granularity: day
+      privacy_minimum_group_size: 5
+      privacy_population_measure: distinct_protected_subjects
+    cubes:
+      - join_path: shopify_returns
+        includes:
+          - tenant_id
+          - status
+          - created_at
+          - closed_at
+          - returns
+          - open_returns
+          - closed_returns
+          - returned_quantity
+          - return_line_items
+          - exchange_line_items
+          - linked_refunds
+          - average_hours_to_close_return
+          - distinct_protected_subjects
+      - join_path: shopify_returns.shopify_orders
+        prefix: true
+        includes:
+          - channel_name
+
+  - name: shopify_inventory_analytics
+    title: Shopify inventory analytics
+    description: Current inventory positions with non-additive states kept separate and merchant-authored labels excluded.
+    cubes:
+      - join_path: shopify_inventory_levels
+        includes:
+          - tenant_id
+          - can_deactivate
+          - available
+          - on_hand
+          - committed
+          - incoming
+          - reserved
+          - damaged
+          - safety_stock
+          - quality_control
+          - snapshot_at
+          - stock_state
+          - inventory_positions
+          - available_units
+          - units_on_hand
+          - committed_units
+          - incoming_units
+          - reserved_units
+          - damaged_units
+          - out_of_stock_positions
+          - low_stock_positions
+          - retail_inventory_value
+      - join_path: shopify_inventory_levels.shopify_locations
+        prefix: true
+        includes:
+          - active
+          - fulfils_online_orders
+          - ships_inventory
+          - province_code
+          - country_code
+      - join_path: shopify_inventory_levels.shopify_product_variants
+        prefix: true
+        includes:
+          - price
+          - available_for_sale
+      - join_path: shopify_inventory_levels.shopify_product_variants.shopify_products
+        prefix: true
+        includes:
+          - status
+      - join_path: shopify_inventory_levels.shopify_product_variants.shopify_products.shopify_shop
+        prefix: true
+        includes:
+          - shop_currency
+
+  - name: shopify_customer_analytics
+    title: Shopify customer analytics
+    description: Aggregate customer population and lifetime-behaviour measures; no customer row is public.
+    meta:
+      ai_context: >
+        Aggregate-only customer analytics. Customer identifiers, tags, locale,
+        per-customer spend/order counts and customer timestamps are unavailable.
+        This is a current population snapshot, not a cohort-retention surface.
+      privacy_policy: aggregate_only
+      minimum_time_granularity: day
+      privacy_minimum_group_size: 5
+      privacy_population_measure: customer_count
+    cubes:
+      - join_path: shopify_customers
+        includes:
+          - tenant_id
+          - customer_count
+          - purchasing_customers
+          - repeat_customers
+          - total_customer_lifetime_spend
+          - average_customer_lifetime_spend
+          - repeat_customer_rate_pct
+      - join_path: shopify_customers.shopify_shop
+        prefix: true
+        includes:
+          - shop_currency
+
+  - name: shopify_catalogue_analytics
+    title: Shopify catalogue analytics
+    description: Aggregate merchandising, publishing and inventory catalogue without merchant-authored product text.
+    cubes:
+      - join_path: shopify_products
+        includes:
+          - tenant_id
+          - status
+          - total_inventory
+          - tracks_inventory
+          - created_at
+          - updated_at
+          - published_at
+          - product_count
+          - active_products
+          - published_products
+          - tracked_product_inventory
+      - join_path: shopify_products.shopify_shop
+        prefix: true
+        includes:
+          - shop_currency
+
+  - name: shopify_variant_analytics
+    title: Shopify variant analytics
+    description: Variant price, policy, quantity and sellable availability without merchant-authored labels or identifiers.
+    cubes:
+      - join_path: shopify_product_variants
+        includes:
+          - tenant_id
+          - price
+          - compare_at_price
+          - inventory_quantity
+          - sellable_online_quantity
+          - inventory_policy
+          - taxable
+          - available_for_sale
+          - position
+          - created_at
+          - updated_at
+          - variant_count
+          - available_variants
+          - variant_inventory
+          - average_price
+          - retail_inventory_value
+      - join_path: shopify_product_variants.shopify_products
+        prefix: true
+        includes:
+          - status
+      - join_path: shopify_product_variants.shopify_products.shopify_shop
+        prefix: true
+        includes:
+          - shop_currency
+
+  - name: shopify_discount_analytics
+    title: Shopify discount analytics
+    description: Discount-definition grain for lifecycle, usage, compatibility and attributed sales.
+    cubes:
+      - join_path: shopify_discounts
+        includes:
+          - tenant_id
+          - discount_type
+          - status
+          - discount_classes
+          - combines_with
+          - created_at
+          - updated_at
+          - starts_at
+          - ends_at
+          - lifecycle
+          - discount_definitions
+          - active_discounts
+          - scheduled_discounts
+          - attributed_discount_sales
+          - discount_uses
+          - average_sales_per_use
+          - remaining_usage_capacity
+      - join_path: shopify_discounts.shopify_shop
+        prefix: true
+        includes:
+          - shop_currency
+
+  - name: shopify_store_analytics
+    title: Shopify store analytics
+    description: Connected Shopify reporting configuration without contact, address, name or domain identifiers.
+    cubes:
+      - join_path: shopify_shop
+        includes:
+          - tenant_id
+          - shop_currency
+          - shop_timezone
+          - timezone_abbreviation
+          - plan_name
+          - customer_accounts
+          - created_at
+          - updated_at
+          - shop_count
+
+  - name: shopify_source_fields_analytics
+    title: Shopify exhaustive API fields
+    description: >
+      Definition and availability catalogue for every Shopify Admin GraphQL
+      field. Store values and source-object identifiers are unavailable on this
+      replayable public surface; safe live values use the governed Admin read plane.
+    cubes:
+      - join_path: shopify_fields
+        includes:
+          - tenant_id
+          - definition_kind
+          - root_field
+          - object_type
+          - schema_path
+          - field_name
+          - field_type
+          - value_kind
+          - value_form
+          - observation_form
+          - api_version
+          - required_scopes
+          - required_access
+          - field_arguments
+          - field_description
+          - protected_data_level
+          - availability
+          - availability_reason
+          - deprecated
+          - deprecation_reason
+          - documentation_url
+          - schema_sha256
+          - disposition
+          - is_sensitive
+          - is_queryable
+          - unsupported_reason
+          - value_state
+          - field_observations
+          - sensitive_fields
+          - unavailable_fields
+          - deprecated_fields
+          - queryable_fields
+          - protected_fields
+
+  - name: shopify_metafield_catalogue_analytics
+    title: Shopify metafield catalogue
+    description: >
+      Aggregate type, owner and access metadata for Shopify custom fields.
+      Merchant names, namespaces, keys, validations and literals are unavailable
+      because any of them can contain personal or confidential information.
+    cubes:
+      - join_path: shopify_metafield_definitions
+        includes:
+          - tenant_id
+          - owner_type
+          - type_name
+          - type_category
+          - admin_access
+          - storefront_access
+          - customer_account_access
+          - validation_status
+          - use_as_collection_condition
+          - definition_count
+          - populated_owner_count
+  - name: shopify_metafield_presence_analytics
+    title: Shopify metafield presence
+    description: >
+      Aggregate custom-field presence by owner and type. Owner/metafield IDs,
+      merchant namespace/key, size fingerprints, timestamps and literals are
+      unavailable on this public semantic surface.
+    cubes:
+      - join_path: shopify_metafield_values
+        includes:
+          - tenant_id
+          - owner_type
+          - owner_graphql_type
+          - metafield_type
+          - value_state
+          - metafield_count
+          - owners_with_metafields

@@ -23,13 +23,17 @@ export const FACT_IDS = [
   "commerce_order",
   "commerce_order_line",
   "commerce_payment",
+  "commerce_refund",
   "commerce_refund_line",
+  "commerce_payment_fee",
   "inventory_movement",
   "inventory_balance_snapshot",
   "purchase_order_line",
   "finance_journal_line",
   "finance_invoice_line",
   "finance_bank_transaction",
+  "finance_settlement",
+  "finance_settlement_line",
   "workforce_shift",
   "workforce_time_entry",
   "workforce_leave",
@@ -93,6 +97,8 @@ export type AuthorityConnectionMap = Readonly<{
   lightspeed?: string;
   xero?: string;
   deputy?: string;
+  square?: string;
+  momence?: string;
 }>;
 
 export type SourceAuthorityDefault = Readonly<{

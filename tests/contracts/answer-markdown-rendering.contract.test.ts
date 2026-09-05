@@ -3,9 +3,17 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { resolve } from "node:path";
 import { sanitizeAnswerText, sanitizeTraceText } from "../../packages/shared/src/index.js";
-import { renderAssistantMarkdown } from "../../app/dash/lib/render-assistant-markdown.js";
+import {
+  renderAssistantMarkdown,
+  splitAssistantMarkdownLead,
+} from "../../app/dash/lib/render-assistant-markdown.js";
 
-const liveRuntime = readFileSync(resolve("services/conversation/src/live.ts"), "utf8");
+const codexRuntime = readFileSync(resolve("packages/albert-codex/src/semantic-runtime.ts"), "utf8");
+const v3EngineRuntime = readFileSync(resolve("packages/albert-v3/src/engine/engine.ts"), "utf8");
+const traceStyles = readFileSync(
+  resolve("app/dash/components/insights-trace.module.css"),
+  "utf8",
+);
 
 /** The shape an answer takes when the governed result is genuinely tabular. */
 const tabularAnswer = `Services carries the margin, Wheels & Tyres the volume.
@@ -65,13 +73,107 @@ test("prose containing a pipe is not mistaken for a table", () => {
   assert.match(html, /<p>Sales rose \| margin fell\. That is the trade-off\.<\/p>/);
 });
 
-test("the runtime sanitizes the answer as prose and asks for a table when the data is tabular", () => {
-  // 12k allows a layered multi-table report; the finalization gate bounds the
-  // persisted narrative at 16k (control-plane migration 0096).
-  assert.match(liveRuntime, /let answerText = sanitizeAnswerText\(output\.text, 12_000\)/u);
-  assert.doesNotMatch(liveRuntime, /answerText = sanitizeTraceText\(output\.text/u);
-  assert.match(liveRuntime, /The answer is rendered markdown/u);
-  assert.match(liveRuntime, /markdown pipe table/u);
-  assert.match(liveRuntime, /ensureAnswerIncludesTable/u);
-  assert.match(liveRuntime, /isOwnerTrailValidation/u);
+test("long answers render explicit headings and lists as a scannable report", () => {
+  const html = renderAssistantMarkdown(`The setup is broadly sound, with two items to review.
+
+## Priorities
+
+- **Review the lock date.** It is older than expected.
+- **Confirm the account class.** Motor vehicles may be misclassified.
+
+## Next steps
+
+1. Check the lock date
+2. Review the asset accounts`);
+
+  assert.match(html, /<h2>Priorities<\/h2>/);
+  assert.match(html, /<ul><li><strong>Review the lock date\.<\/strong>/);
+  assert.match(html, /<h2>Next steps<\/h2>/);
+  assert.match(html, /<ol><li>Check the lock date<\/li><li>Review the asset accounts<\/li><\/ol>/);
+});
+
+test("legacy bare report labels become headings without promoting ordinary prose", () => {
+  const html = renderAssistantMarkdown(`The setup is broadly sound.
+
+What is sound
+
+The organisation details are complete.
+
+Issues to fix or confirm
+
+Review the period lock date.
+
+What is not covered
+
+Payroll was not assessed.`);
+
+  assert.match(html, /<h2>What is sound<\/h2>/);
+  assert.match(html, /<h2>Issues to fix or confirm<\/h2>/);
+  assert.match(html, /<h2>What is not covered<\/h2>/);
+  assert.doesNotMatch(renderAssistantMarkdown("Ashburton Cycles\n\nRecorded in Xero."), /<h[1-6]>/);
+  assert.doesNotMatch(renderAssistantMarkdown("What happened?\n\nSales rose."), /<h[1-6]>/);
+  assert.doesNotMatch(renderAssistantMarkdown("Key Bikes\n\nSold 4 units."), /<h[1-6]>/);
+  assert.doesNotMatch(renderAssistantMarkdown("What Women Want\n\nSold 2 units."), /<h[1-6]>/);
+});
+
+test("a structured answer table can sit after the takeaway and before report detail", () => {
+  assert.deepEqual(
+    splitAssistantMarkdownLead(`The setup is broadly sound, with two items to review.
+
+## Priorities
+
+- Review the lock date
+- Confirm the account class`),
+    {
+      lead: "The setup is broadly sound, with two items to review.",
+      detail: "## Priorities\n\n- Review the lock date\n- Confirm the account class",
+    },
+  );
+  assert.deepEqual(splitAssistantMarkdownLead("Sales were $42 yesterday."), {
+    lead: "Sales were $42 yesterday.",
+    detail: "",
+  });
+  assert.deepEqual(
+    splitAssistantMarkdownLead(`Leigh Phillips worked the most over 6-19 August, with **66 hours**.
+
+The timesheet data is current through Sunday 16 August, so the final three days of the requested period are not yet included.`),
+    {
+      lead: "Leigh Phillips worked the most over 6-19 August, with **66 hours**.",
+      detail: "The timesheet data is current through Sunday 16 August, so the final three days of the requested period are not yet included.",
+    },
+  );
+
+  const traceSurface = readFileSync(resolve("app/dash/components/InsightsStyleTrace.tsx"), "utf8");
+  const leadPosition = traceSurface.indexOf("content={answerSections?.lead || model.answer.text}");
+  const tablePosition = traceSurface.indexOf("model.answerTables.map");
+  const detailPosition = traceSurface.indexOf("content={answerSections.detail}");
+  assert.ok(leadPosition >= 0 && leadPosition < tablePosition);
+  assert.ok(tablePosition < detailPosition);
+});
+
+test("assistant report spacing wins the chat reset and follows the text scale", () => {
+  assert.match(traceStyles, /\.answerBlock \.assistantProse :global\(p\)/u);
+  assert.match(traceStyles, /font-size: calc\(16px \* var\(--text-scale\)\)/u);
+  assert.match(traceStyles, /\.assistantProse :global\(p\),\s*\n\.assistantProse :global\(li\) \{\s*\n  font-size: calc\(16px \* var\(--text-scale\)\)/u);
+  assert.match(traceStyles, /list-style-type: disc/u);
+  assert.match(traceStyles, /list-style-type: decimal/u);
+});
+
+test("the v3 contract requires clean Markdown structure without Markdown tables", () => {
+  const laneRuntime = readFileSync(resolve("packages/albert-v3/src/engine/lanes.ts"), "utf8");
+  assert.match(laneRuntime, /Clean Markdown prose/u);
+  assert.match(laneRuntime, /organise the detail under short descriptive/u);
+  assert.match(laneRuntime, /put distinct findings in bullets/u);
+  assert.match(laneRuntime, /Use a numbered list, in priority order/u);
+  assert.match(laneRuntime, /Never write a Markdown pipe table/u);
+  assert.doesNotMatch(laneRuntime, /Prose only\. Never include/u);
+  assert.match(v3EngineRuntime, /Preserve the draft's headings,/u);
+  assert.doesNotMatch(v3EngineRuntime, /short prose only/u);
+});
+
+test("the Codex runtime sanitizes prose and keeps table selection structured", () => {
+  assert.match(codexRuntime, /sanitizeAnswerText\(salvagedAnswer, 8_000\)/u);
+  assert.match(codexRuntime, /The answer embedded a markdown pipe table/u);
+  assert.match(codexRuntime, /presentedResultIds/u);
+  assert.doesNotMatch(codexRuntime, /answerText = ensureAnswerIncludesTable\(/u);
 });

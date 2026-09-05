@@ -2,7 +2,7 @@ import {
   loadRawStorageS3Config,
   type RawStorageS3Config,
 } from "../../../packages/storage/src/s3.js";
-import { loadReplicaWorkerId } from "../../../packages/shared/src/index.js";
+import { loadReplicaWorkerId } from "../../../packages/shared/src/worker-id.js";
 import { assertProductionRuntimeBoundary } from "../../../packages/config/src/production-boundary.js";
 import { loadEncodedAes256Keyring } from "../../../packages/security/src/index.js";
 
@@ -16,6 +16,9 @@ export type DeletionWorkerConfig = Readonly<{
   tokenKeyVersion: string;
   lightspeedClientId: string;
   lightspeedClientSecret: string;
+  squareClientId: string;
+  squareClientSecret: string;
+  squareRedirectUri: string;
   xeroClientId: string;
   proofHmacKey: string;
   workerId: string;
@@ -90,6 +93,21 @@ export function loadDeletionWorkerConfig(
   if (!Number.isInteger(pollDelayMs) || pollDelayMs < 100 || pollDelayMs > 60_000) {
     throw new Error("DELETION_WORKER_POLL_MS must be an integer from 100 to 60000.");
   }
+  const publicOriginValue = required(source, "ALBERT_PUBLIC_ORIGIN");
+  let publicOrigin: URL;
+  try {
+    publicOrigin = new URL(publicOriginValue);
+  } catch {
+    throw new Error("ALBERT_PUBLIC_ORIGIN must be a valid HTTPS origin.");
+  }
+  if (
+    publicOrigin.protocol !== "https:" ||
+    publicOrigin.origin !== publicOriginValue ||
+    publicOrigin.username ||
+    publicOrigin.password
+  ) {
+    throw new Error("ALBERT_PUBLIC_ORIGIN must be a clean HTTPS origin.");
+  }
   return Object.freeze({
     controlPlaneDatabaseUrl: databaseUrl(
       required(source, "CONTROL_PLANE_DATABASE_URL"),
@@ -109,6 +127,9 @@ export function loadDeletionWorkerConfig(
     tokenKeyVersion,
     lightspeedClientId: required(source, "LIGHTSPEED_CLIENT_ID"),
     lightspeedClientSecret: required(source, "LIGHTSPEED_CLIENT_SECRET"),
+    squareClientId: required(source, "SQUARE_CLIENT_ID"),
+    squareClientSecret: required(source, "SQUARE_CLIENT_SECRET"),
+    squareRedirectUri: new URL("/api/oauth/square/callback", publicOrigin).toString(),
     xeroClientId: required(source, "XERO_CLIENT_ID"),
     proofHmacKey,
     workerId,

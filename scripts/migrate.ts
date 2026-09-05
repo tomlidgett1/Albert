@@ -23,6 +23,160 @@ type AppliedMigration = Readonly<{
   checksum_sha256: string;
 }>;
 
+const FRESH_ANALYTICAL_DATA_MIGRATIONS = new Map([
+  [
+    "0129_m5_retire_renamed_predecessor_pack_surface.sql",
+    "e7a2633e5e9df29982dd4ac2031a4f6774a60def7aad6a7a17ef21079723ae6c",
+  ],
+  [
+    "0131_m5_retire_capability_tombstones_after_activation.sql",
+    "cf6a66b997095df92a0975fe94726106f269b84a733b2182ebe9e5cc33740fb7",
+  ],
+  [
+    "0135_m2_xero_official_source_views.sql",
+    "1daa4ccfdf4284c2593ad00827141449c83d67337b78a3bac27782ae733208a2",
+  ],
+  [
+    "0136_m2_xero_pnl_lines.sql",
+    "a94a5a0ebb8059eb3512c1fb66de0b9c35479781b942ba370d3e0fbf5df081d1",
+  ],
+  [
+    "0137_m2_xero_gst_lines.sql",
+    "471381fd878e1fab499dd5a0c81d5c8f0d6c0cf7218adc9384908ba34ae0deee",
+  ],
+  [
+    "0169_m2_deputy_source_views_over_fivetran.sql",
+    "003fa50c53fb5a54b7b66394a6362c99954c8b1ffa3bfbcf8576670fcb8db0a9",
+  ],
+  [
+    "0176_m2_deputy_leave_local_dates_and_leave_days.sql",
+    "a8ed716ea29ca8a66da77f00ca96b0770b1708b4516f6d1194cfe406369d5080",
+  ],
+]);
+
+const FRESH_DEPUTY_SOURCE_VIEW_COMPATIBILITY = Object.freeze({
+  id: "0134_m2_deputy_source_views.sql",
+  checksum: "3c4b2ae020296affad452c187c3d9a4f3cee7802b3c6f3310a8f43488f073ae5",
+});
+
+const FRESH_XERO_OFFICIAL_SCHEMA_COMPATIBILITY = Object.freeze({
+  id: "0164_m2_xero_official_views_over_connector_staging.sql",
+  checksum: "78f2c44ba04b366160e87e6b311ccfc6fba8f75e47ae213779bd323c6970f85b",
+});
+
+const FRESH_XERO_FIVETRAN_REPOINT_COMPATIBILITY = Object.freeze({
+  id: "0168_m2_xero_official_views_over_fivetran.sql",
+  checksum: "1ae4cb35ebab373890b688fbbd95543ae5dbf71cc012661fc93e92c60c083155",
+  repointMarker: "SELECT ingestion.rebuild_fivetran_source_views('xero');",
+});
+
+const FRESH_DEPUTY_RAW_STUBS = `
+CREATE SCHEMA IF NOT EXISTS "DEPUTYNEW";
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_employee (
+  "Id" text, "FirstName" text, "LastName" text, "DisplayName" text,
+  "Position" text, "Active" boolean, "Paused" boolean, "StartDate" text,
+  "TerminationDate" text, "Company" text, "Role" text, "Created" text,
+  "Modified" text
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_employeerole (
+  "Id" text, "Role" text, "Ranking" text
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_operationalunit (
+  "Id" text, "OperationalUnitName" text, "Company" text, "CompanyName" text,
+  "Active" boolean, "AddressObject__City" text, "AddressObject__State" text
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_company (
+  "Id" text, "CompanyName" text, "TradingName" text, "Active" boolean,
+  "IsWorkplace" boolean, "IsPayrollEntity" boolean
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_timesheet (
+  "Id" text, "Employee" text, "_DPMetaData__EmployeeInfo__DisplayName" text,
+  "Date" text, "StartTimeLocalized" text, "EndTimeLocalized" text,
+  "TotalTime" text, "Cost__v_double" double precision, "Cost" text,
+  "OnCost__v_double" double precision, "OnCost" text, "TimeApproved" boolean,
+  "PayRuleApproved" boolean, "IsInProgress" boolean, "IsLeave" boolean,
+  "LeaveId" text, "LeaveRule" text, "OperationalUnit" text,
+  "_DPMetaData__OperationalUnitInfo__OperationalUnitName" text,
+  "_DPMetaData__OperationalUnitInfo__CompanyName" text, "Roster" text,
+  "EmployeeComment" text, "Created" text, "Modified" text, "Discarded" boolean
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_roster (
+  "Id" text, "Employee" text, "_DPMetaData__EmployeeInfo__DisplayName" text,
+  "Date" text, "StartTimeLocalized" text, "EndTimeLocalized" text,
+  "TotalTime" text, "Cost__v_double" double precision, "Cost" text,
+  "Published" boolean, "Open" boolean, "MatchedByTimesheet" text,
+  "OperationalUnit" text,
+  "_DPMetaData__OperationalUnitInfo__OperationalUnitName" text,
+  "_DPMetaData__OperationalUnitInfo__CompanyName" text, "Comment" text,
+  "ConfirmStatus" text, "Created" text, "Modified" text
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_leave (
+  "Id" text, "Employee" text, "EmployeeName" text, "Company" text,
+  "DateStart" text, "DateEnd" text, "Days__v_double" double precision,
+  "Days" text, "TotalHours__v_double" double precision, "TotalHours" text,
+  "Status" integer, "LeaveRule" text, "Comment" text,
+  "ApprovalComment" text, "Created" text, "Modified" text
+);
+CREATE TABLE IF NOT EXISTS "DEPUTYNEW".deputy_leaverules (
+  "Id" text, "Name" text, "PaidLeave" boolean, "Visible" boolean,
+  "Description" text
+);
+`;
+
+export function analyticalMigrationBody(
+  migration: Readonly<{ id: string; checksum: string; body: string }>,
+  bootstrap: boolean,
+): string {
+  const reviewedChecksum = FRESH_ANALYTICAL_DATA_MIGRATIONS.get(migration.id);
+  if (
+    bootstrap
+    && migration.id === FRESH_DEPUTY_SOURCE_VIEW_COMPATIBILITY.id
+  ) {
+    if (migration.checksum !== FRESH_DEPUTY_SOURCE_VIEW_COMPATIBILITY.checksum) {
+      throw new Error(
+        `${migration.id} changed after its fresh-bootstrap Deputy compatibility review.`,
+      );
+    }
+    return `${FRESH_DEPUTY_RAW_STUBS}\n${migration.body}`;
+  }
+  if (
+    bootstrap
+    && migration.id === FRESH_XERO_OFFICIAL_SCHEMA_COMPATIBILITY.id
+  ) {
+    if (migration.checksum !== FRESH_XERO_OFFICIAL_SCHEMA_COMPATIBILITY.checksum) {
+      throw new Error(
+        `${migration.id} changed after its fresh-bootstrap Xero schema compatibility review.`,
+      );
+    }
+    return `CREATE SCHEMA IF NOT EXISTS source_xero_official;\n${migration.body}`;
+  }
+  if (
+    bootstrap
+    && migration.id === FRESH_XERO_FIVETRAN_REPOINT_COMPATIBILITY.id
+  ) {
+    if (migration.checksum !== FRESH_XERO_FIVETRAN_REPOINT_COMPATIBILITY.checksum) {
+      throw new Error(
+        `${migration.id} changed after its fresh-bootstrap Fivetran repoint review.`,
+      );
+    }
+    const marker = FRESH_XERO_FIVETRAN_REPOINT_COMPATIBILITY.repointMarker;
+    const cutoff = migration.body.indexOf(marker);
+    if (cutoff < 1 || migration.body.indexOf(marker, cutoff + marker.length) !== -1) {
+      throw new Error(`${migration.id} changed its reviewed Fivetran repoint boundary.`);
+    }
+    // Install the current binding, stamping and rebuild functions, but retain
+    // 0164's typed source_xero-backed official views until a real destination
+    // is bound. Production upgrades still execute the full immutable body.
+    return `${migration.body.slice(0, cutoff)}${marker}`;
+  }
+  if (!bootstrap || !reviewedChecksum) return migration.body;
+  if (migration.checksum !== reviewedChecksum)
+    throw new Error(
+      `${migration.id} changed after its fresh-bootstrap data-migration review.`,
+    );
+  return "SELECT 1 /* no predecessor pack rows exist in a fresh analytical database */;";
+}
+
 type Target = Readonly<{
   stream: Stream;
   directory: string;
@@ -218,6 +372,80 @@ async function applyBootstrap(
   process.stdout.write(`bootstrapped ${target.stream}\n`);
 }
 
+async function ensureBootstrapMigrationRoleActivation(
+  client: Client,
+  target: Target,
+  requested: boolean,
+): Promise<void> {
+  if (!requested) return;
+  const access = await client.query<{
+    can_set: boolean;
+    current_user: string;
+    session_user: string;
+  }>(
+    `SELECT pg_has_role(session_user,$1,'SET') AS can_set,
+            current_user,session_user`,
+    [target.defaultRole],
+  );
+  const identity = access.rows[0];
+  if (identity?.can_set) return;
+
+  // Supabase's protected postgres identity is intentionally not a superuser,
+  // so unlike a conventional managed-Postgres administrator it cannot SET a
+  // newly-created NOLOGIN role until membership is explicit. The control
+  // bootstrap already records this same bounded grant. Reconcile it here for
+  // the separately isolated analytical project without changing the immutable
+  // bootstrap checksum or granting any runtime identity additional authority.
+  if (
+    target.stream !== "analytical" ||
+    identity?.current_user !== "postgres" ||
+    identity.session_user !== "postgres"
+  ) {
+    throw new Error(
+      `${target.stream} bootstrap administrator cannot activate ${target.defaultRole}.`,
+    );
+  }
+  await client.query(
+    `GRANT ${quoteIdentifier(target.defaultRole)} TO ${quoteIdentifier(identity.session_user)}`,
+  );
+  const verified = await client.query<{ can_set: boolean }>(
+    "SELECT pg_has_role(session_user,$1,'SET') AS can_set",
+    [target.defaultRole],
+  );
+  if (!verified.rows[0]?.can_set) {
+    throw new Error(
+      `${target.stream} bootstrap administrator still cannot activate ${target.defaultRole}.`,
+    );
+  }
+}
+
+async function ensureFreshAnalyticalFivetranOwner(
+  client: Client,
+  target: Target,
+  requested: boolean,
+): Promise<void> {
+  if (!requested || target.stream !== "analytical") return;
+  // Historical migration 0168 transfers Fivetran-owned destination tables
+  // through this membership. Existing production databases already have the
+  // externally provisioned LOGIN role; a fresh, credential-free bootstrap
+  // needs only its least-privilege NOLOGIN identity so the immutable migration
+  // history can compile. Platform provisioning may later add LOGIN/password.
+  await client.query(`
+    DO $bootstrap$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'fivetran_user'
+      ) THEN
+        CREATE ROLE fivetran_user
+          NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+      END IF;
+    END
+    $bootstrap$;
+    ALTER ROLE fivetran_user NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+    GRANT fivetran_user TO albert_migration_owner;
+  `);
+}
+
 async function applyTarget(
   target: Target,
   environment: NodeJS.ProcessEnv,
@@ -256,6 +484,8 @@ async function applyTarget(
       await assertControlPlaneAdminIdentity(client);
     }
     await applyBootstrap(client, target, bootstrap);
+    await ensureBootstrapMigrationRoleActivation(client, target, bootstrap);
+    await ensureFreshAnalyticalFivetranOwner(client, target, bootstrap);
     if (bootstrap && target.stream === "control-plane") {
       // Fresh databases apply the same immutable administrator stream used by
       // upgrades of existing databases. This happens before migration 0035,
@@ -332,9 +562,10 @@ async function applyTarget(
     );
     assertExactMigrationPrefix(migrations, applied.rows, target.stream);
     for (const migration of migrations.slice(applied.rows.length)) {
-      const migrationBody = target.stream === "control-plane"
-        ? controlPlaneMigrationBody(migration)
-        : migration.body;
+      const migrationBody =
+        target.stream === "control-plane"
+          ? controlPlaneMigrationBody(migration)
+          : analyticalMigrationBody(migration, bootstrap);
 
       await client.query("BEGIN");
       try {

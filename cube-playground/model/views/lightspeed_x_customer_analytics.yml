@@ -1,0 +1,173 @@
+views:
+  - name: lightspeed_x_customer_analytics
+    title: Lightspeed X-Series customer analytics
+    description: >
+      Customer profile grain with safe geography/contactability, group,
+      lifecycle, lifetime signed spend, repeat behaviour, account balance and
+      loyalty balance. Direct contact values are excluded from this public view.
+    meta:
+      ai_context: >
+        Lifetime values use closed attributed sales, subtract closed returns and
+        exclude gift-card loads. Anonymous sales are absent. Use this view for
+        customer lifetime/new/repeat/lapsed questions; use sales analytics for a
+        specific sale period grouped by customer. Current account/loyalty values
+        and source_year_to_date_value are snapshots, not historical flows.
+        Contactable counts respect the source opt-in flags but never expose the
+        actual email/mobile.
+    cubes:
+      - join_path: lightspeed_x_customers
+        includes:
+          - tenant_id
+          - display_name
+          - company_name
+          - city
+          - suburb
+          - state
+          - postcode
+          - country_code
+          - currency_code
+          - email_opted_out
+          - promotional_sms_enabled
+          - loyalty_enabled
+          - has_email
+          - has_mobile
+          - current_account_balance
+          - current_loyalty_balance
+          - on_account_limit
+          - source_year_to_date_value
+          - first_purchase_at
+          - last_purchase_at
+          - lifetime_sales
+          - lifetime_returns
+          - lifetime_net_spend
+          - lifetime_gross_spend
+          - lifetime_refunds
+          - is_repeat_customer
+          - days_since_last_purchase
+          - created_at
+          - updated_at
+          - deleted_at
+          - customers
+          - active_customers
+          - customers_with_purchases
+          - repeat_customers
+          - repeat_customer_rate_pct
+          - email_contactable_customers
+          - sms_opted_in_customers
+          - total_lifetime_net_spend
+          - average_lifetime_net_spend
+          - average_lifetime_sales
+          - current_customer_account_balance
+          - current_customer_loyalty_balance
+      - join_path: lightspeed_x_customers.lightspeed_x_customer_groups
+        prefix: true
+        includes: [customer_group_name]
+    folders:
+      - { name: Profile, includes: [display_name, company_name, lightspeed_x_customer_groups_customer_group_name, created_at, deleted_at] }
+      - { name: Lifetime behaviour, includes: [first_purchase_at, last_purchase_at, lifetime_sales, lifetime_returns, lifetime_net_spend, lifetime_gross_spend, lifetime_refunds, is_repeat_customer, days_since_last_purchase, customers_with_purchases, repeat_customers, repeat_customer_rate_pct, total_lifetime_net_spend, average_lifetime_net_spend] }
+      - { name: Contactability and geography, includes: [city, suburb, state, postcode, country_code, has_email, has_mobile, email_opted_out, promotional_sms_enabled, email_contactable_customers, sms_opted_in_customers] }
+      - { name: Current balances, includes: [currency_code, current_account_balance, current_loyalty_balance, on_account_limit, source_year_to_date_value, current_customer_account_balance, current_customer_loyalty_balance] }
+
+  - name: lightspeed_x_stored_value_analytics
+    title: Lightspeed X-Series stored-value analytics
+    description: >
+      Gift-card and store-credit liabilities plus their transaction flows.
+      Gift-card, gift-card-transaction, store-credit-account and
+      store-credit-transaction prefixes are independent grains; query one at a time.
+    meta:
+      ai_context: >
+        Current balance measures are snapshots and can be summed across accounts
+        once, not trended across versions. Transaction measures are flows over
+        transacted_at. Gift-card loads create liability, redemption reduces it;
+        neither is earned sales. Card numbers are masked. Store-credit REVERSE
+        must be interpreted with the paired operation for exact reconciliation.
+    cubes:
+      - join_path: lightspeed_x_gift_cards
+        includes:
+          - name: card_last_four
+            alias: gift_card_last_four
+          - name: gift_card_status
+            alias: gift_card_status
+          - name: currency_code
+            alias: gift_card_currency
+          - name: current_balance
+            alias: gift_card_current_balance
+          - name: lifetime_sold_value
+            alias: gift_card_lifetime_sold
+          - name: lifetime_redeemed_value
+            alias: gift_card_lifetime_redeemed
+          - name: created_at
+            alias: gift_card_created_at
+          - name: expires_at
+            alias: gift_card_expires_at
+          - gift_cards
+          - active_gift_cards
+          - current_gift_card_liability
+          - lifetime_gift_card_value_sold
+          - lifetime_gift_card_value_redeemed
+      - join_path: lightspeed_x_gift_card_transactions
+        includes:
+          - name: card_last_four
+            alias: gift_transaction_card_last_four
+          - name: transaction_type
+            alias: gift_transaction_type
+          - name: transaction_source
+            alias: gift_transaction_source
+          - name: source_id
+            alias: gift_transaction_source_id
+          - name: currency_code
+            alias: gift_transaction_currency
+          - name: transaction_amount
+            alias: gift_transaction_amount
+          - name: transacted_at
+            alias: gift_transacted_at
+          - gift_card_transactions
+          - gift_card_value_loaded
+          - gift_card_value_redeemed
+          - gift_card_value_voided_or_expired
+          - gift_card_value_reversed
+          - gift_card_liability_movement
+      - join_path: lightspeed_x_store_credit_accounts
+        includes:
+          - name: currency_code
+            alias: store_credit_currency
+          - name: current_balance
+            alias: store_credit_current_balance
+          - name: lifetime_credit_issued
+            alias: store_credit_lifetime_issued
+          - name: lifetime_credit_redeemed
+            alias: store_credit_lifetime_redeemed
+          - name: created_at
+            alias: store_credit_created_at
+          - store_credit_accounts
+          - current_store_credit_liability
+          - lifetime_store_credit_issued
+          - lifetime_store_credit_redeemed
+      - join_path: lightspeed_x_store_credit_accounts.lightspeed_x_customers
+        prefix: true
+        includes: [display_name, company_name]
+      - join_path: lightspeed_x_store_credit_transactions
+        includes:
+          - name: transaction_type
+            alias: store_credit_transaction_type
+          - name: currency_code
+            alias: store_credit_transaction_currency
+          - name: transaction_amount
+            alias: store_credit_transaction_amount
+          - name: transacted_at
+            alias: store_credit_transacted_at
+          - store_credit_transactions
+          - store_credit_issued
+          - store_credit_redeemed
+          - store_credit_reversed
+      - join_path: lightspeed_x_store_credit_transactions.lightspeed_x_customers
+        includes:
+          - name: display_name
+            alias: store_credit_transaction_customer
+          - name: company_name
+            alias: store_credit_transaction_company
+    folders:
+      - { name: Gift card snapshot, includes: [gift_card_last_four, gift_card_status, gift_card_current_balance, gift_card_expires_at, gift_cards, active_gift_cards, current_gift_card_liability, lifetime_gift_card_value_sold, lifetime_gift_card_value_redeemed] }
+      - { name: Gift card flow, includes: [gift_transaction_type, gift_transaction_source, gift_transacted_at, gift_card_transactions, gift_card_value_loaded, gift_card_value_redeemed, gift_card_value_voided_or_expired, gift_card_value_reversed, gift_card_liability_movement] }
+      - { name: Store credit snapshot, includes: [store_credit_current_balance, store_credit_created_at, current_store_credit_liability, lifetime_store_credit_issued, lifetime_store_credit_redeemed, lightspeed_x_customers_display_name] }
+      - { name: Store credit flow, includes: [store_credit_transaction_type, store_credit_transaction_amount, store_credit_transacted_at, store_credit_transactions, store_credit_issued, store_credit_redeemed, store_credit_reversed] }

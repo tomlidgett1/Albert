@@ -12,13 +12,22 @@ const readinessSchema = z.object({
 });
 const connectionSchema = z.object({
   connection_id: z.string(),
-  connector_key: z.enum(["lightspeed-r", "xero", "deputy"]),
+  connector_key: z.enum([
+    "lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe",
+    "momence", "meta-ads", "google-ads", "fivetran-xero", "fivetran-lightspeed", "fivetran-deputy",
+    "fivetran-stripe",
+  ]),
   display_name: z.string(),
   status: z.enum(["pending", "connected", "degraded", "blocked", "disconnected"]),
   auth_health: z.enum(["unknown", "healthy", "expiring", "expired", "revoked", "error"]),
   authorised_at: z.string().nullable().optional(),
   last_checked_at: z.string().nullable().optional(),
   account_metadata: z.record(z.string(), z.unknown()).default({}),
+  manual_ingestion_start_required: z.boolean().default(false),
+  ingestion_blocked_reason: z.string().nullable().optional(),
+  ingestion_state: z.enum([
+    "inactive", "awaiting_manual_start", "queued", "running", "active",
+  ]).default("active"),
   readiness: z.array(readinessSchema).default([]),
 });
 const workspaceSchema = z.object({
@@ -42,7 +51,11 @@ const workspaceSchema = z.object({
   blocking_answers: z.record(z.string(), z.string()).default({}),
   oauth_sessions: z.array(z.object({
     oauth_session_id: z.string(),
-    provider: z.enum(["lightspeed-r", "xero", "deputy"]),
+    provider: z.enum([
+      "lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe",
+      "momence", "meta-ads", "google-ads", "fivetran-xero", "fivetran-lightspeed", "fivetran-deputy",
+      "fivetran-stripe",
+    ]),
     status: z.string(),
     discovered_account_choices: z.array(z.object({
       externalAccountId: z.string(),
@@ -61,12 +74,26 @@ const providerDefinitions = {
     logo: "/logos/lightspeed.png",
     connectDetail: "Connect a Lightspeed Retail R-Series account.",
   },
+  "lightspeed-x": {
+    id: "lightspeed-x",
+    name: "Lightspeed X-Series",
+    description: "Sales, products, inventory, customers, purchasing, services, and store operations.",
+    logo: "/logos/lightspeed.png",
+    connectDetail: "Connect a Lightspeed Retail X-Series store, then choose when ingestion starts.",
+  },
   xero: {
     id: "xero",
     name: "Xero",
     description: "Accounting, invoices, journals, and bank activity.",
     logo: "/logos/xero.svg",
     connectDetail: "Connect a Xero organisation.",
+  },
+  "fivetran-xero": {
+    id: "fivetran-xero",
+    name: "Xero (Fivetran)",
+    description: "Full Xero ingest through Fivetran, into a tenant-isolated native schema.",
+    logo: "/logos/xero.svg",
+    connectDetail: "Approve Xero once. Albert hands the grant to Fivetran and the full sync — accounting, payroll, reports — starts in the background.",
   },
   deputy: {
     id: "deputy",
@@ -75,21 +102,40 @@ const providerDefinitions = {
     logo: "/logos/deputy.png",
     connectDetail: "Connect a Deputy installation.",
   },
+  "fivetran-lightspeed": {
+    id: "fivetran-lightspeed",
+    name: "Lightspeed (Fivetran)",
+    description: "Full Lightspeed Retail R-Series ingest through Fivetran, into a tenant-isolated native schema.",
+    logo: "/logos/lightspeed.png",
+    connectDetail: "Authorise Lightspeed. Albert finishes Fivetran ingest in the background, into a tenant-isolated native schema.",
+  },
+  "fivetran-deputy": {
+    id: "fivetran-deputy",
+    name: "Deputy (Fivetran)",
+    description: "Full Deputy ingest through Fivetran, into a tenant-isolated native schema.",
+    logo: "/logos/deputy.png",
+    connectDetail: "Authorise Deputy. Albert hands the grant to Fivetran and ingest starts in the background.",
+  },
+  "fivetran-stripe": {
+    id: "fivetran-stripe",
+    name: "Stripe (Fivetran)",
+    description: "Full Stripe ingest through Fivetran's official schema, into a tenant-isolated native schema.",
+    logo: "/logos/stripe.svg",
+    connectDetail: "Authorise Stripe. Albert hands the grant to Fivetran and the official Stripe ERD syncs in the background.",
+  },
   square: {
     id: "square",
     name: "Square",
-    // Authorization only for now: the description promises identity, not data,
-    // because the pack declares no stream and contributes to no answer.
-    description: "Authorization only. No Square data is synced yet.",
+    description: "Sales, payments, catalogue, customers, inventory, and team activity.",
     logo: "/logos/square.svg",
-    connectDetail: "Connect a Square merchant account.",
+    connectDetail: "Connect a Square merchant account, then choose when ingestion starts.",
   },
   shopify: {
     id: "shopify",
     name: "Shopify",
-    description: "Authorization only. No Shopify data is synced yet.",
+    description: "Orders, products, customers, inventory, fulfilment, and payments.",
     logo: "/logos/shopify.svg",
-    connectDetail: "Enter your myshopify.com store domain to connect Shopify.",
+    connectDetail: "Connect a myshopify.com store, then choose when ingestion starts.",
   },
   stripe: {
     id: "stripe",
@@ -101,9 +147,9 @@ const providerDefinitions = {
   momence: {
     id: "momence",
     name: "Momence",
-    description: "Authorization only. No Momence data is synced yet.",
+    description: "Classes, bookings, memberships, customers, instructors, locations, and payments.",
     logo: "/logos/momence.svg",
-    connectDetail: "Connect a Momence studio.",
+    connectDetail: "Connect a Momence studio, then choose when ingestion starts.",
   },
   "meta-ads": {
     id: "meta-ads",
@@ -120,6 +166,18 @@ const providerDefinitions = {
     connectDetail: "Connect a Google Ads account.",
   },
 } as const;
+
+/** Native ingest cards superseded by Fivetran. Hidden unless a live connection remains. */
+const SUPERSEDED_NATIVE_PROVIDER_IDS = new Set(["lightspeed", "xero", "deputy", "stripe"]);
+
+const shopifyDeletionContinuityReasons = new Set([
+  "shopify_deletion_continuity_unproven",
+  "shopify_deletion_watermark_missing",
+  "shopify_deletion_retention_gap",
+  "shopify_deletion_feed_unavailable",
+]);
+const shopifyDeletionRecoveryDetail =
+  "Shopify deletion history cannot be proven. Disconnect this store, wait for verified local deletion to complete, reconnect it, then choose Start ingestion.";
 
 const comingSoonProviders = [
   {
@@ -224,6 +282,7 @@ const domainLabels: Readonly<Record<string, string>> = {
   payables: "Payables",
   receivables: "Receivables",
   workforce: "Workforce",
+  payments: "Payments",
 };
 
 const dossierLabels: Readonly<Record<string, string>> = {
@@ -286,6 +345,8 @@ export function toConnectionsWorkspace(raw: unknown, timezone: string) {
       )
       .map((connection) => {
         const auth = authState(connection);
+        const deletionContinuityBlocked = connectorKey === "shopify" &&
+          shopifyDeletionContinuityReasons.has(connection.ingestion_blocked_reason ?? "");
         const webhookSetup = asObject(connection.account_metadata.webhook_setup);
         const deputyWebhookInstallationRequired = connectorKey === "deputy" &&
           webhookSetup.status === "operator_installation_required";
@@ -295,8 +356,10 @@ export function toConnectionsWorkspace(raw: unknown, timezone: string) {
             id: `${definition.id}-${connection.connection_id}-${domain.domain}`,
             label: domainLabels[domain.domain] ?? domain.domain.replaceAll("_", " "),
             state: domain.state,
-            detail: domain.reason_code
-              ? domain.reason_code.replaceAll("_", " ")
+            detail: shopifyDeletionContinuityReasons.has(domain.reason_code ?? "")
+              ? shopifyDeletionRecoveryDetail
+              : domain.reason_code
+                ? domain.reason_code.replaceAll("_", " ")
               : domain.backfill_complete
                 ? "Available history has completed validation."
                 : domain.state === "ready_partial"
@@ -317,9 +380,13 @@ export function toConnectionsWorkspace(raw: unknown, timezone: string) {
         });
         return {
           connectionId: connection.connection_id,
+          ingestionState: connection.ingestion_state,
+          manualIngestionStartRequired: connection.manual_ingestion_start_required,
           auth: {
             ...auth,
-            detail: connection.status === "degraded"
+            detail: deletionContinuityBlocked
+              ? shopifyDeletionRecoveryDetail
+              : connection.status === "degraded"
               ? "Your account is connected, but integration setup needs attention. Reconnect to retry."
               : deputyWebhookInstallationRequired
                 ? "Connected. Scheduled polling and reconciliation provide complete ingestion; optional webhooks require explicit owner or operator installation."
@@ -341,7 +408,9 @@ export function toConnectionsWorkspace(raw: unknown, timezone: string) {
         : undefined,
       connections,
     };
-  });
+  }).filter((provider) =>
+    !SUPERSEDED_NATIVE_PROVIDER_IDS.has(provider.id) || provider.connections.length > 0
+  );
 
   const allDomains = providers.flatMap(({ connections }) =>
     connections.flatMap(({ domains }) => domains),
@@ -359,7 +428,11 @@ export function toConnectionsWorkspace(raw: unknown, timezone: string) {
   const latestActivityAt = timestamps.sort((first, second) => Date.parse(second) - Date.parse(first))[0];
   const activeConnectorKeys = new Set<string>(
     workspace.connections
-      .filter(({ status }) => status !== "pending" && status !== "disconnected")
+      .filter((connection) =>
+        connection.status !== "pending"
+        && connection.status !== "disconnected"
+        && !["inactive", "awaiting_manual_start"].includes(connection.ingestion_state)
+      )
       .map(({ connector_key }) => connector_key),
   );
 
@@ -440,7 +513,12 @@ export function toConnectionsWorkspace(raw: unknown, timezone: string) {
       progress,
       detail: allDomains.length
         ? "Recent data is prepared first. Deep history continues in the background."
-        : "Connect a source to begin the recent-first sync.",
+        : workspace.connections.some((connection) =>
+            connection.status !== "disconnected"
+            && connection.ingestion_state === "awaiting_manual_start"
+          )
+          ? "A connected source is ready. Start ingestion when you are ready."
+          : "Connect a source to begin the recent-first sync.",
       latestActivityAt,
     },
     dossier,

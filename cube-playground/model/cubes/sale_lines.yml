@@ -1,0 +1,485 @@
+cubes:
+  - name: sale_lines
+    title: Sale lines (item-level detail)
+    public: false
+    description: >
+      One row per line on a Lightspeed sale: which item, how many units, at what
+      price, with what discount, tax and cost. This is the grain for product,
+      category, brand and margin analysis. Parent sale state (completed, voided,
+      complete_time) is projected onto every line so lines can be filtered
+      standalone. Return lines carry negative quantities/amounts and link back to
+      the original line via parent_sale_line_id. Tombstoned rows are excluded.
+    meta:
+      ai_context: >
+        Use this cube whenever the question mentions products, items, categories,
+        brands/manufacturers, seasons or line-level margin. fifo_cost and avg_cost
+        are LINE TOTALS already multiplied by quantity; never multiply them by
+        unit_quantity again. calc_total is tax inclusive, calc_subtotal is ex tax.
+        Line business date is completed_at (projected from the parent sale).
+        line_net_revenue is AFTER discounts (tax-inclusive line total less tax);
+        Lightspeed's calc_subtotal is the pre-discount value and is surfaced as
+        line_net_revenue_before_discounts, so line_net_revenue =
+        line_net_revenue_before_discounts - line_discounts and every margin
+        measure here is post-discount: never subtract discounts again.
+        line_gross_margin_pct is a blended figure: for this tenant stocked goods
+        run at roughly 45% while labour / service lines (item type
+        non_inventory) carry almost no cost and show about 98%, so "product
+        margin" or "retail margin" questions should use goods_gross_margin_pct.
+        Two staff attributions exist: employees_full_name is the staff member on
+        the LINE (who added it), sale_employees_full_name is the seller of record
+        on the sale HEADER; they differ on roughly a third of lines, so say which
+        one a breakdown uses. "Busiest day / hour" for products: group by
+        completed_weekday or completed_hour_of_day in one query.
+    # sale_employee_id: the header employee (seller of record) projected onto
+    # each line so line-level and header-level staff attribution can both be
+    # answered from this grain. line_item_type: the catalogue item type
+    # projected here so goods-only margin needs no join.
+    sql: >
+      WITH parent_sales AS (
+        SELECT s.tenant_id, s.sale_id, s.completed, s.voided, s.complete_time,
+               s.employee_id
+        FROM source_lightspeed_official.ls_sales s
+        WHERE NOT s.tombstone
+      ),
+      lines AS (
+        SELECT t.* FROM source_lightspeed_official.ls_sale_lines t
+        WHERE NOT t.tombstone
+      )
+      SELECT c.*,
+             COALESCE(c.completed, p.completed) AS effective_completed,
+             COALESCE(c.voided, p.voided) AS effective_voided,
+             COALESCE(c.complete_time, p.complete_time) AS effective_complete_time,
+             p.employee_id AS sale_employee_id,
+             i.item_type AS line_item_type
+      FROM lines c
+      LEFT JOIN parent_sales p
+        ON p.tenant_id = c.tenant_id AND p.sale_id = c.sale_id
+      LEFT JOIN source_lightspeed_official.ls_items i
+        ON i.tenant_id = c.tenant_id AND i.item_id = c.item_id
+        AND NOT i.tombstone
+
+    joins:
+      - name: sales
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sales}.tenant_id
+          AND {CUBE}.sale_id = {sales}.sale_id
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.item_id = {items}.item_id
+      - name: employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {employees}.tenant_id
+          AND {CUBE}.employee_id = {employees}.employee_id
+      - name: shops
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shops}.tenant_id
+          AND {CUBE}.shop_id = {shops}.shop_id
+      - name: customers
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {customers}.tenant_id
+          AND {CUBE}.customer_id = {customers}.customer_id
+      - name: discounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {discounts}.tenant_id
+          AND {CUBE}.discount_id = {discounts}.discount_id
+      - name: tax_categories
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {tax_categories}.tenant_id
+          AND {CUBE}.tax_category_id = {tax_categories}.tax_category_id
+      - name: tax_classes
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {tax_classes}.tenant_id
+          AND {CUBE}.tax_class_id = {tax_classes}.tax_class_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: sale_line_id
+        sql: sale_line_id
+        type: number
+        description: Lightspeed's identifier for this sale line.
+      - name: sale_id
+        sql: sale_id
+        type: number
+        description: Sale this line belongs to.
+      - name: parent_sale_line_id
+        sql: parent_sale_line_id
+        type: number
+        description: >
+          For return/refund lines, the original sale line being returned.
+          Non-null parent_sale_line_id marks a return of a specific earlier line.
+      - name: line_type
+        sql: line_type
+        type: string
+        description: Lightspeed line type marker (for example a fee or special line kind), blank for normal item lines.
+      - name: sale_completed
+        sql: effective_completed
+        type: boolean
+        description: Projected from the parent sale, true when the sale finalised.
+      - name: sale_voided
+        sql: effective_voided
+        type: boolean
+        description: Projected from the parent sale, true when the sale was voided.
+      - name: completed_at
+        sql: effective_complete_time
+        type: time
+        title: Completed at (business date)
+        description: Parent sale completion time projected onto the line. Business date for product-level revenue.
+      - name: completed_weekday
+        sql: "to_char({CUBE}.effective_complete_time, 'FMDay')"
+        type: string
+        title: Day of week (completed)
+        description: Weekday name of the parent sale's completion time (Monday ... Sunday) in the store's time zone.
+        meta:
+          ai_context: >
+            For "busiest day for product X / category Y" group units_sold or
+            line_revenue by this in one query and order by
+            completed_weekday_number; never sum daily rows by hand.
+      - name: completed_weekday_number
+        sql: "EXTRACT(ISODOW FROM {CUBE}.effective_complete_time)"
+        type: number
+        title: Day of week number (1 = Monday)
+        description: ISO weekday number of the completion time (1 = Monday ... 7 = Sunday), for ordering weekday breakdowns.
+      - name: completed_hour_of_day
+        sql: "EXTRACT(HOUR FROM {CUBE}.effective_complete_time)"
+        type: number
+        title: Hour of day (completed)
+        description: Hour of the day (0-23) the parent sale was completed, in the store's time zone.
+        meta:
+          ai_context: For "busiest hour" / "peak times" by product, group units_sold or line_revenue by this in one query.
+      - name: created_at
+        sql: create_time
+        type: time
+        description: When the line was added to the ticket.
+      - name: updated_at
+        sql: time_stamp
+        type: time
+        description: When Lightspeed last modified this line.
+      - name: unit_quantity
+        sql: unit_quantity
+        type: number
+        description: Units on this line. Negative for return lines.
+      - name: unit_price
+        sql: unit_price
+        type: number
+        format: currency
+        description: Actual unit price charged on this line.
+      - name: normal_unit_price
+        sql: normal_unit_price
+        type: number
+        format: currency
+        description: The item's normal (undiscounted) unit price at the time of sale.
+      - name: displayable_unit_price
+        sql: displayable_unit_price
+        type: number
+        format: currency
+        public: false
+        description: Receipt display unit price; unit_price is the canonical charged price.
+      - name: displayable_subtotal
+        sql: displayable_subtotal
+        type: number
+        format: currency
+        public: false
+        description: Receipt display subtotal; use the line revenue measures for analysis.
+      - name: discount_amount
+        sql: discount_amount
+        type: number
+        format: currency
+        description: Fixed discount amount configured on the line, if any.
+      - name: discount_percent
+        sql: discount_percent
+        type: number
+        description: Percentage discount configured on the line, as a fraction.
+      - name: is_taxed
+        sql: tax
+        type: boolean
+        description: Whether tax applied to this line.
+      - name: tax1_rate
+        sql: tax1_rate
+        type: number
+        description: Primary tax rate on the line, as a fraction.
+      - name: tax2_rate
+        sql: tax2_rate
+        type: number
+        description: Secondary tax rate on the line, as a fraction.
+      - name: is_layaway
+        sql: is_layaway
+        type: boolean
+        description: Line is part of a layaway.
+      - name: is_workorder
+        sql: is_workorder
+        type: boolean
+        description: Line belongs to a workshop/service workorder.
+      - name: is_special_order
+        sql: is_special_order
+        type: boolean
+        description: Line is a special order for a customer.
+      - name: requires_full_reservation
+        sql: require_full_reservation
+        type: boolean
+        public: false
+        description: Inventory reservation flag for special orders.
+      - name: item_id
+        sql: item_id
+        type: number
+        public: false
+      - name: customer_id
+        sql: customer_id
+        type: number
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: shop_id
+        sql: shop_id
+        type: number
+        public: false
+      - name: discount_id
+        sql: discount_id
+        type: number
+        public: false
+      - name: tax_class_id
+        sql: tax_class_id
+        type: number
+        public: false
+      - name: tax_category_id
+        sql: tax_category_id
+        type: number
+        public: false
+      - name: item_fee_id
+        sql: item_fee_id
+        type: number
+        public: false
+        description: Fee definition applied by this line, when the line is a fee.
+      - name: note_id
+        sql: note_id
+        type: number
+        public: false
+      - name: is_return_line
+        type: boolean
+        sql: "(COALESCE({CUBE}.unit_quantity, 0) < 0 OR COALESCE({CUBE}.calc_total, 0) < 0)"
+        title: Is return line
+        description: True for lines that take units/revenue back (returns and refunds).
+      - name: sale_employee_id
+        sql: sale_employee_id
+        type: number
+        public: false
+        description: Employee on the sale header (seller of record), projected from the parent sale.
+      - name: line_item_type
+        sql: line_item_type
+        type: string
+        public: false
+        description: Catalogue item type of the line's item (default, serialized, non_inventory, labor, assembly, box), projected from items.
+
+    measures:
+      - name: line_count
+        type: count
+        title: Sale line count
+        description: Number of lines on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: units_sold
+        type: sum
+        sql: unit_quantity
+        title: Units sold (net)
+        description: Net units across completed, non-voided sales. Returned units subtract.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: units_returned
+        type: sum
+        sql: "ABS({CUBE}.unit_quantity)"
+        title: Units returned
+        description: Absolute units taken back on return lines of completed sales.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND COALESCE({CUBE}.unit_quantity, 0) < 0"
+      - name: line_revenue
+        type: sum
+        sql: calc_total
+        format: currency
+        title: Line revenue (inc tax)
+        description: Tax-inclusive revenue for these lines on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: line_net_revenue
+        type: sum
+        sql: "COALESCE({CUBE}.calc_total, 0) - COALESCE({CUBE}.calc_tax1, 0) - COALESCE({CUBE}.calc_tax2, 0)"
+        format: currency
+        title: Line net revenue (ex tax, after discounts)
+        description: >
+          Ex-tax revenue actually paid for these lines on completed, non-voided
+          sales: the tax-inclusive line total less tax, so line and transaction
+          discounts are already deducted. The correct base for margin maths.
+        meta:
+          ai_context: >
+            Post-discount. Lightspeed's calc_subtotal is BEFORE discounts and is
+            surfaced as line_net_revenue_before_discounts; line_net_revenue =
+            line_net_revenue_before_discounts - line_discounts. Never subtract
+            discounts again.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: line_net_revenue_before_discounts
+        type: sum
+        sql: calc_subtotal
+        format: currency
+        title: Line net revenue before discounts (ex tax)
+        description: Ex-tax value of these lines at the price before line and transaction discounts (Lightspeed's calc_subtotal), on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: line_tax
+        type: sum
+        sql: "COALESCE({CUBE}.calc_tax1, 0) + COALESCE({CUBE}.calc_tax2, 0)"
+        format: currency
+        description: Tax collected on these lines (tax1 + tax2).
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: line_discounts
+        type: sum
+        sql: "COALESCE({CUBE}.calc_line_discount, 0) + COALESCE({CUBE}.calc_transaction_discount, 0)"
+        format: currency
+        title: Line discounts
+        description: >
+          Discount dollars attributed to these lines: line-level discounts plus the
+          line's share of any whole-transaction discount.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: line_level_discounts
+        type: sum
+        sql: calc_line_discount
+        format: currency
+        public: false
+        description: Discounts applied directly to the line only.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: transaction_level_discounts
+        type: sum
+        sql: calc_transaction_discount
+        format: currency
+        public: false
+        description: The line's apportioned share of a whole-sale discount.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: line_cost_of_goods
+        type: sum
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.fifo_cost, 0) = 0 AND COALESCE({CUBE}.calc_subtotal, 0) <> 0
+              THEN COALESCE({CUBE}.avg_cost, 0)
+            ELSE COALESCE({CUBE}.fifo_cost, 0)
+          END
+        format: currency
+        title: Line cost of goods
+        description: >
+          Ex-tax cost for these lines. fifo_cost and avg_cost are already line
+          totals (quantity included); FIFO with average-cost fallback when FIFO
+          is zero on a line with real revenue.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: line_gross_profit
+        type: number
+        sql: "{line_net_revenue} - {line_cost_of_goods}"
+        format: currency
+        title: Line gross profit
+        description: Ex-tax line revenue minus line cost of goods. The measure for product/category/brand profitability.
+      - name: line_gross_margin_pct
+        type: number
+        sql: "100.0 * ({line_net_revenue} - {line_cost_of_goods}) / NULLIF({line_net_revenue}, 0)"
+        format: percent
+        title: Line gross margin % (blended)
+        description: >
+          Line gross profit as a percentage of ex-tax line revenue across every
+          line type. Blends stocked goods with labour / service and other
+          non-inventory lines that carry little or no cost.
+        meta:
+          ai_context: >
+            For this tenant goods run at roughly 45% and labour lines at about
+            98% (post-discount), so use goods_gross_margin_pct for "product" or
+            "retail" margin and this blended figure only for whole-business
+            margin.
+      - name: goods_net_revenue
+        type: sum
+        sql: "COALESCE({CUBE}.calc_total, 0) - COALESCE({CUBE}.calc_tax1, 0) - COALESCE({CUBE}.calc_tax2, 0)"
+        format: currency
+        title: Goods net revenue (ex tax, after discounts)
+        description: Ex-tax revenue after discounts on lines for stocked goods (item types default and serialized) on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND {CUBE}.line_item_type IN ('default', 'serialized')"
+      - name: goods_cost_of_goods
+        type: sum
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.fifo_cost, 0) = 0 AND COALESCE({CUBE}.calc_subtotal, 0) <> 0
+              THEN COALESCE({CUBE}.avg_cost, 0)
+            ELSE COALESCE({CUBE}.fifo_cost, 0)
+          END
+        format: currency
+        title: Goods cost (ex tax)
+        description: Ex-tax cost on stocked-goods lines (item types default and serialized), FIFO with average-cost fallback, on completed, non-voided sales.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND {CUBE}.line_item_type IN ('default', 'serialized')"
+      - name: goods_gross_margin_pct
+        type: number
+        sql: "100.0 * ({goods_net_revenue} - {goods_cost_of_goods}) / NULLIF({goods_net_revenue}, 0)"
+        format: percent
+        title: Goods gross margin %
+        description: Gross margin on stocked goods only (item types default and serialized), excluding labour / service and other non-inventory lines.
+        meta:
+          ai_context: The measure for "product margin", "retail margin" or "margin on parts"; line_gross_margin_pct blends in near-cost-free labour.
+      - name: average_selling_price
+        type: number
+        sql: "{line_net_revenue} / NULLIF({units_sold}, 0)"
+        format: currency
+        title: Average selling price (ex tax, after discounts)
+        description: Post-discount net revenue per unit sold.
+      - name: distinct_items_sold
+        type: count_distinct
+        sql: item_id
+        title: Distinct items sold
+        description: Number of different items appearing on completed, non-voided sale lines.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND {CUBE}.item_id IS NOT NULL"
+      - name: sales_count
+        type: count_distinct
+        sql: sale_id
+        title: Sales (distinct transactions)
+        description: Distinct completed, non-voided sales the selected lines belong to.
+        filters:
+          - sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+      - name: units_per_sale
+        type: number
+        sql: "{units_sold} / NULLIF({sales_count}, 0)"
+        title: Units per sale
+        description: Net units sold divided by distinct sales (basket size in units) for the selected lines.
+
+    segments:
+      - name: completed_lines
+        sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false"
+        description: Lines on completed, non-voided sales (default population for product analysis).
+      - name: return_lines
+        sql: "{CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false AND (COALESCE({CUBE}.unit_quantity, 0) < 0 OR COALESCE({CUBE}.calc_total, 0) < 0)"
+        description: Return/refund lines on completed sales.
+      - name: workorder_lines
+        sql: "COALESCE({CUBE}.is_workorder, false) = true"
+        description: Lines belonging to workshop/service workorders.
+      - name: special_order_lines
+        sql: "COALESCE({CUBE}.is_special_order, false) = true"
+        description: Special-order lines.
+      - name: layaway_lines
+        sql: "COALESCE({CUBE}.is_layaway, false) = true"
+        description: Layaway lines.

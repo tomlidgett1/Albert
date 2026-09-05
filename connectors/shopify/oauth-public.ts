@@ -32,8 +32,8 @@ export function buildShopifyAuthorizationUrl(input: ShopifyAuthorizationUrlInput
   url.searchParams.set("scope", scopes.join(","));
   url.searchParams.set("redirect_uri", input.redirectUri);
   url.searchParams.set("state", input.state);
-  // Offline access: a durable token for unattended use. Omitting this would
-  // yield a per-user token tied to the browser session that authorised it.
-  url.searchParams.set("grant_options[]", "");
+  // Offline access is Shopify's default when grant_options[] is omitted.
+  // Supplying `per-user` would request an online token; an empty array entry
+  // is not part of Shopify's documented authorization contract.
   return url.toString();
 }

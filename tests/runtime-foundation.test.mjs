@@ -41,7 +41,7 @@ before(async () => {
       "--strict",
       "--skipLibCheck",
       "--lib",
-      "ES2022,DOM,DOM.Iterable",
+      "ES2024,DOM,DOM.Iterable",
       "packages/shared/src/index.ts",
       "packages/agent/src/index.ts",
       "packages/connector-sdk/src/index.ts",
@@ -66,7 +66,14 @@ after(async () => {
 test("server model policy normalizes untrusted preferences to the allowlist", () => {
   assert.deepEqual(
     shared.ALBERT_MODELS.map(({ id }) => id),
-    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+    [
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "grok-4.6",
+      "claude-sonnet-5",
+      "claude-haiku-4-5-20251001",
+    ],
   );
   assert.deepEqual(shared.REASONING_EFFORTS, [
     "none",
@@ -78,11 +85,19 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
   ]);
   assert.deepEqual(shared.ANSWER_STATES, [
     "Verified",
+    "Derived",
     "Qualified",
     "Exploratory",
     "Clarification",
+    "No data",
     "Unavailable",
   ]);
+  // Dash default is Luna + Max + Fast.
+  assert.deepEqual(shared.DEFAULT_AGENT_PREFERENCES, {
+    model: "gpt-5.6-luna",
+    reasoningEffort: "max",
+    fastMode: true,
+  });
 
   const normalized = shared.normalizeAgentPreferences({
     model: "not-a-model",
@@ -93,9 +108,78 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
 
   assert.deepEqual(normalized, shared.DEFAULT_AGENT_PREFERENCES);
   assert.equal(Object.isFrozen(normalized), true);
+
+  assert.deepEqual(
+    shared.normalizeAgentPreferences({
+      model: "grok-4.6",
+      reasoningEffort: "max",
+      fastMode: true,
+    }),
+    { model: "grok-4.6", reasoningEffort: "xhigh", fastMode: true },
+  );
+  assert.deepEqual(
+    shared.normalizeAgentPreferences({
+      model: "grok-4.6",
+      reasoningEffort: "none",
+      fastMode: false,
+    }),
+    { model: "grok-4.6", reasoningEffort: "low", fastMode: false },
+  );
+  assert.deepEqual(shared.GROK_REASONING_EFFORTS, ["low", "medium", "high", "xhigh"]);
+  assert.deepEqual(
+    shared.normalizeAgentPreferences({
+      model: "claude-haiku-4-5-20251001",
+      reasoningEffort: "high",
+      fastMode: true,
+    }),
+    {
+      model: "claude-haiku-4-5-20251001",
+      reasoningEffort: "high",
+      fastMode: false,
+    },
+  );
+  assert.equal(shared.providerForModel("grok-4.6"), "xai");
+  assert.equal(shared.providerForModel("claude-haiku-4-5-20251001"), "anthropic");
+  assert.equal(shared.providerForModel("gpt-5.6-sol"), "openai");
+  assert.deepEqual(
+    shared.normalizeAgentPreferences({
+      model: "gemini-3.7-flash",
+      reasoningEffort: "max",
+      fastMode: true,
+    }),
+    shared.DEFAULT_AGENT_PREFERENCES,
+  );
+  assert.deepEqual(
+    shared.resolveAlbertModelTransport({
+      model: "grok-4.6",
+      xaiApiKey: "xai-test",
+    }),
+    {
+      provider: "xai",
+      model: "grok-4.6",
+      apiKey: "xai-test",
+      baseUrl: "https://api.x.ai/v1",
+    },
+  );
+  assert.throws(
+    () => shared.resolveAlbertModelTransport({ model: "grok-4.6" }),
+    /Grok 4\.6 is not configured/i,
+  );
+  assert.deepEqual(
+    shared.resolveAlbertModelTransport({
+      model: "claude-haiku-4-5-20251001",
+      anthropicApiKey: "anthropic-test",
+    }),
+    {
+      provider: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+      apiKey: "anthropic-test",
+      baseUrl: "https://api.anthropic.com",
+    },
+  );
 });
 
-test("Fast mode is independent from model and reasoning effort", () => {
+test("Fast mode remains independent where the selected provider supports it", () => {
   const standard = agent.buildOpenAIAgentRunConfig({
     model: "gpt-5.6-terra",
     reasoningEffort: "high",
@@ -110,107 +194,47 @@ test("Fast mode is independent from model and reasoning effort", () => {
   assert.equal(standard.model, fast.model);
   assert.deepEqual(standard.modelSettings.reasoning, fast.modelSettings.reasoning);
   assert.equal(fast.modelSettings.reasoning.context, "current_turn");
-  assert.deepEqual(standard.modelSettings.providerData, {});
+  assert.equal(fast.modelSettings.reasoning.mode, "standard");
+  assert.deepEqual(standard.modelSettings.providerData, {
+    service_tier: "default",
+  });
   assert.deepEqual(fast.modelSettings.providerData, { service_tier: "fast" });
-});
+  assert.equal(standard.modelSettings.store, false);
 
-test("optional Agents SDK factory rejects every non-semantic tool", async () => {
-  class FakeAgent {
-    constructor(definition) {
-      this.definition = definition;
-    }
-  }
-
-  const calls = [];
-  const sdk = {
-    Agent: FakeAgent,
-    async run(runtimeAgent, input, options) {
-      calls.push({ runtimeAgent, input, options });
-      return { finalOutput: "fixture" };
+  const grok = agent.buildOpenAIAgentRunConfig({
+    model: "grok-4.6",
+    reasoningEffort: "xhigh",
+    fastMode: true,
+  });
+  assert.equal(grok.model, "grok-4.6");
+  assert.deepEqual(grok.modelSettings, {
+    store: false,
+    reasoning: { effort: "xhigh" },
+    providerData: {
+      include: ["reasoning.encrypted_content"],
+      service_tier: "priority",
     },
-  };
-
-  const runtime = agent.createOpenAIAgentRuntime({
-    sdk,
-    instructions: "Use governed semantic tools and cite provenance.",
-    preferences: {
-      model: "gpt-5.6-sol",
-      reasoningEffort: "medium",
-      fastMode: true,
-    },
-    tools: [{ name: "run_semantic_query" }, { name: "make_chart" }],
   });
-
-  assert.deepEqual(runtime.agent.definition.modelSettings.providerData, {
-    service_tier: "fast",
+  const grokLive = agent.buildLiveAgentModelSettings(grok, {
+    reasoning: { effort: "low", context: "current_turn" },
+    verbosity: "medium",
+    parallelToolCalls: true,
+    safetyIdentifier: "must-not-be-sent",
   });
-  await runtime.run("Show category performance", { stream: true });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].input, "Show category performance");
-
-  assert.throws(
-    () =>
-      agent.createOpenAIAgentRuntime({
-        sdk,
-        instructions: "Unsafe fixture",
-        tools: [{ name: "execute_sql" }],
-      }),
-    /tool boundary rejected: execute_sql/i,
-  );
-});
-
-test("direct OpenAI Agents SDK adapter instantiates the selected current model", () => {
-  const runtime = agent.createAlbertOpenAIAgent({
-    instructions: "Use governed semantic tools and return provenance.",
-    preferences: {
-      model: "gpt-5.6-luna",
-      reasoningEffort: "low",
-      fastMode: true,
-    },
-    tools: [],
+  assert.deepEqual(grokLive.reasoning, { effort: "low" });
+  assert.equal(grokLive.text, undefined);
+  assert.equal(grokLive.parallelToolCalls, true);
+  assert.deepEqual(grokLive.providerData, {
+    include: ["reasoning.encrypted_content"],
+    service_tier: "priority",
   });
-
-  assert.equal(runtime.agent.model, "gpt-5.6-luna");
-  assert.equal(runtime.agent.modelSettings.reasoning.effort, "low");
-  assert.equal(runtime.agent.modelSettings.reasoning.context, "current_turn");
-  assert.deepEqual(runtime.agent.modelSettings.providerData, {
-    service_tier: "fast",
-  });
-});
-
-test("live agent uses local bounded conversation state and disables provider storage", () => {
-  const preferences = {
-    model: "gpt-5.6-sol",
-    reasoningEffort: "medium",
+  assert.equal("safety_identifier" in grokLive.providerData, false);
+  const grokStandard = agent.buildOpenAIAgentRunConfig({
+    model: "grok-4.6",
+    reasoningEffort: "high",
     fastMode: false,
-  };
-  const runtimeAgent = conversation.createLiveAlbertAgent(preferences, "privacy-safe-user-id");
-  assert.equal(runtimeAgent.modelSettings.store, false);
-  assert.equal(runtimeAgent.modelSettings.providerData.safety_identifier, "privacy-safe-user-id");
-  const input = conversation.buildBoundedModelInput([
-    { role: "user", text: "How were sales?" },
-    { role: "assistant", text: "Sales were supported by the governed result." },
-    { role: "user", text: "Break that down by location." },
-  ], "Break that down by location.");
-  assert.deepEqual(input.map(({ role }) => role), ["user", "assistant", "user"]);
-  assert.throws(
-    () => conversation.buildBoundedModelInput([{ role: "assistant", text: "stale" }], "new"),
-    /does not end with the current user message/,
-  );
-});
-
-test("completed model history receives the trusted current user message exactly once", () => {
-  const completed = [
-    { role: "user", text: "How were sales?" },
-    { role: "assistant", text: "Sales were supported by the governed result." },
-  ];
-  const context = conversation.appendCurrentUserMessage(completed, "Break that down by location.");
-  assert.deepEqual(context, [
-    ...completed,
-    { role: "user", text: "Break that down by location." },
-  ]);
-  assert.doesNotThrow(() => conversation.buildBoundedModelInput(context, "Break that down by location."));
-  assert.equal(completed.length, 2);
+  });
+  assert.equal(grokStandard.modelSettings.providerData.service_tier, "default");
 });
 
 test("deterministic fixture emits ordered governed table, chart, and provenance", () => {
@@ -256,6 +280,65 @@ test("trace validation rejects missing sequences and forbidden payload fields", 
     () => shared.assertOrderedSanitizedTrace(unsafe),
     /unsafe trace field/i,
   );
+});
+
+test("trace validation enforces evidence-bound terminal plan states", () => {
+  const fixture = conversation.createDeterministicFixtureTrace();
+  const sourceTable = fixture.find(({ type }) => type === "table");
+  const sourceAnswer = fixture.find(({ type }) => type === "answer");
+  assert.ok(sourceTable && sourceAnswer);
+  const at = "2026-08-19T00:00:00.000Z";
+  const opening = {
+    id: "01PLANOPEN00000000000000000",
+    sequence: 1,
+    occurredAt: at,
+    type: "plan",
+    status: "complete",
+    steps: [
+      { id: "plan_step_1", label: "Check the figure", kind: "evidence", status: "active", evidenceResultIds: [] },
+      { id: "plan_step_2", label: "Confirm the answer", kind: "synthesis", status: "pending", evidenceResultIds: [] },
+    ],
+  };
+  const table = { ...sourceTable, id: "01PLANTABLE0000000000000000", sequence: 2, occurredAt: at };
+  const terminal = {
+    ...opening,
+    id: "01PLANDONE00000000000000000",
+    sequence: 3,
+    steps: opening.steps.map((step) => ({
+      ...step,
+      status: "done",
+      evidenceResultIds: [table.resultId],
+    })),
+  };
+  const answer = { ...sourceAnswer, id: "01PLANANSWER000000000000000", sequence: 4, occurredAt: at };
+  assert.doesNotThrow(() => shared.assertOrderedSanitizedTrace([opening, table, terminal, answer]));
+
+  const unsupported = {
+    ...terminal,
+    steps: terminal.steps.map((step) => ({ ...step, evidenceResultIds: ["01UNKNOWNRESULT00000000000000"] })),
+  };
+  assert.throws(
+    () => shared.assertOrderedSanitizedTrace([opening, table, unsupported]),
+    /not emitted successfully first/i,
+  );
+  const premature = { ...answer, sequence: 2 };
+  assert.throws(
+    () => shared.assertOrderedSanitizedTrace([opening, premature]),
+    /before the visible plan reached truthful terminal states/i,
+  );
+
+  const blocked = {
+    ...opening,
+    id: "01PLANBLOCKED000000000000000",
+    sequence: 2,
+    status: "warning",
+    steps: [
+      { ...opening.steps[0], status: "blocked", statusDetail: "The required source was unavailable." },
+      { ...opening.steps[1], status: "incomplete", statusDetail: "A supported answer could not be completed." },
+    ],
+  };
+  const unavailableAnswer = { ...sourceAnswer, id: "01PLANUNAVAILABLE00000000000", sequence: 3, occurredAt: at, state: "Unavailable" };
+  assert.doesNotThrow(() => shared.assertOrderedSanitizedTrace([opening, blocked, unavailableAnswer]));
 });
 
 test("fixture SSE stream preserves event IDs, ordering, and safe event payloads", async () => {

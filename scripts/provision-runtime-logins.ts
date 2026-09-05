@@ -23,6 +23,8 @@ const controlPlane: CellSpec = Object.freeze({
     Object.freeze({ login: "albert_sync_control_runtime", group: "albert_sync_control", passwordEnvironmentName: "ALBERT_SYNC_CONTROL_DB_PASSWORD", connectionLimit: 24, statementTimeout: "30s" }),
     Object.freeze({ login: "albert_transform_control_runtime", group: "albert_transform_control", passwordEnvironmentName: "ALBERT_TRANSFORM_CONTROL_DB_PASSWORD", connectionLimit: 12, statementTimeout: "30s" }),
     Object.freeze({ login: "albert_semantic_control_runtime", group: "albert_semantic_control", passwordEnvironmentName: "ALBERT_SEMANTIC_CONTROL_DB_PASSWORD", connectionLimit: 12, statementTimeout: "15s" }),
+    Object.freeze({ login: "albert_anthropic_control_runtime", group: "albert_anthropic_control", passwordEnvironmentName: "ALBERT_ANTHROPIC_CONTROL_DB_PASSWORD", connectionLimit: 12, statementTimeout: "30s" }),
+    Object.freeze({ login: "albert_omni_control_runtime", group: "albert_omni_control", passwordEnvironmentName: "ALBERT_OMNI_CONTROL_DB_PASSWORD", connectionLimit: 8, statementTimeout: "10s" }),
     Object.freeze({ login: "albert_operator_diagnostic_control_runtime", group: "albert_operator_diagnostic_control", passwordEnvironmentName: "ALBERT_OPERATOR_DIAGNOSTIC_CONTROL_DB_PASSWORD", connectionLimit: 8, statementTimeout: "5s" }),
     Object.freeze({ login: "albert_webhook_control_runtime", group: "albert_webhook_control", passwordEnvironmentName: "ALBERT_WEBHOOK_CONTROL_DB_PASSWORD", connectionLimit: 24, statementTimeout: "15s" }),
     Object.freeze({ login: "albert_deletion_control_runtime", group: "albert_deletion_control", passwordEnvironmentName: "ALBERT_DELETION_CONTROL_DB_PASSWORD", connectionLimit: 12, statementTimeout: "5min" }),
@@ -114,7 +116,13 @@ async function assertGroup(client: Client, group: string): Promise<void> {
       WHERE member.rolname=$1`,
     [group],
   );
-  if (parents.rowCount) {
+  const allowedParents = group === "albert_migration_owner"
+    ? new Set(["fivetran_user"])
+    : new Set<string>();
+  if (
+    parents.rows.some((parent) => parent.admin_option || !allowedParents.has(parent.role_name))
+    || parents.rows.length !== allowedParents.size
+  ) {
     throw new Error(`Required group ${group} must not inherit or hold membership in another role.`);
   }
 }
@@ -253,20 +261,26 @@ async function provisionCell(spec: CellSpec, connectionString: string): Promise<
   process.stdout.write(`reconciled ${spec.logins.length} constrained ${spec.label} logins\n`);
 }
 
-function requestedCells(arguments_:readonly string[]):readonly CellSpec[]{
-  const target=arguments_.find((value)=>value.startsWith("--target="));
-  if(arguments_.some((value)=>!value.startsWith("--target="))){
-    throw new Error("Only --target=control-plane|analytical is supported.");
+export function selectRuntimeLoginTargets(arguments_: readonly string[]): readonly CellSpec[] {
+  const targets = arguments_.filter((value) => value.startsWith("--target="));
+  const logins = arguments_.filter((value) => value.startsWith("--login="));
+  if (targets.length > 1 || logins.length > 1 ||
+      arguments_.some((value) => !value.startsWith("--target=") && !value.startsWith("--login="))) {
+    throw new Error("Use one --target=control-plane|analytical and an optional --login=<runtime-login>.");
   }
-  if(!target)return[controlPlane,analytical];
-  const value=target.slice("--target=".length);
-  if(value==="control-plane")return[controlPlane];
-  if(value==="analytical")return[analytical];
-  throw new Error("--target must be control-plane or analytical.");
+  if (logins.length && !targets.length) throw new Error("--login requires an explicit --target.");
+  if (!targets.length) return [controlPlane, analytical];
+  const target = targets[0]!.slice("--target=".length);
+  const cell = target === "control-plane" ? controlPlane : target === "analytical" ? analytical : null;
+  if (!cell) throw new Error("--target must be control-plane or analytical.");
+  if (!logins.length) return [cell];
+  const login = cell.logins.find((candidate) => candidate.login === logins[0]!.slice("--login=".length));
+  if (!login) throw new Error("--login must name a configured runtime login in the selected target.");
+  return [Object.freeze({ ...cell, logins: Object.freeze([login]) })];
 }
 
 export async function provisionRuntimeLogins(arguments_:readonly string[]=process.argv.slice(2)):Promise<void>{
-  const selected=requestedCells(arguments_);
+  const selected=selectRuntimeLoginTargets(arguments_);
   const targets=selected.map((cell)=>({
     cell,
     url:databaseUrl(cell.adminUrlEnvironmentName),

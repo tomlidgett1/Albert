@@ -5,8 +5,10 @@ import {
 } from "../../../packages/storage/src/s3.js";
 import { assertProductionRuntimeBoundary } from "../../../packages/config/src/production-boundary.js";
 import { loadEncodedAes256Keyring } from "../../../packages/security/src/index.js";
+import { isFivetranDestinationSchema } from "../../../packages/fivetran/src/index.js";
+import type { FivetranWorkerConfig } from "./fivetran-http.js";
 
-const CONNECTOR_PROVIDERS = ["lightspeed-r", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"] as const;
+const CONNECTOR_PROVIDERS = ["lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"] as const;
 export type ConnectorProvider = (typeof CONNECTOR_PROVIDERS)[number];
 
 /**
@@ -42,10 +44,15 @@ export type SyncWorkerConfig = Readonly<{
   tokenKeyReference: string;
   tokenKeyVersion: string;
   oauthWorkerSigningSecret: string;
+  shopifyQLSigningSecret: string;
+  shopifyAdminSigningSecret: string;
   oauthRedirectUris: ReadonlySet<string>;
   oauthSuppressInitialBackfill: ReadonlySet<ConnectorProvider>;
   lightspeedClientId: string;
   lightspeedClientSecret: string;
+  lightspeedXClientId: string;
+  lightspeedXClientSecret: string;
+  lightspeedXRedirectUri: string;
   xeroClientId: string;
   xeroEnableAdvancedJournals: boolean;
   xeroDailyRequestLimit: 1000 | 5000;
@@ -77,6 +84,7 @@ export type SyncWorkerConfig = Readonly<{
   serviceVersion: string;
   port: number;
   metricsPort: number;
+  fivetran?: FivetranWorkerConfig;
 }>;
 
 function optionalSecret(source: Readonly<Record<string, string | undefined>>, key: string): string {
@@ -143,7 +151,7 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
   ) {
     throw new Error("ALBERT_PUBLIC_ORIGIN must be a clean public origin.");
   }
-  const redirectValues = ["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"].map((provider) =>
+  const redirectValues = ["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads", "lightspeed-x", "fivetran-xero", "fivetran-lightspeed", "fivetran-deputy", "fivetran-stripe"].map((provider) =>
     new URL(`/api/oauth/${provider}/callback`, publicOrigin).toString()
   );
   const port = Number(source.PORT ?? "8080");
@@ -157,6 +165,25 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
   const oauthWorkerSigningSecret = required(source, "ALBERT_OAUTH_WORKER_SIGNING_SECRET");
   if (Buffer.byteLength(oauthWorkerSigningSecret, "utf8") < 32) {
     throw new Error("ALBERT_OAUTH_WORKER_SIGNING_SECRET must contain at least 32 bytes.");
+  }
+  const shopifyQLSigningSecret = optionalSecret(source, "ALBERT_SHOPIFYQL_SIGNING_SECRET");
+  if (shopifyQLSigningSecret && Buffer.byteLength(shopifyQLSigningSecret, "utf8") < 32) {
+    throw new Error("ALBERT_SHOPIFYQL_SIGNING_SECRET must contain at least 32 bytes.");
+  }
+  if (shopifyQLSigningSecret === oauthWorkerSigningSecret) {
+    throw new Error("ALBERT_SHOPIFYQL_SIGNING_SECRET must be distinct from the OAuth signing secret.");
+  }
+  const shopifyAdminSigningSecret = optionalSecret(source, "ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET");
+  if (shopifyAdminSigningSecret && Buffer.byteLength(shopifyAdminSigningSecret, "utf8") < 32) {
+    throw new Error("ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET must contain at least 32 bytes.");
+  }
+  const forbiddenAdminSecrets = [
+    oauthWorkerSigningSecret,
+    shopifyQLSigningSecret,
+    optionalSecret(source, "ALBERT_SEMANTIC_SIGNING_SECRET"),
+  ].filter(Boolean);
+  if (shopifyAdminSigningSecret && forbiddenAdminSecrets.includes(shopifyAdminSigningSecret)) {
+    throw new Error("ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET must be distinct from OAuth, ShopifyQL, and semantic signing secrets.");
   }
   const tokenKeyVersion = required(source, "TOKEN_ENCRYPTION_KEY_ID");
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(tokenKeyVersion)) {
@@ -195,6 +222,68 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
   const suppressInitialBackfill = parseSuppressedInitialBackfillConnectors(
     source.ALBERT_OAUTH_SUPPRESS_INITIAL_BACKFILL,
   );
+  const deputyClientId = optionalSecret(source, "DEPUTY_CLIENT_ID");
+  const deputyClientSecret = optionalSecret(source, "DEPUTY_CLIENT_SECRET");
+  if (Boolean(deputyClientId) !== Boolean(deputyClientSecret)) {
+    throw new Error(
+      "DEPUTY_CLIENT_ID and DEPUTY_CLIENT_SECRET must be configured together.",
+    );
+  }
+  const squareClientId = optionalSecret(source, "SQUARE_CLIENT_ID");
+  const squareClientSecret = optionalSecret(source, "SQUARE_CLIENT_SECRET");
+  if (source.NODE_ENV === "production" && (!squareClientId || !squareClientSecret)) {
+    throw new Error(
+      "SQUARE_CLIENT_ID and SQUARE_CLIENT_SECRET are required in production.",
+    );
+  }
+  if (Boolean(squareClientId) !== Boolean(squareClientSecret)) {
+    throw new Error(
+      "SQUARE_CLIENT_ID and SQUARE_CLIENT_SECRET must be configured together.",
+    );
+  }
+  const lightspeedXClientId = optionalSecret(source, "LIGHTSPEED_X_CLIENT_ID");
+  const lightspeedXClientSecret = optionalSecret(source, "LIGHTSPEED_X_CLIENT_SECRET");
+  if (Boolean(lightspeedXClientId) !== Boolean(lightspeedXClientSecret)) {
+    throw new Error(
+      "LIGHTSPEED_X_CLIENT_ID and LIGHTSPEED_X_CLIENT_SECRET must be configured together.",
+    );
+  }
+  if (
+    lightspeedXClientId &&
+    source.ALBERT_LIGHTSPEED_X_PRODUCT?.trim() !== "x-series"
+  ) {
+    throw new Error(
+      "ALBERT_LIGHTSPEED_X_PRODUCT must explicitly confirm x-series when Lightspeed X-Series OAuth is configured.",
+    );
+  }
+  const shopifyClientId = optionalSecret(source, "SHOPIFY_CLIENT_ID");
+  const shopifyClientSecret = optionalSecret(source, "SHOPIFY_CLIENT_SECRET");
+  if (Boolean(shopifyClientId) !== Boolean(shopifyClientSecret)) {
+    throw new Error(
+      "SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET must be configured together.",
+    );
+  }
+  if (shopifyClientId && !shopifyQLSigningSecret) {
+    throw new Error("ALBERT_SHOPIFYQL_SIGNING_SECRET is required when Shopify is configured.");
+  }
+  if (shopifyClientId && !shopifyAdminSigningSecret) {
+    throw new Error("ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET is required when Shopify is configured.");
+  }
+  const momenceClientId = optionalSecret(source, "MOMENCE_CLIENT_ID");
+  const momenceClientSecret = optionalSecret(source, "MOMENCE_CLIENT_SECRET");
+  if (Boolean(momenceClientId) !== Boolean(momenceClientSecret)) {
+    throw new Error(
+      "MOMENCE_CLIENT_ID and MOMENCE_CLIENT_SECRET must be configured together.",
+    );
+  }
+  const stripeClientId = optionalSecret(source, "STRIPE_CLIENT_ID");
+  const stripeSecretKey = optionalSecret(source, "STRIPE_SECRET_KEY");
+  if (Boolean(stripeClientId) !== Boolean(stripeSecretKey)) {
+    throw new Error(
+      "STRIPE_CLIENT_ID and STRIPE_SECRET_KEY must be configured together.",
+    );
+  }
+  const fivetran = loadFivetranWorkerConfig(source);
   return Object.freeze({
     controlPlaneDatabaseUrl: control,
     analyticalDatabaseUrl: analytical,
@@ -207,31 +296,35 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
     tokenKeyReference: "env:TOKEN_ENCRYPTION_KEY",
     tokenKeyVersion,
     oauthWorkerSigningSecret,
+    shopifyQLSigningSecret,
+    shopifyAdminSigningSecret,
     oauthRedirectUris: new Set(redirectValues),
     oauthSuppressInitialBackfill: suppressInitialBackfill,
     lightspeedClientId: required(source, "LIGHTSPEED_CLIENT_ID"),
     lightspeedClientSecret: required(source, "LIGHTSPEED_CLIENT_SECRET"),
+    lightspeedXClientId,
+    lightspeedXClientSecret,
+    lightspeedXRedirectUri: redirectValues[9]!,
     xeroClientId: required(source, "XERO_CLIENT_ID"),
     xeroEnableAdvancedJournals: xeroAdvancedJournals === "true",
     xeroDailyRequestLimit: xeroDailyRequestLimit as 1000 | 5000,
-    deputyClientId: required(source, "DEPUTY_CLIENT_ID"),
-    deputyClientSecret: required(source, "DEPUTY_CLIENT_SECRET"),
+    deputyClientId,
+    deputyClientSecret,
     deputyRedirectUri: redirectValues[2]!,
-    // The authorization-only providers are optional at startup: a provider
-    // without credentials is simply not offered, and requesting it fails with
-    // a named error at the factory. Making these required would brick the
-    // whole sync fleet over connectors no tenant can use yet.
-    squareClientId: optionalSecret(source, "SQUARE_CLIENT_ID"),
-    squareClientSecret: optionalSecret(source, "SQUARE_CLIENT_SECRET"),
+    // Optional OAuth providers are admitted only when their complete credential
+    // pair is present. Missing providers stay unavailable without preventing
+    // unrelated connectors from starting in the same worker fleet.
+    squareClientId,
+    squareClientSecret,
     squareRedirectUri: redirectValues[3]!,
-    shopifyClientId: optionalSecret(source, "SHOPIFY_CLIENT_ID"),
-    shopifyClientSecret: optionalSecret(source, "SHOPIFY_CLIENT_SECRET"),
+    shopifyClientId,
+    shopifyClientSecret,
     shopifyRedirectUri: redirectValues[4]!,
-    stripeClientId: optionalSecret(source, "STRIPE_CLIENT_ID"),
-    stripeSecretKey: optionalSecret(source, "STRIPE_SECRET_KEY"),
+    stripeClientId,
+    stripeSecretKey,
     stripeRedirectUri: redirectValues[5]!,
-    momenceClientId: optionalSecret(source, "MOMENCE_CLIENT_ID"),
-    momenceClientSecret: optionalSecret(source, "MOMENCE_CLIENT_SECRET"),
+    momenceClientId,
+    momenceClientSecret,
     momenceRedirectUri: redirectValues[6]!,
     metaAdsClientId: optionalSecret(source, "META_ADS_CLIENT_ID"),
     metaAdsClientSecret: optionalSecret(source, "META_ADS_CLIENT_SECRET"),
@@ -246,5 +339,54 @@ export function loadSyncWorkerConfig(source: NodeJS.ProcessEnv = process.env): S
     serviceVersion: source.ALBERT_SERVICE_VERSION?.trim() || "development",
     port,
     metricsPort,
+    ...(fivetran ? { fivetran } : {}),
+  });
+}
+
+function loadFivetranWorkerConfig(
+  source: NodeJS.ProcessEnv,
+): FivetranWorkerConfig | undefined {
+  const apiKey = optionalSecret(source, "FIVETRAN_API_KEY");
+  const apiSecret = optionalSecret(source, "FIVETRAN_API_SECRET");
+  const groupId = optionalSecret(source, "FIVETRAN_GROUP_ID");
+  const present = [apiKey, apiSecret, groupId].filter(Boolean).length;
+  if (present === 0) return undefined;
+  if (present !== 3) {
+    throw new Error(
+      "FIVETRAN_API_KEY, FIVETRAN_API_SECRET, and FIVETRAN_GROUP_ID must be configured together.",
+    );
+  }
+  const destinationSchema = source.FIVETRAN_XERO_SCHEMA?.trim() || "xero";
+  if (!isFivetranDestinationSchema(destinationSchema)) {
+    throw new Error("FIVETRAN_XERO_SCHEMA must be a Fivetran-legal destination schema name.");
+  }
+  const destinationRole = optionalSecret(source, "FIVETRAN_DESTINATION_ROLE");
+  if (destinationRole && !/^[a-z_][a-z0-9_]{0,62}$/.test(destinationRole)) {
+    throw new Error("FIVETRAN_DESTINATION_ROLE must be a PostgreSQL role name.");
+  }
+  // The SDK connectors (Xero, Lightspeed R-Series) call back to this worker
+  // for tokens; they need the worker's public HTTPS origin. Fly exposes the app name, so derive it there.
+  const flyApp = source.FLY_APP_NAME?.trim();
+  const tokenBrokerOrigin = source.FIVETRAN_TOKEN_BROKER_ORIGIN?.trim()
+    || (flyApp ? `https://${flyApp}.fly.dev` : undefined);
+  if (tokenBrokerOrigin && !/^https:\/\/[a-z0-9.-]+(?::\d+)?$/u.test(tokenBrokerOrigin)) {
+    throw new Error("FIVETRAN_TOKEN_BROKER_ORIGIN must be a bare https origin.");
+  }
+  const sdkProjectDir = source.FIVETRAN_XERO_SDK_DIR?.trim() || "connectors/xero-fivetran-sdk";
+  const lightspeedSdkProjectDir = source.FIVETRAN_LIGHTSPEED_SDK_DIR?.trim() || "connectors/lightspeed-fivetran-sdk";
+  const sdkPythonVersion = source.FIVETRAN_SDK_PYTHON_VERSION?.trim();
+  if (sdkPythonVersion && !/^3\.\d{1,2}$/u.test(sdkPythonVersion)) {
+    throw new Error("FIVETRAN_SDK_PYTHON_VERSION must look like 3.12.");
+  }
+  return Object.freeze({
+    apiKey,
+    apiSecret,
+    groupId,
+    destinationSchema,
+    sdkProjectDir,
+    lightspeedSdkProjectDir,
+    ...(sdkPythonVersion ? { sdkPythonVersion } : {}),
+    ...(tokenBrokerOrigin ? { tokenBrokerOrigin } : {}),
+    ...(destinationRole ? { destinationRole } : {}),
   });
 }

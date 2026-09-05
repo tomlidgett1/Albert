@@ -1,0 +1,32 @@
+views:
+  - name: stripe_catalogue_analytics
+    title: Stripe catalogue analytics
+    description: Stripe Products and Prices, including recurring interval and unit price.
+    meta:
+      ai_context: >
+        Catalogue grain, not sales. Charged amounts live on invoices and
+        charges. Filter active for the current catalogue.
+    cubes:
+      - join_path: stripe_products
+        includes:
+          - tenant_id
+          - name
+          - description
+          - type
+          - active
+          - created
+          - product_count
+          - active_products
+      - join_path: stripe_prices
+        prefix: true
+        includes:
+          - nickname
+          - type
+          - currency
+          - recurring_interval
+          - unit_price
+          - active
+          - price_count
+      - join_path: stripe_coupons
+        prefix: true
+        includes: [name, duration, valid, coupon_count, percent_off]

@@ -241,6 +241,7 @@ export class ControlPlaneStore implements RawManifestRepository {
       connection_id: string;
       connector_key: ConnectionRuntimeRecord["connectorKey"];
       external_account_reference: string | null;
+      account_metadata: unknown;
       secret_reference: string | null;
       connection_generation: string | number;
     }>(
@@ -248,6 +249,7 @@ export class ControlPlaneStore implements RawManifestRepository {
               connection.connection_id,
               connection.connector_key,
               connection.external_account_reference,
+              connection.account_metadata,
               connection.connection_generation,
               token.secret_reference
          from control_plane.connections as connection
@@ -271,11 +273,17 @@ export class ControlPlaneStore implements RawManifestRepository {
     if (!Number.isSafeInteger(connectionGeneration) || connectionGeneration !== job.connectionGeneration) {
       throw new Error("connection_generation_stale");
     }
+    const accountMetadata = row.account_metadata &&
+      typeof row.account_metadata === "object" &&
+      !Array.isArray(row.account_metadata)
+      ? row.account_metadata as Readonly<Record<string, unknown>>
+      : Object.freeze({});
     return {
       tenantId: row.tenant_id,
       connectionId: row.connection_id,
       connectorKey: row.connector_key,
       externalAccountReference: row.external_account_reference,
+      accountMetadata,
       credentialRef: row.secret_reference,
       connectionGeneration,
     };
@@ -307,6 +315,31 @@ export class ControlPlaneStore implements RawManifestRepository {
       ],
     );
     if (!result.rows[0]) throw new Error("connection_auth_health_target_missing");
+  }
+
+  async blockShopifyDeletionContinuity(
+    claim: ClaimedSyncJob,
+    reason:
+      | "shopify_deletion_continuity_unproven"
+      | "shopify_deletion_watermark_missing"
+      | "shopify_deletion_retention_gap"
+      | "shopify_deletion_feed_unavailable",
+  ): Promise<void> {
+    const { job } = claim;
+    const result = await this.db.query<{ connection_id: string }>(
+      `select control_plane.block_shopify_deletion_continuity(
+         $1::text,$2::text,$3::bigint,$4::text,$5::text,$6::text,$7::text,
+         $8::text,$9::text,$10::bigint,$11::text,$12::integer
+       ) as connection_id`,
+      [
+        job.tenantId,job.connectionId,job.connectionGeneration,job.connectorId,
+        job.externalAccountReference,job.syncRunId,reason,job.jobRequestId,
+        claim.queueName,Number(claim.messageId),claim.workerId,claim.readCount,
+      ],
+    );
+    if (result.rows[0]?.connection_id !== job.connectionId) {
+      throw new Error("shopify_deletion_continuity_block_target_missing");
+    }
   }
 
   async beginRun(job: SyncJob, attemptNumber: number): Promise<"run" | "already_succeeded"> {
@@ -852,14 +885,15 @@ export class ControlPlaneStore implements RawManifestRepository {
         [input.job.tenantId,input.job.connectionId,input.job.connectionGeneration],
       );
       if (generationFence.rows[0]?.ok !== true) throw new Error("connection_generation_stale");
-      await client.query(
+      const landingUpdate = await client.query<{ batch_id: string }>(
         `update control_plane.raw_batch_landings
             set status = $3,
                 staged_record_count = $4,
                 quarantine_count = $5,
                 analytical_committed_at = now(),
                 last_error = null
-          where tenant_id = $1 and batch_id = $2`,
+          where tenant_id = $1 and batch_id = $2
+          returning batch_id`,
         [
           input.job.tenantId,
           input.job.batchId,
@@ -868,6 +902,11 @@ export class ControlPlaneStore implements RawManifestRepository {
           input.quarantineCount,
         ],
       );
+      // A mid-walk page that yielded nothing for this stream never minted a
+      // manifest or landing row (the worker skips that bookkeeping), so there
+      // is no batch for a transform to consume; enqueueing one would fail the
+      // whole claim on "not durably landed" and dead-letter the stream.
+      const pageLandedBatch = landingUpdate.rows.length > 0;
       if ("stream" in input.job && input.job.stream) {
         const advancesPrimaryCursor = input.job.type === "IncrementalSync" ||
           (input.job.type === "InitialBackfill" && input.job.phase === "recent");
@@ -1103,19 +1142,21 @@ export class ControlPlaneStore implements RawManifestRepository {
           ],
         );
       }
-      await client.query(
-        `select transform_job_id,created
-           from control_plane.enqueue_canonical_transform_job(
-             $1::text,$2::text,$3::text,$4::text[],$5::boolean
-           )`,
-        [
-          input.job.tenantId,
-          input.job.batchId,
-          input.mappingVersion,
-          [...input.domains],
-          input.backfillComplete,
-        ],
-      );
+      if (pageLandedBatch) {
+        await client.query(
+          `select transform_job_id,created
+             from control_plane.enqueue_canonical_transform_job(
+               $1::text,$2::text,$3::text,$4::text[],$5::boolean
+             )`,
+          [
+            input.job.tenantId,
+            input.job.batchId,
+            input.mappingVersion,
+            [...input.domains],
+            input.backfillComplete,
+          ],
+        );
+      }
       if (input.reconciliationTransition) {
         const transition = input.reconciliationTransition;
         const reconciliationJob = transition.claim.job;

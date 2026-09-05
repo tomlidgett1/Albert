@@ -91,6 +91,19 @@ export function assertSameOriginMutation(request: Request): void {
   }
 }
 
+/** Same-origin guard for multipart uploads (dictation audio, attachments). */
+export function assertSameOriginFormMutation(request: Request): void {
+  const expected = configuredOrigin(request);
+  const origin = requestHeaderOrigin(request.headers.get("origin"));
+  if (!origin || origin !== expected) {
+    throw new ControlPlaneError("Cross-site request rejected.", 403);
+  }
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType !== "multipart/form-data") {
+    throw new ControlPlaneError("Content-Type must be multipart/form-data.", 415);
+  }
+}
+
 /**
  * Reads a cookie-authenticated JSON mutation through an enforced byte ceiling.
  * Content-Length is only an early rejection hint: chunked bodies and dishonest

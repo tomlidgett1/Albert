@@ -1,0 +1,72 @@
+# The iMessage bridge: receives Linq webhook deliveries for the owner's
+# iMessage line, runs Omni turns against the agent-runtime service as the
+# owner, and replies through the Linq partner API. Deployed as its own app so
+# the conversation-caller credentials it holds (Cube signing secret, Supabase
+# owner-session keys, Linq token) never enter the codex-runtime boundary.
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = 30
+
+[build]
+  dockerfile = "../../Dockerfile.services"
+
+[env]
+  ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
+  ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
+  ALBERT_IMESSAGE_BOT_NUMBER = "+16502831814"
+  ALBERT_IMESSAGE_ALLOWED_SENDERS = "+61414187820"
+  ALBERT_IMESSAGE_OWNER_EMAIL = "tom@lidgett.net"
+  ALBERT_IMESSAGE_SUPABASE_URL = "https://jjiugnriaypjoxsupjft.supabase.co"
+  CODEX_RUNTIME_SERVICE_URL = "https://albert-codex-runtime.fly.dev"
+  # Heads-up alerts (ADR 0132) query Cube directly under an owner turn lease.
+  CUBE_API_URL = "https://albert-cube.fly.dev"
+  ALBERT_ALERTS_POLL_SECONDS = "60"
+  ALBERT_ALERTS_QUIET_HOURS = "21-7"
+  # The daily look (ADR 0133): Luna at max effort on the Omni harness, once a
+  # day from 6am local, polled every five minutes.
+  ALBERT_DAILY_BRIEF_MODEL = "gpt-5.6-luna"
+  ALBERT_DAILY_BRIEF_HOUR = "6"
+  ALBERT_DAILY_BRIEF_POLL_SECONDS = "300"
+  NODE_ENV = "production"
+  PORT = "8797"
+
+[processes]
+  app = "node --enable-source-maps services/imessage-bridge.js"
+
+[http_service]
+  internal_port = 8797
+  force_https = true
+  # Webhook deliveries must always land; the machine never scales to zero.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 16
+    hard_limit = 32
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "15s"
+    method = "GET"
+    path = "/readyz"
+    timeout = "10s"
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/livez"
+    timeout = "10s"
+
+[[restart]]
+  policy = "always"
+  processes = ["app"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
+  processes = ["app"]

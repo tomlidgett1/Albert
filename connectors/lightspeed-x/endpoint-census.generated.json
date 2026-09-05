@@ -1,0 +1,2922 @@
+[
+  {
+    "operationId": "GetAuditLogEvents",
+    "method": "GET",
+    "path": "/auditlog_events",
+    "requiredScopes": [
+      "audit:read"
+    ],
+    "pagination": "offset",
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getauditlogevents",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_audit_log_events"
+  },
+  {
+    "operationId": "ListBrands",
+    "method": "GET",
+    "path": "/brands",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "BrandCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listbrands",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_brands"
+  },
+  {
+    "operationId": "CreateBrand",
+    "method": "POST",
+    "path": "/brands",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createbrand",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteBrandByID",
+    "method": "DELETE",
+    "path": "/brands/{brand_id}",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deletebrandbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetBrandByID",
+    "method": "GET",
+    "path": "/brands/{brand_id}",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "BrandResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getbrandbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateBrandById",
+    "method": "PUT",
+    "path": "/brands/{brand_id}",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatebrandbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListButtonLayouts",
+    "method": "GET",
+    "path": "/button_layouts",
+    "requiredScopes": [
+      "registers:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "ButtonLayoutCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listbuttonlayouts",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_button_layouts"
+  },
+  {
+    "operationId": "GetButtonLayoutById",
+    "method": "GET",
+    "path": "/button_layouts/{button_layout_id}",
+    "requiredScopes": [
+      "registers:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ButtonLayout"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getbuttonlayoutbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "listRequests",
+    "method": "GET",
+    "path": "/channel_requests",
+    "requiredScopes": [
+      "channels:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "RequestCollectionResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listrequests",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_channel_requests"
+  },
+  {
+    "operationId": "getSingleRequest",
+    "method": "GET",
+    "path": "/channel_requests/{request_log_id}",
+    "requiredScopes": [
+      "channels:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "RequestSingleResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getsinglerequest",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "getSingleRequestText",
+    "method": "GET",
+    "path": "/channel_requests/{request_log_id}.txt",
+    "requiredScopes": [
+      "channels:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "string"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getsinglerequesttext",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "listChannels",
+    "method": "GET",
+    "path": "/channels",
+    "requiredScopes": [
+      "channels:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ChannelCollectionResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listchannels",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_channels"
+  },
+  {
+    "operationId": "GetConsignments",
+    "method": "GET",
+    "path": "/consignments",
+    "requiredScopes": [
+      "consignments:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "ConsignmentCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getconsignments",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_consignments"
+  },
+  {
+    "operationId": "CreateConsignment",
+    "method": "POST",
+    "path": "/consignments",
+    "requiredScopes": [
+      "consignments:write:inventory_count",
+      "consignments:write:stock_order",
+      "consignments:write:stock_transfer"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ConsignmentResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createconsignment",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteConsignmentByID",
+    "method": "DELETE",
+    "path": "/consignments/{consignment_id}",
+    "requiredScopes": [
+      "consignments:write:inventory_count",
+      "consignments:write:stock_order",
+      "consignments:write:stock_transfer"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deleteconsignmentbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetConsignmentByID",
+    "method": "GET",
+    "path": "/consignments/{consignment_id}",
+    "requiredScopes": [
+      "consignments:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ConsignmentResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getconsignmentbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateConsignmentByID",
+    "method": "PUT",
+    "path": "/consignments/{consignment_id}",
+    "requiredScopes": [
+      "consignments:write:inventory_count",
+      "consignments:write:stock_order",
+      "consignments:write:stock_transfer"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ConsignmentResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updateconsignmentbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "CreateOrUpdateConsignmentProducts",
+    "method": "POST",
+    "path": "/consignments/{consignment_id}/bulk",
+    "requiredScopes": [
+      "consignments:write:inventory_count",
+      "consignments:write:stock_order",
+      "consignments:write:stock_transfer"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createorupdateconsignmentproducts",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListProductsByConsignmentID",
+    "method": "GET",
+    "path": "/consignments/{consignment_id}/products",
+    "requiredScopes": [
+      "consignments:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "ConsignmentProductCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listproductsbyconsignmentid",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_consignment_products"
+  },
+  {
+    "operationId": "CreateConsignmentProduct",
+    "method": "POST",
+    "path": "/consignments/{consignment_id}/products",
+    "requiredScopes": [
+      "consignments:write:inventory_count",
+      "consignments:write:stock_order",
+      "consignments:write:stock_transfer"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "InventoryCountItemResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createconsignmentproduct",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteProductFromConsignment",
+    "method": "DELETE",
+    "path": "/consignments/{consignment_id}/products/{product_id}",
+    "requiredScopes": [
+      "consignments:write:inventory_count",
+      "consignments:write:stock_order",
+      "consignments:write:stock_transfer"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deleteproductfromconsignment",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateProductInConsignment",
+    "method": "PUT",
+    "path": "/consignments/{consignment_id}/products/{product_id}",
+    "requiredScopes": [
+      "consignments:write:inventory_count",
+      "consignments:write:stock_order",
+      "consignments:write:stock_transfer"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ConsignmentProductResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updateproductinconsignment",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListConsignmentTotals",
+    "method": "GET",
+    "path": "/consignments/{consignment_id}/totals",
+    "requiredScopes": [
+      "consignments:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ConsignmentTotalsResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listconsignmenttotals",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_consignment_totals"
+  },
+  {
+    "operationId": "ListCustomInventoryAdjustmentReasons",
+    "method": "GET",
+    "path": "/custom_inventory_adjustment_reasons",
+    "requiredScopes": [
+      "inventory:write"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "CustomInventoryAdjustmentReasonCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listcustominventoryadjustmentreasons",
+    "disposition": "read_requires_write_capable_scope_not_requested",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "CreateCustomInventoryAdjustmentReason",
+    "method": "POST",
+    "path": "/custom_inventory_adjustment_reasons",
+    "requiredScopes": [
+      "inventory:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomInventoryAdjustmentReasonSingleton"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createcustominventoryadjustmentreason",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateCustomInventoryAdjustmentReason",
+    "method": "PUT",
+    "path": "/custom_inventory_adjustment_reasons/{custom_reason_id}",
+    "requiredScopes": [
+      "inventory:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomInventoryAdjustmentReasonSingleton"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatecustominventoryadjustmentreason",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListCustomerGroups",
+    "method": "GET",
+    "path": "/customer_groups",
+    "requiredScopes": [
+      "customers:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "CustomerGroupCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listcustomergroups",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_customer_groups"
+  },
+  {
+    "operationId": "CreateCustomerGroup",
+    "method": "POST",
+    "path": "/customer_groups",
+    "requiredScopes": [
+      "customers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomerGroupResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createcustomergroup",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetCustomerGroupById",
+    "method": "GET",
+    "path": "/customer_groups/{customer_group_id}",
+    "requiredScopes": [
+      "customers:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomerGroupResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getcustomergroupbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateCustomerGroup",
+    "method": "PUT",
+    "path": "/customer_groups/{customer_group_id}",
+    "requiredScopes": [
+      "customers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomerGroupResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatecustomergroup",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteCustomersFromCustomerGroup",
+    "method": "DELETE",
+    "path": "/customer_groups/{customer_group_id}/customers",
+    "requiredScopes": [
+      "customers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "string"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deletecustomersfromcustomergroup",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetCustomerGroupCustomers",
+    "method": "GET",
+    "path": "/customer_groups/{customer_group_id}/customers",
+    "requiredScopes": [
+      "customers:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "CustomerCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getcustomergroupcustomers",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_customer_group_memberships"
+  },
+  {
+    "operationId": "AddCustomersToCustomerGroup",
+    "method": "POST",
+    "path": "/customer_groups/{customer_group_id}/customers",
+    "requiredScopes": [
+      "customers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "boolean"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/addcustomerstocustomergroup",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListCustomers",
+    "method": "GET",
+    "path": "/customers",
+    "requiredScopes": [
+      "customers:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "CustomerCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listcustomers",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_customers"
+  },
+  {
+    "operationId": "CreateCustomer",
+    "method": "POST",
+    "path": "/customers",
+    "requiredScopes": [
+      "customers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomerResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createcustomer",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteCustomerByID",
+    "method": "DELETE",
+    "path": "/customers/{customer_id}",
+    "requiredScopes": [
+      "customers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deletecustomerbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetCustomerByID",
+    "method": "GET",
+    "path": "/customers/{customer_id}",
+    "requiredScopes": [
+      "customers:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomerResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getcustomerbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateCustomerByID",
+    "method": "PUT",
+    "path": "/customers/{customer_id}",
+    "requiredScopes": [
+      "customers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomerResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatecustomerbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListCustomerAddresses",
+    "method": "GET",
+    "path": "/customers/{customer_id}/addresses",
+    "requiredScopes": [
+      "customers:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomerAddressCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listcustomeraddresses",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_customer_addresses"
+  },
+  {
+    "operationId": "CreateCustomerAddress",
+    "method": "POST",
+    "path": "/customers/{customer_id}/addresses",
+    "requiredScopes": [
+      "customers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomerAddressCreateResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createcustomeraddress",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteCustomerAddress",
+    "method": "DELETE",
+    "path": "/customers/{customer_id}/addresses/{address_id}",
+    "requiredScopes": [
+      "customers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deletecustomeraddress",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetCustomerAddress",
+    "method": "GET",
+    "path": "/customers/{customer_id}/addresses/{address_id}",
+    "requiredScopes": [
+      "customers:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomerAddressResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getcustomeraddress",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateCustomerAddress",
+    "method": "PUT",
+    "path": "/customers/{customer_id}/addresses/{address_id}",
+    "requiredScopes": [
+      "customers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomerAddressResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatecustomeraddress",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ApplyDiscount",
+    "method": "POST",
+    "path": "/discount",
+    "requiredScopes": [
+      "outlets:read",
+      "promotions:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "DiscountResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/applydiscount",
+    "disposition": "read_function_on_demand_not_scheduled",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "getFulfillmentSummary",
+    "method": "GET",
+    "path": "/fulfillments",
+    "requiredScopes": [],
+    "pagination": "page_number",
+    "responseSchemas": [
+      "FulfillmentSummaryResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getfulfillmentsummary",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_fulfillments"
+  },
+  {
+    "operationId": "postFulfillSale",
+    "method": "POST",
+    "path": "/fulfillments/fulfill",
+    "requiredScopes": [
+      "sales:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "FulfillSaleResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/postfulfillsale",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "postFulfillLineItems",
+    "method": "POST",
+    "path": "/fulfillments/{fulfillment_id}/fulfill",
+    "requiredScopes": [
+      "sales:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "FulfillLineItemsResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/postfulfilllineitems",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "getFulfillmentHistory",
+    "method": "GET",
+    "path": "/fulfillments/{fulfillment_id}/history",
+    "requiredScopes": [
+      "fulfillments:read"
+    ],
+    "pagination": "opaque_cursor",
+    "responseSchemas": [
+      "FulfillmentHistoryResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getfulfillmenthistory",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_fulfillment_history"
+  },
+  {
+    "operationId": "postPackLineItems",
+    "method": "POST",
+    "path": "/fulfillments/{fulfillment_id}/pack",
+    "requiredScopes": [
+      "sales:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PackLineItemsResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/postpacklineitems",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "postPickLineItems",
+    "method": "POST",
+    "path": "/fulfillments/{fulfillment_id}/pick",
+    "requiredScopes": [
+      "sales:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PickLineItemsResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/postpicklineitems",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListGiftCards",
+    "method": "GET",
+    "path": "/gift_cards",
+    "requiredScopes": [
+      "gift_cards:read"
+    ],
+    "pagination": "backward_cursor",
+    "responseSchemas": [
+      "GiftCardCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listgiftcards",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_gift_cards"
+  },
+  {
+    "operationId": "CreateGiftCard",
+    "method": "POST",
+    "path": "/gift_cards",
+    "requiredScopes": [
+      "gift_cards:write:issue"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "GiftCardSingleton"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/creategiftcard",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "VoidGiftCardById",
+    "method": "DELETE",
+    "path": "/gift_cards/by_id/{id}",
+    "requiredScopes": [
+      "gift_cards:write:issue"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "GiftCardSingleton"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/voidgiftcardbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "FindGiftCardById",
+    "method": "GET",
+    "path": "/gift_cards/by_id/{id}",
+    "requiredScopes": [
+      "gift_cards:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "GiftCardSingleton"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/findgiftcardbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "VoidGiftCardByNumber",
+    "method": "DELETE",
+    "path": "/gift_cards/by_number/{card_number}",
+    "requiredScopes": [
+      "gift_cards:write:issue"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "GiftCardSingleton"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/voidgiftcardbynumber",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "FindGiftCardByNumber",
+    "method": "GET",
+    "path": "/gift_cards/by_number/{card_number}",
+    "requiredScopes": [
+      "gift_cards:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "GiftCardSingleton"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/findgiftcardbynumber",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ReverseGiftCardTransaction",
+    "method": "DELETE",
+    "path": "/gift_cards/transactions/{transaction_id}",
+    "requiredScopes": [
+      "gift_cards:write:redeem"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "GiftCardTransactionSingleton"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/reversegiftcardtransaction",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "FindGiftCardByTransactionId",
+    "method": "GET",
+    "path": "/gift_cards/transactions/{transaction_id}",
+    "requiredScopes": [
+      "gift_cards:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "GiftCardSingleton"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/findgiftcardbytransactionid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "CreateGiftCardTransaction",
+    "method": "POST",
+    "path": "/gift_cards/{card_number}/transactions",
+    "requiredScopes": [
+      "gift_cards:write:redeem"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "GiftCardTransactionSingleton"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/creategiftcardtransaction",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "VoidGiftCard",
+    "method": "DELETE",
+    "path": "/gift_cards/{number}",
+    "requiredScopes": [
+      "gift_cards:write:issue"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "GiftCard"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/voidgiftcard",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "FindGiftCard",
+    "method": "GET",
+    "path": "/gift_cards/{number}",
+    "requiredScopes": [
+      "gift_cards:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "GiftCard"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/findgiftcard",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListInventoryRecords",
+    "method": "POST",
+    "path": "/inventory",
+    "requiredScopes": [
+      "inventory:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "array[Inventory]"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listinventoryrecords",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_inventory"
+  },
+  {
+    "operationId": "SetReorderPoints",
+    "method": "POST",
+    "path": "/inventory/reorder_points",
+    "requiredScopes": [
+      "inventory:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ReorderPointsCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/setreorderpoints",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListProductInventoryRecords",
+    "method": "GET",
+    "path": "/inventory/{product_id}",
+    "requiredScopes": [
+      "inventory:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "array[Inventory]"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listproductinventoryrecords",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListInventoryLevels",
+    "method": "POST",
+    "path": "/inventory_levels",
+    "requiredScopes": [
+      "inventory:read"
+    ],
+    "pagination": "offset",
+    "responseSchemas": [
+      "array[InventoryLevel]"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listinventorylevels",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_inventory_levels"
+  },
+  {
+    "operationId": "ListProductInventoryLevels",
+    "method": "GET",
+    "path": "/inventory_levels/{product_id}",
+    "requiredScopes": [
+      "inventory:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "array[InventoryLevel]"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listproductinventorylevels",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": null,
+    "method": "POST",
+    "path": "/loyalty/adjustments/bulk",
+    "requiredScopes": [],
+    "pagination": null,
+    "responseSchemas": [
+      "LoyaltyAdjustmentResponse",
+      "LoyaltyAdjustmentResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/post_loyalty-adjustments-bulk",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "listOutletProductTaxes",
+    "method": "GET",
+    "path": "/outlet_taxes",
+    "requiredScopes": [
+      "outlets:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "OutletTaxCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listoutletproducttaxes",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_outlet_taxes"
+  },
+  {
+    "operationId": "ListOutlets",
+    "method": "GET",
+    "path": "/outlets",
+    "requiredScopes": [
+      "outlets:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "OutletCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listoutlets",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_outlets"
+  },
+  {
+    "operationId": "GetOutletByID",
+    "method": "GET",
+    "path": "/outlets/{outlet_id}",
+    "requiredScopes": [
+      "outlets:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "OutletResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getoutletbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "getPackingSlip",
+    "method": "GET",
+    "path": "/packing_slip/{fulfillment_id}",
+    "requiredScopes": [
+      "sales:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "string"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getpackingslip",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "getPartialPackingSlip",
+    "method": "POST",
+    "path": "/partial_packing_slip/{fulfillment_id}",
+    "requiredScopes": [
+      "sales:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "string"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getpartialpackingslip",
+    "disposition": "read_function_on_demand_not_scheduled",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "PartnerSubscriptions",
+    "method": "GET",
+    "path": "/partner/billing/subscriptions",
+    "requiredScopes": [
+      "billing:partner_subscription:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/partnersubscriptions",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_partner_subscriptions"
+  },
+  {
+    "operationId": "PartnerSubscription",
+    "method": "GET",
+    "path": "/partner/billing/subscriptions/{subscription_id}",
+    "requiredScopes": [
+      "billing:partner_subscription:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/partnersubscription",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "PartnerToken",
+    "method": "POST",
+    "path": "/partner/billing/token",
+    "requiredScopes": [
+      "billing:partner_subscription:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/partnertoken",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "PartnerTokenGet",
+    "method": "GET",
+    "path": "/partner/billing/token/{partner_subscription_token}",
+    "requiredScopes": [
+      "billing:partner_subscription:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/partnertokenget",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "PartnerUpdateSubscriptionToken",
+    "method": "POST",
+    "path": "/partner/billing/update-subscription/token",
+    "requiredScopes": [
+      "billing:partner_subscription:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/partnerupdatesubscriptiontoken",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListPaymentTypes",
+    "method": "GET",
+    "path": "/payment_types",
+    "requiredScopes": [
+      "payment_types:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "PaymentTypeCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listpaymenttypes",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_payment_types"
+  },
+  {
+    "operationId": "ListPriceBookProducts",
+    "method": "GET",
+    "path": "/price_book_products",
+    "requiredScopes": [
+      "products:read:price_books"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "PriceBookProductCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listpricebookproducts",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_price_book_products"
+  },
+  {
+    "operationId": "ListPriceBooksV3",
+    "method": "GET",
+    "path": "/price_books",
+    "requiredScopes": [
+      "customers:read",
+      "outlets:read",
+      "products:read:price_books"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "PriceBookCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listpricebooksv3",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_price_books"
+  },
+  {
+    "operationId": "CreatePriceBookV3",
+    "method": "POST",
+    "path": "/price_books",
+    "requiredScopes": [
+      "customers:read",
+      "products:write:price_books"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PriceBookCreateResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createpricebookv3",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetPriceBookByIDV3",
+    "method": "GET",
+    "path": "/price_books/{id}",
+    "requiredScopes": [
+      "customers:read",
+      "outlets:read",
+      "products:read:price_books"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PriceBookResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getpricebookbyidv3",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdatePriceBookV3",
+    "method": "PUT",
+    "path": "/price_books/{id}",
+    "requiredScopes": [
+      "customers:read",
+      "products:write:price_books"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PriceBookCreateResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatepricebookv3",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeletePriceBookProducts",
+    "method": "DELETE",
+    "path": "/price_books/{price_book_id}/products",
+    "requiredScopes": [
+      "products:write:price_books"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PriceBookProductsUpdateResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deletepricebookproducts",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetPriceBookProductsForPriceBook",
+    "method": "GET",
+    "path": "/price_books/{price_book_id}/products",
+    "requiredScopes": [
+      "products:read:price_books"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PriceBookProductCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getpricebookproductsforpricebook",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdatePriceBookProducts",
+    "method": "PATCH",
+    "path": "/price_books/{price_book_id}/products",
+    "requiredScopes": [
+      "products:read",
+      "products:write:price_books"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PriceBookProductsUpdateResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatepricebookproducts",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "AddPriceBookProducts",
+    "method": "POST",
+    "path": "/price_books/{price_book_id}/products",
+    "requiredScopes": [
+      "products:read",
+      "products:write:price_books"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PriceBookProductsUpdateResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/addpricebookproducts",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdatePriceBookProductsWithPutOp",
+    "method": "PUT",
+    "path": "/price_books/{price_book_id}/products",
+    "requiredScopes": [
+      "products:read",
+      "products:write:price_books"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PriceBookProductsUpdateResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatepricebookproductswithputop",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListProductCategories",
+    "method": "GET",
+    "path": "/product_categories",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": "endpoint_specific_after_cursor",
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listproductcategories",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_product_categories"
+  },
+  {
+    "operationId": "DeleteProductCategories",
+    "method": "DELETE",
+    "path": "/product_categories/bulk",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deleteproductcategories",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "CreateUpdateProductCategories",
+    "method": "POST",
+    "path": "/product_categories/bulk",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createupdateproductcategories",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteProductImageByID",
+    "method": "DELETE",
+    "path": "/product_images/{product_image_id}",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deleteproductimagebyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetProductImageDataByID",
+    "method": "GET",
+    "path": "/product_images/{product_image_id}",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ImageResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getproductimagedatabyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "SetImagePosition",
+    "method": "PUT",
+    "path": "/product_images/{product_image_id}",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ImageResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/setimageposition",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListProductTypes",
+    "method": "GET",
+    "path": "/product_types",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "ProductTypeCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listproducttypes",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_product_types"
+  },
+  {
+    "operationId": "GetProductTypeByID",
+    "method": "GET",
+    "path": "/product_types/{product_type_id}",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ProductTypeResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getproducttypebyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListProducts",
+    "method": "GET",
+    "path": "/products",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "ProductCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listproducts",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_products"
+  },
+  {
+    "operationId": "CreateProduct",
+    "method": "POST",
+    "path": "/products",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createproduct",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteProduct",
+    "method": "DELETE",
+    "path": "/products/{product_id}",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deleteproduct",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetProductByID",
+    "method": "GET",
+    "path": "/products/{product_id}",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ProductResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getproductbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateProduct",
+    "method": "PUT",
+    "path": "/products/{product_id}",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updateproduct",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UploadImage",
+    "method": "POST",
+    "path": "/products/{product_id}/actions/image_upload",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ImageResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/uploadimage",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteProductFamily",
+    "method": "DELETE",
+    "path": "/products/{product_id}/all",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deleteproductfamily",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetPriceBooksForProduct",
+    "method": "GET",
+    "path": "/products/{product_id}/price_book_products",
+    "requiredScopes": [
+      "products:read:price_books"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PriceBookProductCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getpricebooksforproduct",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeletePromoCodesBulk",
+    "method": "DELETE",
+    "path": "/promocode/bulk",
+    "requiredScopes": [
+      "promotions:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PromotionDeletePromoCodesResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deletepromocodesbulk",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetActivePromoCodesBulk",
+    "method": "POST",
+    "path": "/promocode/bulk/active",
+    "requiredScopes": [
+      "promotions:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PromoCodesMap"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getactivepromocodesbulk",
+    "disposition": "read_function_on_demand_not_scheduled",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListPromotions",
+    "method": "GET",
+    "path": "/promotions",
+    "requiredScopes": [
+      "promotions:read"
+    ],
+    "pagination": "page_size_only_or_undocumented_cursor",
+    "responseSchemas": [
+      "PromotionCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listpromotions",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "CreatePromotion",
+    "method": "POST",
+    "path": "/promotions",
+    "requiredScopes": [
+      "promotions:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PromotionResponse",
+      "PromotionResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createpromotion",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "SearchPromotions",
+    "method": "GET",
+    "path": "/promotions/search",
+    "requiredScopes": [
+      "promotions:read"
+    ],
+    "pagination": "offset",
+    "responseSchemas": [
+      "PromotionCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/searchpromotions",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_promotions"
+  },
+  {
+    "operationId": "GetPromotionByID",
+    "method": "GET",
+    "path": "/promotions/{promotion_id}",
+    "requiredScopes": [
+      "promotions:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getpromotionbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdatePromotion",
+    "method": "PUT",
+    "path": "/promotions/{promotion_id}",
+    "requiredScopes": [
+      "promotions:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PromotionResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatepromotion",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetPromotionProducts",
+    "method": "GET",
+    "path": "/promotions/{promotion_id}/products",
+    "requiredScopes": [
+      "products:read",
+      "promotions:read"
+    ],
+    "pagination": "offset",
+    "responseSchemas": [
+      "PromotionProductsResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getpromotionproducts",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_promotion_products"
+  },
+  {
+    "operationId": "GetPromotionPromoCodes",
+    "method": "GET",
+    "path": "/promotions/{promotion_id}/promocodes",
+    "requiredScopes": [
+      "promotions:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "PromotionPromoCodesResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getpromotionpromocodes",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_promotion_promocodes"
+  },
+  {
+    "operationId": "get-quotes",
+    "method": "GET",
+    "path": "/quotes",
+    "requiredScopes": [
+      "sales:read"
+    ],
+    "pagination": "endpoint_specific_after_cursor",
+    "responseSchemas": [
+      "QuotesCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/get-quotes",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_quotes"
+  },
+  {
+    "operationId": "get-quote-quote_id",
+    "method": "GET",
+    "path": "/quotes/{quote_id}",
+    "requiredScopes": [
+      "sales:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "Quote"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/get-quote-quote_id",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListRegisters",
+    "method": "GET",
+    "path": "/registers",
+    "requiredScopes": [
+      "registers:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "RegisterCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listregisters",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_registers"
+  },
+  {
+    "operationId": "GetRegisterByID",
+    "method": "GET",
+    "path": "/registers/{register_id}",
+    "requiredScopes": [
+      "registers:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "RegisterResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getregisterbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "CloseRegister",
+    "method": "PUT",
+    "path": "/registers/{register_id}/actions/close",
+    "requiredScopes": [
+      "payment_types:read",
+      "register:close"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "RegisterResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/closeregister",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "OpenRegister",
+    "method": "PUT",
+    "path": "/registers/{register_id}/actions/open",
+    "requiredScopes": [
+      "register:open"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "RegisterResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/openregister",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "RegisterPaymentsSummary",
+    "method": "GET",
+    "path": "/registers/{register_id}/payments_summary",
+    "requiredScopes": [
+      "payments:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "RegisterPaymentsSummaryResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/registerpaymentssummary",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_register_payment_summaries"
+  },
+  {
+    "operationId": "GetRetailer",
+    "method": "GET",
+    "path": "/retailer",
+    "requiredScopes": [
+      "payment_types:read",
+      "retailer:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "RetailerResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getretailer",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_retailer"
+  },
+  {
+    "operationId": "ListSales",
+    "method": "GET",
+    "path": "/sales",
+    "requiredScopes": [
+      "sales:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "SaleCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listsales",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_sales"
+  },
+  {
+    "operationId": "CreateSale",
+    "method": "POST",
+    "path": "/sales",
+    "requiredScopes": [
+      "sales:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "SaleCreateResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createsale",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetSaleByID",
+    "method": "GET",
+    "path": "/sales/{sale_id}",
+    "requiredScopes": [
+      "sales:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "SaleResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getsalebyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateSale",
+    "method": "PUT",
+    "path": "/sales/{sale_id}",
+    "requiredScopes": [
+      "sales:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "SaleCreateResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatesale",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "initReturnSale",
+    "method": "POST",
+    "path": "/sales/{sale_id}/actions/return",
+    "requiredScopes": [
+      "sales:write",
+      "users:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "SaleResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/initreturnsale",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "Search",
+    "method": "GET",
+    "path": "/search",
+    "requiredScopes": [
+      "customers:read",
+      "products:read",
+      "sales:read"
+    ],
+    "pagination": "offset",
+    "responseSchemas": [
+      "SearchResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/search-1",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "get-security_events",
+    "method": "GET",
+    "path": "/security_events",
+    "requiredScopes": [
+      "audit:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/get-security_events",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "get-serialnumbers",
+    "method": "GET",
+    "path": "/serialnumbers",
+    "requiredScopes": [
+      "serial_numbers:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "SerialNumberCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/get-serialnumbers",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_serial_numbers"
+  },
+  {
+    "operationId": "create-serialnumber",
+    "method": "POST",
+    "path": "/serialnumbers",
+    "requiredScopes": [
+      "serial_numbers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "SerialNumberResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/create-serialnumber",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "delete-serialnumber",
+    "method": "DELETE",
+    "path": "/serialnumbers/{serialnumber_id}",
+    "requiredScopes": [
+      "serial_numbers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/delete-serialnumber",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "get-serialnumber",
+    "method": "GET",
+    "path": "/serialnumbers/{serialnumber_id}",
+    "requiredScopes": [
+      "serial_numbers:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "SerialNumberResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/get-serialnumber",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListServiceItems",
+    "method": "GET",
+    "path": "/service_items/customer/{customer_id}",
+    "requiredScopes": [
+      "services:read"
+    ],
+    "pagination": "endpoint_specific_after_cursor",
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listserviceitems",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_service_items"
+  },
+  {
+    "operationId": "ListServiceStatuses",
+    "method": "GET",
+    "path": "/service_statuses",
+    "requiredScopes": [
+      "services:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "array[ServiceStatusDetails]"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listservicestatuses",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_service_statuses"
+  },
+  {
+    "operationId": "CreateServiceStatus",
+    "method": "POST",
+    "path": "/service_statuses",
+    "requiredScopes": [
+      "services:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ServiceStatusDetails"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createservicestatus",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteServiceStatus",
+    "method": "DELETE",
+    "path": "/service_statuses/{id}",
+    "requiredScopes": [
+      "services:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deleteservicestatus",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetServiceStatus",
+    "method": "GET",
+    "path": "/service_statuses/{id}",
+    "requiredScopes": [
+      "services:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ServiceStatusDetails"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getservicestatus",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateServiceStatus",
+    "method": "PATCH",
+    "path": "/service_statuses/{id}",
+    "requiredScopes": [
+      "services:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "ServiceStatusDetails"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updateservicestatus",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListServices",
+    "method": "GET",
+    "path": "/services",
+    "requiredScopes": [
+      "services:read"
+    ],
+    "pagination": "endpoint_specific_after_cursor",
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listservices",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_services"
+  },
+  {
+    "operationId": "CreateService",
+    "method": "POST",
+    "path": "/services",
+    "requiredScopes": [
+      "sales:write",
+      "services:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "DetailedService"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createservice",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetService",
+    "method": "GET",
+    "path": "/services/{service_id}",
+    "requiredScopes": [
+      "services:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "DetailedService"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getservice",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_service_details"
+  },
+  {
+    "operationId": "get-agenda-outlet_id",
+    "method": "GET",
+    "path": "/services_agenda/outlet/{outlet_id}",
+    "requiredScopes": [
+      "services:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "array[DailyAgenda]"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/get-agenda-outlet_id",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_service_agenda"
+  },
+  {
+    "operationId": "ListShifts",
+    "method": "GET",
+    "path": "/shifts",
+    "requiredScopes": [],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "ShiftCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listshifts",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_shifts"
+  },
+  {
+    "operationId": "ListStockAdjustments",
+    "method": "GET",
+    "path": "/stock_adjustments",
+    "requiredScopes": [
+      "inventory:write"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "StockAdjustmentCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/liststockadjustments",
+    "disposition": "read_requires_write_capable_scope_not_requested",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "CreateStockAdjustments",
+    "method": "POST",
+    "path": "/stock_adjustments",
+    "requiredScopes": [
+      "inventory:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "StockAdjustmentBatchResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createstockadjustments",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListStoreCredit",
+    "method": "GET",
+    "path": "/store_credits",
+    "requiredScopes": [
+      "store_credits:read"
+    ],
+    "pagination": "page_size_only_or_undocumented_cursor",
+    "responseSchemas": [
+      "array[StoreCreditCustomer]"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/liststorecredit",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "BulkBalancesStoreCreditList",
+    "method": "POST",
+    "path": "/store_credits/balances-bulk",
+    "requiredScopes": [
+      "store_credits:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "StoreCreditBalancesBulkResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/bulkbalancesstorecreditlist",
+    "disposition": "read_function_on_demand_not_scheduled",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "BulkStoreCreditList",
+    "method": "POST",
+    "path": "/store_credits/bulk",
+    "requiredScopes": [
+      "store_credits:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "StoreCreditBulkResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/bulkstorecreditlist",
+    "disposition": "read_function_on_demand_not_scheduled",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "StoreCreditReport",
+    "method": "GET",
+    "path": "/store_credits/report",
+    "requiredScopes": [
+      "store_credits:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "StoreCreditReport"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/storecreditreport",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_store_credit_report"
+  },
+  {
+    "operationId": "ListStoreCreditForCustomer",
+    "method": "GET",
+    "path": "/store_credits/{customerId}",
+    "requiredScopes": [
+      "store_credits:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "StoreCreditCustomer"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/liststorecreditforcustomer",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_store_credits"
+  },
+  {
+    "operationId": "StoreCreditBalanceForCustomer",
+    "method": "GET",
+    "path": "/store_credits/{customerId}/balance",
+    "requiredScopes": [
+      "store_credits:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "StoreCreditCustomerBalance"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/storecreditbalanceforcustomer",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "CreateStoreCreditHold",
+    "method": "POST",
+    "path": "/store_credits/{customerId}/hold",
+    "requiredScopes": [],
+    "pagination": null,
+    "responseSchemas": [
+      "StoreCreditTransaction"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createstorecredithold",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ReverseStoreCreditHold",
+    "method": "POST",
+    "path": "/store_credits/{customerId}/hold/reverse",
+    "requiredScopes": [],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/reversestorecredithold",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "CreateStoreCreditTransaction",
+    "method": "POST",
+    "path": "/store_credits/{customerId}/transactions",
+    "requiredScopes": [
+      "store_credits:write:issue",
+      "store_credits:write:redeem"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "StoreCreditTransaction"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createstorecredittransaction",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListSuppliers",
+    "method": "GET",
+    "path": "/suppliers",
+    "requiredScopes": [
+      "suppliers:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "SupplierCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listsuppliers",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_suppliers"
+  },
+  {
+    "operationId": "CreateSupplier",
+    "method": "POST",
+    "path": "/suppliers",
+    "requiredScopes": [
+      "suppliers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createsupplier",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteSupplierById",
+    "method": "DELETE",
+    "path": "/suppliers/{supplier_id}",
+    "requiredScopes": [
+      "suppliers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deletesupplierbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetSupplierByID",
+    "method": "GET",
+    "path": "/suppliers/{supplier_id}",
+    "requiredScopes": [
+      "suppliers:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "SupplierResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getsupplierbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateSupplierByID",
+    "method": "PUT",
+    "path": "/suppliers/{supplier_id}",
+    "requiredScopes": [
+      "suppliers:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatesupplierbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListTags",
+    "method": "GET",
+    "path": "/tags",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "TagCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listtags",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_tags"
+  },
+  {
+    "operationId": "CreateTag",
+    "method": "POST",
+    "path": "/tags",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createtag",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteTagByID",
+    "method": "DELETE",
+    "path": "/tags/{tag_id}",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deletetagbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetTagByID",
+    "method": "GET",
+    "path": "/tags/{tag_id}",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "TagResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/gettagbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateTagByID",
+    "method": "PUT",
+    "path": "/tags/{tag_id}",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "TagResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatetagbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListTaxes",
+    "method": "GET",
+    "path": "/taxes",
+    "requiredScopes": [
+      "taxes:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "TaxCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listtaxes",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_taxes"
+  },
+  {
+    "operationId": "CreateTax",
+    "method": "POST",
+    "path": "/taxes",
+    "requiredScopes": [
+      "taxes:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "TaxResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createtax",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetTaxByID",
+    "method": "GET",
+    "path": "/taxes/{tax_id}",
+    "requiredScopes": [
+      "taxes:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "TaxResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/gettaxbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetUser",
+    "method": "GET",
+    "path": "/user",
+    "requiredScopes": [
+      "users:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "UserResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getuser",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListUsers",
+    "method": "GET",
+    "path": "/users",
+    "requiredScopes": [
+      "users:read"
+    ],
+    "pagination": "version_cursor",
+    "responseSchemas": [
+      "UserCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listusers",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_users"
+  },
+  {
+    "operationId": "GetUsersById",
+    "method": "POST",
+    "path": "/users/bulk",
+    "requiredScopes": [
+      "users:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "UserCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getusersbyid",
+    "disposition": "read_function_on_demand_not_scheduled",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteUserByID",
+    "method": "DELETE",
+    "path": "/users/{user_id}",
+    "requiredScopes": [],
+    "pagination": null,
+    "responseSchemas": [
+      "UserResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deleteuserbyid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetUserByID",
+    "method": "GET",
+    "path": "/users/{user_id}",
+    "requiredScopes": [
+      "users:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "UserResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getuserbyid",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetSalesTotalsForUserByID",
+    "method": "GET",
+    "path": "/users/{user_id}/sale_totals",
+    "requiredScopes": [],
+    "pagination": null,
+    "responseSchemas": [
+      "UserSaleTotalResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getsalestotalsforuserbyid",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_user_sale_totals"
+  },
+  {
+    "operationId": "DeleteSessionsByUserID",
+    "method": "DELETE",
+    "path": "/users/{user_id}/sessions",
+    "requiredScopes": [
+      "users:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deletesessionsbyuserid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "ListVariantAttributes",
+    "method": "GET",
+    "path": "/variant_attributes",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "VariantAttributesListResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/listvariantattributes",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_variant_attributes"
+  },
+  {
+    "operationId": "CreateVariantAttribute",
+    "method": "POST",
+    "path": "/variant_attributes",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "VariantAttributeCreateResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createvariantattribute",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "DeleteVariantAttribute",
+    "method": "DELETE",
+    "path": "/variant_attributes/{attribute-id}",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "VariantAttributeDeleteResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/deletevariantattribute",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetVariantAttributes",
+    "method": "GET",
+    "path": "/variant_attributes/{attribute-id}",
+    "requiredScopes": [
+      "products:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "VariantAttributeResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getvariantattributes",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "UpdateVariantAttribute",
+    "method": "PUT",
+    "path": "/variant_attributes/{attribute-id}",
+    "requiredScopes": [
+      "products:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "VariantAttributeUpdateResponse"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/updatevariantattribute",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "get-webhooks",
+    "method": "GET",
+    "path": "/webhooks",
+    "requiredScopes": [],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/get-webhooks",
+    "disposition": "management_scope_not_requested",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "post-webhooks",
+    "method": "POST",
+    "path": "/webhooks",
+    "requiredScopes": [],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/post-webhooks",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "delete-webhooks-webhookId",
+    "method": "DELETE",
+    "path": "/webhooks/{webhookId}",
+    "requiredScopes": [],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/delete-webhooks-webhookid",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "get-webhooks-id",
+    "method": "GET",
+    "path": "/webhooks/{webhookId}",
+    "requiredScopes": [],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/get-webhooks-id",
+    "disposition": "management_scope_not_requested",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "put-webhooks-id",
+    "method": "PUT",
+    "path": "/webhooks/{webhookId}",
+    "requiredScopes": [],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/put-webhooks-id",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetCustomFields",
+    "method": "GET",
+    "path": "/workflows/custom_fields",
+    "requiredScopes": [
+      "custom_fields:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomFieldDefinitionCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getcustomfields",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_custom_fields"
+  },
+  {
+    "operationId": "CreateCustomField",
+    "method": "POST",
+    "path": "/workflows/custom_fields",
+    "requiredScopes": [
+      "custom_fields:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/createcustomfield",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "GetCustomFieldValues",
+    "method": "GET",
+    "path": "/workflows/custom_fields/values",
+    "requiredScopes": [
+      "custom_fields:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomFieldValueCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/getcustomfieldvalues",
+    "disposition": "read_endpoint_on_demand_or_redundant",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "SetCustomFieldValues",
+    "method": "POST",
+    "path": "/workflows/custom_fields/values",
+    "requiredScopes": [
+      "custom_fields:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "CustomFieldValueCollection"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/setcustomfieldvalues",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "delete-custom-field",
+    "method": "DELETE",
+    "path": "/workflows/custom_fields/{customFieldId}",
+    "requiredScopes": [
+      "custom_fields:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/delete-custom-field",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "update-custom-field",
+    "method": "PUT",
+    "path": "/workflows/custom_fields/{customFieldId}",
+    "requiredScopes": [
+      "custom_fields:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/update-custom-field",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "get-remote-rules",
+    "method": "GET",
+    "path": "/workflows/remote_rules",
+    "requiredScopes": [
+      "remote_rules:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/get-remote-rules",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_remote_rules"
+  },
+  {
+    "operationId": "create-remote-rule",
+    "method": "POST",
+    "path": "/workflows/remote_rules",
+    "requiredScopes": [
+      "remote_rules:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/create-remote-rule",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "delete-remote-rule",
+    "method": "DELETE",
+    "path": "/workflows/remote_rules/{remoteRuleId}",
+    "requiredScopes": [
+      "remote_rules:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/delete-remote-rule",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "get-rules",
+    "method": "GET",
+    "path": "/workflows/rules",
+    "requiredScopes": [
+      "business_rules:read"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/get-rules",
+    "disposition": "scheduled_read_stream",
+    "scheduledStreamId": "lx_business_rules"
+  },
+  {
+    "operationId": "create-rule",
+    "method": "POST",
+    "path": "/workflows/rules",
+    "requiredScopes": [
+      "business_rules:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [
+      "object"
+    ],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/create-rule",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  },
+  {
+    "operationId": "delete-rule",
+    "method": "DELETE",
+    "path": "/workflows/rules/{ruleId}",
+    "requiredScopes": [
+      "business_rules:write"
+    ],
+    "pagination": null,
+    "responseSchemas": [],
+    "officialSourceUrl": "https://x-series-api.lightspeedhq.com/reference/delete-rule",
+    "disposition": "vendor_write_not_implemented",
+    "scheduledStreamId": null
+  }
+]

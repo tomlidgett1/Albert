@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { extractShopifyPage } from "../../connectors/shopify/extract.js";
 import type {
   ConnectorContext,
   ConnectorPack,
@@ -132,6 +133,7 @@ test("a hung connector cannot outlive the sync operation lease budget", async ()
 test("long vendor backoff is durably deferred without consuming the failure budget", async () => {
   let deferredSeconds: number | undefined;
   let retried = false;
+  let connectionChecks = 0;
   const queue = {
     async defer(_claim: ClaimedSyncJob, _reason: unknown, delaySeconds: number) {
       deferredSeconds = delaySeconds;
@@ -165,7 +167,7 @@ test("long vendor backoff is durably deferred without consuming the failure budg
     id: "xero",
     version: "test",
     apiVersion: "test",
-    async check_connection() { return "healthy" as const; },
+    async check_connection() { connectionChecks += 1; return "healthy" as const; },
     async list_streams() {
       throw new ConnectorError("RATE_LIMITED", "Xero requested a long backoff.", {
         retryable: true,
@@ -211,6 +213,7 @@ test("long vendor backoff is durably deferred without consuming the failure budg
 
   assert.equal(deferredSeconds, 3_600);
   assert.equal(retried, false);
+  assert.equal(connectionChecks, 0, "stream jobs must not spend a request on a health probe");
 });
 
 test("deep-history claims yield while recent phases keep the connection off the critical path", async () => {
@@ -632,6 +635,178 @@ test("a blocked pagination page is durably quarantined without advancing the cur
   assert.equal(committed, 0);
   assert.equal(completed, 0);
   assert.equal(enqueued, 0);
+});
+
+test("a capped Shopify nested selection fails before raw write, analytical landing, or cursor commit", async () => {
+  let rawWrites = 0;
+  let analyticalLandings = 0;
+  let committed = 0;
+  let completed = 0;
+  let enqueued = 0;
+  let failedRuns = 0;
+  let failure: Readonly<{ code: string; retryable: boolean }> | undefined;
+  const queue = {
+    async complete() { completed += 1; },
+    async retryOrFail(
+      _claim: ClaimedSyncJob,
+      error: Readonly<{ code: string; retryable: boolean }>,
+    ) {
+      failure = error;
+      return "failed" as const;
+    },
+    async defer() { return new Date().toISOString(); },
+  } as unknown as DurableSyncQueue;
+  const cursor = {
+    value: JSON.stringify({ version: 1 }),
+    sourceUpdatedAt: "2026-08-01T00:00:00.000Z",
+  } as const;
+  const control = {
+    async beginRun() { return "run" as const; },
+    async acquireSyncWritePermit() { return "01ARZ3NDEKTSV4RRFFQ69G5FAY"; },
+    async releaseSyncWritePermit() {},
+    async withSyncWritePermit(
+      _claim: unknown,
+      _permitId: string,
+      operation: (capability: string) => Promise<unknown>,
+    ) {
+      return operation(`test-capability-${"x".repeat(100)}`);
+    },
+    async loadConnection() {
+      return {
+        tenantId: "01J00000000000000000000001",
+        connectionId: "01J00000000000000000000002",
+        connectorKey: "shopify" as const,
+        externalAccountReference: "world-class-store.myshopify.com",
+        credentialRef: "credential:test",
+        connectionGeneration: 1,
+        accountMetadata: {},
+      };
+    },
+    async getCursor() {
+      return {
+        cursor,
+        backfillComplete: true,
+        sourceWatermark: cursor.sourceUpdatedAt,
+        connectionGeneration: 1,
+        coverage: null,
+      };
+    },
+    async commitPage() { committed += 1; },
+    async markRunFailed() { failedRuns += 1; },
+    async recordConnectionAuthHealth() {},
+    vendorRateBudget() {
+      return { async beforeRequest() {}, async observeResponse() {} };
+    },
+  } as unknown as ControlPlaneStore;
+  const transactions = Array.from({ length: 250 }, (_, index) => ({
+    __typename: "OrderTransaction",
+    id: `gid://shopify/OrderTransaction/${index + 1}`,
+    createdAt: "2026-08-11T01:00:00.000Z",
+    processedAt: "2026-08-11T01:00:00.000Z",
+    kind: "SALE",
+    status: "SUCCESS",
+    amountSet: { shopMoney: { amount: "1.00", currencyCode: "AUD" } },
+  }));
+  const connector = {
+    id: "shopify",
+    version: "shopify-test",
+    apiVersion: "2026-07",
+    manifest: { capabilities: {} },
+    async list_streams() {
+      return [{
+        id: "shopify_transactions",
+        label: "Order transactions",
+        domains: ["sales"],
+        cursorKind: "page",
+      }];
+    },
+    async incremental_sync() {
+      return extractShopifyPage({
+        stream: "shopify_transactions",
+        mode: "incremental",
+        cursor,
+        now: () => Date.parse("2026-08-12T12:00:00.000Z"),
+        readAllOrders: true,
+        call: async () => ({
+          errors: [],
+          data: {
+            orders: {
+              edges: [{
+                cursor: "order-cursor-1",
+                node: {
+                  id: "gid://shopify/Order/1",
+                  updatedAt: "2026-08-11T01:00:00.000Z",
+                  transactions,
+                },
+              }],
+              pageInfo: { hasNextPage: false, endCursor: "order-cursor-1" },
+            },
+          },
+        }),
+      });
+    },
+  } as unknown as ConnectorPack;
+  const rawWriter = {
+    async write() {
+      rawWrites += 1;
+      throw new Error("capped Shopify records must never reach raw storage");
+    },
+  } as unknown as RawBatchWriter;
+  const analytical = {
+    version: "test-mapping",
+    async land() {
+      analyticalLandings += 1;
+      throw new Error("capped Shopify records must never reach typed staging");
+    },
+  } as unknown as AnalyticalLandingStore;
+  const orchestrator = {
+    async enqueue() { enqueued += 1; },
+  } as unknown as SyncOrchestrator;
+  const claim = {
+    queueName: "albert_sync_standard",
+    workerId: "worker-test",
+    messageId: "42",
+    readCount: 1,
+    enqueuedAt: "2026-08-12T12:00:00.000Z",
+    visibilityDeadline: "2026-08-12T12:15:00.000Z",
+    job: {
+      schemaVersion: 1,
+      type: "IncrementalSync",
+      tenantId: "01J00000000000000000000001",
+      connectionId: "01J00000000000000000000002",
+      connectionGeneration: 1,
+      connectorId: "shopify",
+      externalAccountReference: "world-class-store.myshopify.com",
+      syncRunId: "01J00000000000000000000003",
+      batchId: "01J00000000000000000000004",
+      requestedAt: "2026-08-12T12:00:00.000Z",
+      jobRequestId: "01J00000000000000000000005",
+      stream: "shopify_transactions",
+      cursor,
+      reason: "manual",
+    },
+  } as const satisfies ClaimedSyncJob;
+  const processor = new SyncJobProcessor(
+    queue,
+    orchestrator,
+    { get: () => connector },
+    control,
+    analytical,
+    rawWriter,
+    "worker-test",
+  );
+
+  const outcome = await processor.process(claim);
+
+  assert.equal(outcome.status, "failed");
+  assert.equal(failure?.code, "remote_response_invalid");
+  assert.equal(failure?.retryable, false);
+  assert.equal(rawWrites, 0);
+  assert.equal(analyticalLandings, 0);
+  assert.equal(committed, 0);
+  assert.equal(completed, 0);
+  assert.equal(enqueued, 0);
+  assert.equal(failedRuns, 1);
 });
 
 test("an unavailable optional stream terminates with durable evidence", async () => {

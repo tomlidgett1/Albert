@@ -63,10 +63,75 @@ test("compatibility conversion rejects unknown, changed, and count-drifted migra
     ...foundation,
     body: `${foundation.body}\nSELECT auth.uid();`,
   }), /reviewed auth\.uid\(\) count/u);
+
+  const authorizationProviders = await migration(
+    "0085_m1_authorization_only_connector_providers.sql",
+  );
+  assert.equal(
+    controlPlaneMigrationBody(authorizationProviders),
+    "SELECT extensions.albert_install_authorization_connector_providers();",
+  );
+  assert.throws(
+    () =>
+      controlPlaneMigrationBody({
+        ...authorizationProviders,
+        checksum: "e".repeat(64),
+      }),
+    /administrator-ownership compatibility review/u,
+  );
+
+  const lightspeedX = await migration(
+    "0124_m1_lightspeed_x_connector_admission.sql",
+  );
+  const lightspeedXExecutable = controlPlaneMigrationBody(lightspeedX);
+  assert.match(
+    lightspeedXExecutable,
+    /SELECT extensions\.albert_install_lightspeed_x_vendor_attestor_provider\(\)/u,
+  );
+  assert.doesNotMatch(
+    lightspeedXExecutable,
+    /ALTER TABLE control_plane\.live_vendor_attestation_(?:challenges|results)/u,
+  );
+
+  const shopifyContinuity = await migration(
+    "0135_m2_shopify_deletion_continuity_block.sql",
+  );
+  const shopifyContinuityExecutable = controlPlaneMigrationBody(shopifyContinuity);
+  assert.match(shopifyContinuityExecutable, /TO albert_control_migration_owner;/u);
+  assert.doesNotMatch(shopifyContinuityExecutable, /TO albert_migration_owner;/u);
+  assert.throws(
+    () => controlPlaneMigrationBody({ ...shopifyContinuity, checksum: "c".repeat(64) }),
+    /control-plane owner compatibility review/u,
+  );
+
+  const streamExpectations = await migration(
+    "0091_m3_spec_driven_stream_expectations.sql",
+  );
+  const streamExpectationsExecutable = controlPlaneMigrationBody(streamExpectations);
+  assert.doesNotMatch(
+    streamExpectationsExecutable,
+    /REVOKE ALL ON FUNCTION[\s\S]*capture_protected_dogfood_acceptance\(\s*text\s*,\s*text\s*,\s*text\s*,\s*jsonb\s*,\s*text\s*,\s*integer\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*\)[\s\S]*FROM PUBLIC/iu,
+  );
+  assert.doesNotMatch(
+    streamExpectationsExecutable,
+    /GRANT EXECUTE ON FUNCTION control_plane\.capture_protected_dogfood_acceptance\(\s*text\s*,\s*text\s*,\s*text\s*,\s*jsonb\s*,\s*text\s*,\s*integer\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*\)/iu,
+  );
+  assert.match(
+    streamExpectationsExecutable,
+    /CREATE OR REPLACE FUNCTION control_plane\.capture_protected_dogfood_acceptance_v2/u,
+  );
+  assert.throws(
+    () =>
+      controlPlaneMigrationBody({
+        ...streamExpectations,
+        checksum: "d".repeat(64),
+      }),
+    /protected-dogfood ACL compatibility review/u,
+  );
 });
 
 test("administrator managed-service bridges are fixed, private, and consumed by migrations", async () => {
-  const [upgrade, storageUpgrade, storageAuthority, receiptReference, receiptMigration, boundary, authorityBoundary, runner, provisioner, roleDelegation, ci] = await Promise.all([
+  const [upgrade, storageUpgrade, storageAuthority, receiptReference, receiptMigration, authorizationProviderBridge, boundary, authorityBoundary, runner, provisioner, roleDelegation, ci] = await Promise.all([
     readFile(new URL(
       "infra/bootstrap-upgrades/control-plane/0002_supabase_auth_compatibility_boundary.sql",
       root,
@@ -85,6 +150,10 @@ test("administrator managed-service bridges are fixed, private, and consumed by 
     ), "utf8"),
     readFile(new URL(
       "infra/migrations/control-plane/0053_m8_user_bound_tenant_deletion_receipts.sql",
+      root,
+    ), "utf8"),
+    readFile(new URL(
+      "infra/bootstrap-upgrades/control-plane/0012_authorization_connector_provider_bridge.sql",
       root,
     ), "utf8"),
     readFile(new URL(
@@ -137,6 +206,20 @@ test("administrator managed-service bridges are fixed, private, and consumed by 
   assert.doesNotMatch(receiptReference, /albert_install_tenant_deletion_receipt_auth_reference\([^)]*[a-z_]+[^)]*\)/u);
   assert.match(receiptMigration, /SELECT extensions\.albert_install_tenant_deletion_receipt_auth_reference\(\)/u);
 
+  assert.match(authorizationProviderBridge, /SECURITY DEFINER/u);
+  assert.match(
+    authorizationProviderBridge,
+    /pg_has_role\(session_user,'albert_control_migration_owner','MEMBER'\)/u,
+  );
+  assert.match(
+    authorizationProviderBridge,
+    /migration_id='0085_m1_authorization_only_connector_providers\.sql'/u,
+  );
+  assert.match(
+    authorizationProviderBridge,
+    /REVOKE ALL ON FUNCTION extensions\.albert_install_authorization_connector_providers\(\) FROM albert_control_migration_owner/u,
+  );
+
   assert.match(boundary, /SELECT extensions\.albert_install_raw_payload_bucket\(\)/u);
   assert.match(boundary, /SELECT extensions\.albert_install_auth_user_foreign_keys\(\)/u);
   assert.match(boundary, /auth_reference_count <> 28/u);
@@ -146,6 +229,18 @@ test("administrator managed-service bridges are fixed, private, and consumed by 
   assert.match(authorityBoundary, /service_role must not enter the raw Storage policy boundary/u);
   assert.match(runner, /controlPlaneMigrationBody\(migration\)/u);
   assert.match(runner, /managed-service compatibility helpers are missing/u);
+  assert.match(
+    runner,
+    /ensureBootstrapMigrationRoleActivation\(client, target, bootstrap\)/u,
+  );
+  assert.match(
+    runner,
+    /target\.stream !== "analytical"[\s\S]*identity\?\.current_user !== "postgres"[\s\S]*identity\.session_user !== "postgres"/u,
+  );
+  assert.match(
+    runner,
+    /GRANT \$\{quoteIdentifier\(target\.defaultRole\)\} TO \$\{quoteIdentifier\(identity\.session_user\)\}/u,
+  );
   const roleActivation = runner.indexOf("await client.query(`SET ROLE");
   const bridgePreflight = runner.indexOf("const authBridge");
   assert.ok(
@@ -161,4 +256,8 @@ test("administrator managed-service bridges are fixed, private, and consumed by 
   assert.equal((roleDelegation.match(/'albert_(?:deletion|sync|webhook|transform|semantic)_control'/gu) ?? []).length, 5);
   assert.doesNotMatch(roleDelegation, /EXECUTE\s+FORMAT|\bformat\s*\(/iu);
   assert.match(ci, /control-plane-test-role-delegation\.sql[\s\S]*PGOPTIONS: -c albert\.test_role_delegation=on/u);
+  assert.match(
+    ci,
+    /ALBERT_ANTHROPIC_CONTROL_DB_PASSWORD:[^\n]+[\s\S]*provision:runtime-logins -- --target=control-plane/u,
+  );
 });

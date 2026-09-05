@@ -165,7 +165,7 @@ test("a silently relation-free page is rejected rather than staged empty", async
 });
 
 test("every stream can complete an empty walk without throwing", async () => {
-  const fetchPage = async (_path: string, _params: Record<string, string>) => ({ "@attributes": {} });
+  const fetchPage = async () => ({ "@attributes": {} });
   for (const s of LIGHTSPEED_STREAMS) {
     const page = await syncStreamPage({
       stream: s, connectorId: "lightspeed-r", mode: "initial", fetchPage, hash,

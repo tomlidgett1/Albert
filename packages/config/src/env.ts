@@ -4,14 +4,13 @@
  */
 
 import { ALBERT_BLOCKING_QUESTIONS_CONTRACT_DIGEST } from "./blocking-questions.js";
+import { withWebReleaseIdentity } from "./vercel-runtime.js";
 
 export type RuntimeMode =
   | "web"
   | "worker"
-  | "transform-worker"
   | "deletion-worker"
   | "webhook-gateway"
-  | "semantic-query"
   | "operator-diagnostic"
   | "migration";
 
@@ -28,18 +27,26 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
     "ALBERT_OAUTH_STATE_SECRET",
     "ALBERT_OAUTH_WORKER_SIGNING_SECRET",
-    "ALBERT_SEMANTIC_SIGNING_SECRET",
+    "ALBERT_SHOPIFYQL_SIGNING_SECRET",
+    "ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET",
     "ALBERT_USER_HASH_SECRET",
     "ALBERT_PUBLIC_ORIGIN",
     "SYNC_WORKER_INTERNAL_URL",
-    "SEMANTIC_QUERY_SERVICE_URL",
     "OPERATOR_DIAGNOSTIC_SERVICE_URL",
     "ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET",
+    "CODEX_RUNTIME_SERVICE_URL",
+    "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
+    "CUBE_API_URL",
+    "CUBEJS_API_SECRET",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "LIGHTSPEED_CLIENT_ID",
     "XERO_CLIENT_ID",
+    "SQUARE_CLIENT_ID",
+    "SHOPIFY_CLIENT_ID",
+    "SHOPIFY_CLIENT_SECRET",
     "DEPUTY_CLIENT_ID",
+    "ALBERT_ANALYTICAL_RUNTIME",
   ],
   worker: [
     "SUPABASE_STORAGE_S3_ENDPOINT",
@@ -52,19 +59,20 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "TOKEN_ENCRYPTION_KEY",
     "TOKEN_ENCRYPTION_KEY_ID",
     "ALBERT_OAUTH_WORKER_SIGNING_SECRET",
+    "ALBERT_SHOPIFYQL_SIGNING_SECRET",
+    "ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET",
     "ALBERT_PUBLIC_ORIGIN",
     "LIGHTSPEED_CLIENT_ID",
     "LIGHTSPEED_CLIENT_SECRET",
     "XERO_CLIENT_ID",
+    "SQUARE_CLIENT_ID",
+    "SQUARE_CLIENT_SECRET",
+    "SHOPIFY_CLIENT_ID",
+    "SHOPIFY_CLIENT_SECRET",
     "XERO_DAILY_REQUEST_LIMIT",
     "DEPUTY_CLIENT_ID",
     "DEPUTY_CLIENT_SECRET",
     "ALBERT_WORKER_ID",
-  ],
-  "transform-worker": [
-    "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
-    "TRANSFORM_DATABASE_URL",
-    "ALBERT_TRANSFORM_WORKER_ID",
   ],
   "deletion-worker": [
     "SUPABASE_STORAGE_S3_ENDPOINT",
@@ -79,6 +87,8 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "LIGHTSPEED_CLIENT_ID",
     "LIGHTSPEED_CLIENT_SECRET",
     "XERO_CLIENT_ID",
+    "SQUARE_CLIENT_ID",
+    "SQUARE_CLIENT_SECRET",
     "DELETION_PROOF_HMAC_KEY",
     "ALBERT_DELETION_WORKER_ID",
   ],
@@ -90,6 +100,7 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD",
     "CONTROL_PLANE_DATABASE_URL",
     "XERO_WEBHOOK_SIGNING_KEY",
+    "SHOPIFY_CLIENT_SECRET",
     "WEBHOOK_ATTESTATION_KEY_ID",
     "WEBHOOK_ATTESTATION_SECRET",
     "WEBHOOK_INBOX_ENCRYPTION_KEY",
@@ -97,14 +108,6 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
     "ALBERT_WEBHOOK_WORKER_ID",
     "DEPUTY_WEBHOOK_ENCRYPTION_KEY",
     "DEPUTY_WEBHOOK_ENCRYPTION_KEY_ID",
-  ],
-  "semantic-query": [
-    "CONTROL_PLANE_DATABASE_URL",
-    "ANALYTICAL_DATABASE_URL",
-    "ALBERT_SEMANTIC_METADATA_DATABASE_URL",
-    "ALBERT_SEMANTIC_SIGNING_SECRET",
-    "OPENAI_API_KEY",
-    "OPENAI_BASE_URL",
   ],
   "operator-diagnostic": [
     "OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL",
@@ -114,69 +117,54 @@ const requirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
   migration: ["CONTROL_PLANE_DATABASE_URL", "ANALYTICAL_DATABASE_URL"],
 };
 
-const productionRequirements: Readonly<Record<RuntimeMode, readonly string[]>> = {
-  web: [
-    "ALBERT_CONTROL_PLANE_PROJECT_REF",
-    "ALBERT_CONTROL_PLANE_REGION",
-    "ALBERT_MODEL_DATA_RESIDENCY_REGION",
-    "ALBERT_MODEL_DATA_CONTROL_APPROVED",
-    "ALBERT_LIGHTSPEED_PRODUCT",
-    "ALBERT_CONVERSATION_RUNTIME",
-    "ALBERT_ALLOW_FIXTURE_RUNTIME",
-    "ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST",
-    "ALBERT_SERVICE_VERSION",
-    "ALBERT_DEPLOYMENT_ID",
-  ],
-  worker: [
-    "ALBERT_CONTROL_PLANE_PROJECT_REF",
-    "ALBERT_CONTROL_PLANE_REGION",
-    "ALBERT_ANALYTICAL_REGION",
-    "ALBERT_LIGHTSPEED_PRODUCT",
-    "ALBERT_SERVICE_VERSION",
-    "ALBERT_DEPLOYMENT_ID",
-  ],
-  "transform-worker": [
-    "ALBERT_CONTROL_PLANE_PROJECT_REF",
-    "ALBERT_CONTROL_PLANE_REGION",
-    "ALBERT_ANALYTICAL_REGION",
-    "ALBERT_SERVICE_VERSION",
-    "ALBERT_DEPLOYMENT_ID",
-  ],
-  "deletion-worker": [
-    "ALBERT_CONTROL_PLANE_PROJECT_REF",
-    "ALBERT_CONTROL_PLANE_REGION",
-    "ALBERT_ANALYTICAL_REGION",
-    "ALBERT_SERVICE_VERSION",
-    "ALBERT_DEPLOYMENT_ID",
-  ],
-  "webhook-gateway": [
-    "ALBERT_CONTROL_PLANE_PROJECT_REF",
-    "ALBERT_CONTROL_PLANE_REGION",
-    "ALBERT_SERVICE_VERSION",
-    "ALBERT_DEPLOYMENT_ID",
-  ],
-  "semantic-query": [
-    "ALBERT_CONTROL_PLANE_PROJECT_REF",
-    "ALBERT_CONTROL_PLANE_REGION",
-    "ALBERT_ANALYTICAL_REGION",
-    "ALBERT_MODEL_DATA_RESIDENCY_REGION",
-    "ALBERT_MODEL_DATA_CONTROL_APPROVED",
-    "ALBERT_SERVICE_VERSION",
-    "ALBERT_DEPLOYMENT_ID",
-  ],
-  "operator-diagnostic": [
-    "ALBERT_CONTROL_PLANE_PROJECT_REF",
-    "ALBERT_CONTROL_PLANE_REGION",
-    "ALBERT_ANALYTICAL_REGION",
-    "ALBERT_SERVICE_VERSION",
-    "ALBERT_DEPLOYMENT_ID",
-  ],
-  migration: [
-    "ALBERT_CONTROL_PLANE_PROJECT_REF",
-    "ALBERT_CONTROL_PLANE_REGION",
-    "ALBERT_ANALYTICAL_REGION",
-  ],
-};
+const productionRequirements: Readonly<Record<RuntimeMode, readonly string[]>> =
+  {
+    web: [
+      "ALBERT_CONTROL_PLANE_PROJECT_REF",
+      "ALBERT_CONTROL_PLANE_REGION",
+      "ALBERT_MODEL_DATA_RESIDENCY_REGION",
+      "ALBERT_MODEL_DATA_CONTROL_APPROVED",
+      "ALBERT_LIGHTSPEED_PRODUCT",
+      "ALBERT_CONVERSATION_RUNTIME",
+      "ALBERT_ALLOW_FIXTURE_RUNTIME",
+      "ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST",
+      "ALBERT_SERVICE_VERSION",
+      "ALBERT_DEPLOYMENT_ID",
+    ],
+    worker: [
+      "ALBERT_CONTROL_PLANE_PROJECT_REF",
+      "ALBERT_CONTROL_PLANE_REGION",
+      "ALBERT_ANALYTICAL_REGION",
+      "ALBERT_LIGHTSPEED_PRODUCT",
+      "ALBERT_SERVICE_VERSION",
+      "ALBERT_DEPLOYMENT_ID",
+    ],
+    "deletion-worker": [
+      "ALBERT_CONTROL_PLANE_PROJECT_REF",
+      "ALBERT_CONTROL_PLANE_REGION",
+      "ALBERT_ANALYTICAL_REGION",
+      "ALBERT_SERVICE_VERSION",
+      "ALBERT_DEPLOYMENT_ID",
+    ],
+    "webhook-gateway": [
+      "ALBERT_CONTROL_PLANE_PROJECT_REF",
+      "ALBERT_CONTROL_PLANE_REGION",
+      "ALBERT_SERVICE_VERSION",
+      "ALBERT_DEPLOYMENT_ID",
+    ],
+    "operator-diagnostic": [
+      "ALBERT_CONTROL_PLANE_PROJECT_REF",
+      "ALBERT_CONTROL_PLANE_REGION",
+      "ALBERT_ANALYTICAL_REGION",
+      "ALBERT_SERVICE_VERSION",
+      "ALBERT_DEPLOYMENT_ID",
+    ],
+    migration: [
+      "ALBERT_CONTROL_PLANE_PROJECT_REF",
+      "ALBERT_CONTROL_PLANE_REGION",
+      "ALBERT_ANALYTICAL_REGION",
+    ],
+  };
 
 const databaseLoginByMode: Readonly<
   Record<RuntimeMode, Readonly<Record<string, string>>>
@@ -186,10 +174,6 @@ const databaseLoginByMode: Readonly<
     CONTROL_PLANE_DATABASE_URL: "albert_sync_control_runtime",
     ANALYTICAL_DATABASE_URL: "albert_ingest_runtime",
   }),
-  "transform-worker": Object.freeze({
-    TRANSFORM_CONTROL_PLANE_DATABASE_URL: "albert_transform_control_runtime",
-    TRANSFORM_DATABASE_URL: "albert_transform_analytical_runtime",
-  }),
   "deletion-worker": Object.freeze({
     CONTROL_PLANE_DATABASE_URL: "albert_deletion_control_runtime",
     DELETION_ANALYTICAL_DATABASE_URL: "albert_deletion_analytical_runtime",
@@ -197,14 +181,11 @@ const databaseLoginByMode: Readonly<
   "webhook-gateway": Object.freeze({
     CONTROL_PLANE_DATABASE_URL: "albert_webhook_control_runtime",
   }),
-  "semantic-query": Object.freeze({
-    CONTROL_PLANE_DATABASE_URL: "albert_semantic_control_runtime",
-    ANALYTICAL_DATABASE_URL: "albert_semantic_read_runtime",
-    ALBERT_SEMANTIC_METADATA_DATABASE_URL: "albert_semantic_metadata_runtime",
-  }),
   "operator-diagnostic": Object.freeze({
-    OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL: "albert_operator_diagnostic_control_runtime",
-    OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL: "albert_operator_diagnostic_analytical_runtime",
+    OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL:
+      "albert_operator_diagnostic_control_runtime",
+    OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL:
+      "albert_operator_diagnostic_analytical_runtime",
   }),
   migration: Object.freeze({
     CONTROL_PLANE_DATABASE_URL: "albert_control_deployer",
@@ -214,16 +195,18 @@ const databaseLoginByMode: Readonly<
 
 const SYDNEY_REGION = "ap-southeast-2";
 const AU_OPENAI_BASE_URL = "https://au.api.openai.com/v1";
+const XAI_API_BASE_URL = "https://api.x.ai/v1";
+const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com";
 
 const webForbiddenProductionValues = Object.freeze([
   "CONTROL_PLANE_DATABASE_URL",
   "ANALYTICAL_DATABASE_URL",
-  "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
-  "TRANSFORM_DATABASE_URL",
   "DELETION_ANALYTICAL_DATABASE_URL",
-  "ALBERT_SEMANTIC_METADATA_DATABASE_URL",
   "OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL",
   "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
   "SUPABASE_SERVICE_ROLE_KEY",
   "SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY",
   "SUPABASE_STORAGE_S3_ACCESS_KEY_ID",
@@ -237,6 +220,7 @@ const webForbiddenProductionValues = Object.freeze([
   "TOKEN_PREVIOUS_ENCRYPTION_KEYS",
   "LIGHTSPEED_CLIENT_SECRET",
   "DEPUTY_CLIENT_SECRET",
+  "SQUARE_CLIENT_SECRET",
   "XERO_WEBHOOK_SIGNING_KEY",
   "WEBHOOK_ATTESTATION_KEY_ID",
   "WEBHOOK_ATTESTATION_SECRET",
@@ -259,22 +243,84 @@ export function runtimeEnvironmentRequirementNames(
   ]);
 }
 
-function isAllowedServiceUrl(value: string, allowLocalHttp: boolean): boolean {
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+/** Outbound backends the localhost web app must call remotely (Fly / Supabase). */
+export const WEB_REMOTE_SERVICE_URL_NAMES = Object.freeze([
+  "NEXT_PUBLIC_SUPABASE_URL",
+  "SYNC_WORKER_INTERNAL_URL",
+  "OPERATOR_DIAGNOSTIC_SERVICE_URL",
+  "CODEX_RUNTIME_SERVICE_URL",
+  "CUBE_API_URL",
+  "CUBECORE_BRIDGE_URL",
+  "OPENAI_BASE_URL",
+  "XAI_BASE_URL",
+  "ANTHROPIC_BASE_URL",
+  "WEBHOOK_GATEWAY_PUBLIC_URL",
+  "SUPABASE_STORAGE_S3_ENDPOINT",
+] as const);
+
+function isLoopbackHostname(hostname: string): boolean {
+  return LOOPBACK_HOSTS.has(hostname);
+}
+
+function isAllowedServiceUrl(
+  value: string,
+  options: Readonly<{ allowLocalHttp: boolean; allowLoopback: boolean }>,
+): boolean {
   try {
     const url = new URL(value);
     if (url.username || url.password) return false;
-    return url.protocol === "https:" || (allowLocalHttp &&
-      url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname)
+    if (isLoopbackHostname(url.hostname) && !options.allowLoopback) return false;
+    return (
+      url.protocol === "https:" ||
+      (options.allowLocalHttp &&
+        url.protocol === "http:" &&
+        isLoopbackHostname(url.hostname))
     );
   } catch {
     return false;
   }
 }
 
+export function loopbackWebBackendUrls(
+  source: Readonly<Record<string, string | undefined>> = process.env,
+): readonly string[] {
+  return WEB_REMOTE_SERVICE_URL_NAMES.filter((name) => {
+    const value = source[name]?.trim();
+    if (!value) return false;
+    try {
+      return isLoopbackHostname(new URL(value).hostname);
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function describeLoopbackWebBackends(names: readonly string[]): string {
+  return (
+    `Localhost web iteration must use the deployed backends (${names.join(", ")}). ` +
+    "Point those URLs at Fly or Supabase HTTPS origins. Do not start Docker, Cubecore, or local workers."
+  );
+}
+
+export function webBackendLoopbackMessage(
+  source: Readonly<Record<string, string | undefined>> = process.env,
+): string | undefined {
+  const names = loopbackWebBackendUrls(source);
+  return names.length > 0 ? describeLoopbackWebBackends(names) : undefined;
+}
+
 function isCleanOrigin(value: string): boolean {
   try {
     const url = new URL(value);
-    return !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
+    return (
+      !url.username &&
+      !url.password &&
+      url.pathname === "/" &&
+      !url.search &&
+      !url.hash
+    );
   } catch {
     return false;
   }
@@ -283,7 +329,9 @@ function isCleanOrigin(value: string): boolean {
 function parsedPostgresUrl(value: string): URL | undefined {
   try {
     const url = new URL(value);
-    return url.protocol === "postgres:" || url.protocol === "postgresql:" ? url : undefined;
+    return url.protocol === "postgres:" || url.protocol === "postgresql:"
+      ? url
+      : undefined;
   } catch {
     return undefined;
   }
@@ -310,13 +358,20 @@ function databaseMatchesControlProject(url: URL, projectRef: string): boolean {
   } catch {
     return false;
   }
-  return url.hostname === `db.${projectRef}.supabase.co` || login.endsWith(`.${projectRef}`);
+  return (
+    url.hostname === `db.${projectRef}.supabase.co` ||
+    login.endsWith(`.${projectRef}`)
+  );
 }
 
 function databaseRequiresTls(url: URL): boolean {
   if (["localhost", "127.0.0.1", "::1"].includes(url.hostname)) return false;
   const sslMode = url.searchParams.get("sslmode")?.toLowerCase();
-  return sslMode === "require" || sslMode === "verify-ca" || sslMode === "verify-full";
+  return (
+    sslMode === "require" ||
+    sslMode === "verify-ca" ||
+    sslMode === "verify-full"
+  );
 }
 
 function databaseTarget(value: string | undefined): string | undefined {
@@ -331,39 +386,64 @@ function databaseTarget(value: string | undefined): string | undefined {
     return undefined;
   }
   const poolerProjectRef = /\.([a-z0-9]{20})$/u.exec(login)?.[1];
-  return `${url.hostname.toLowerCase()}:${url.port || "5432"}/${database}` +
-    (poolerProjectRef ? `#${poolerProjectRef}` : "");
+  return (
+    `${url.hostname.toLowerCase()}:${url.port || "5432"}/${database}` +
+    (poolerProjectRef ? `#${poolerProjectRef}` : "")
+  );
 }
 
-function projectRefMatchesSupabaseUrl(value: string, projectRef: string): boolean {
+function projectRefMatchesSupabaseUrl(
+  value: string,
+  projectRef: string,
+): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === `${projectRef}.supabase.co` &&
-      url.pathname === "/" && !url.search && !url.hash && !url.username && !url.password;
+    return (
+      url.protocol === "https:" &&
+      url.hostname === `${projectRef}.supabase.co` &&
+      url.pathname === "/" &&
+      !url.search &&
+      !url.hash &&
+      !url.username &&
+      !url.password
+    );
   } catch {
     return false;
   }
 }
 
-function projectRefMatchesStorageEndpoint(value: string, projectRef: string): boolean {
+function projectRefMatchesStorageEndpoint(
+  value: string,
+  projectRef: string,
+): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" &&
+    return (
+      url.protocol === "https:" &&
       url.hostname === `${projectRef}.storage.supabase.co` &&
       url.pathname.replace(/\/+$/u, "") === "/storage/v1/s3" &&
-      !url.search && !url.hash && !url.username && !url.password;
+      !url.search &&
+      !url.hash &&
+      !url.username &&
+      !url.password
+    );
   } catch {
     return false;
   }
 }
 
-function looksLikeCanonicalBase64UrlKey(value: string, byteLength: number): boolean {
+function looksLikeCanonicalBase64UrlKey(
+  value: string,
+  byteLength: number,
+): boolean {
   if (!/^[A-Za-z0-9_-]+$/u.test(value)) return false;
   try {
-    const binary = atob(value.replace(/-/g, "+").replace(/_/g, "/").padEnd(
-      Math.ceil(value.length / 4) * 4,
-      "=",
-    ));
+    const binary = atob(
+      value
+        .replace(/-/g, "+")
+        .replace(/_/g, "/")
+        .padEnd(Math.ceil(value.length / 4) * 4, "="),
+    );
     const canonical = btoa(binary)
       .replace(/\+/g, "-")
       .replace(/\//g, "_")
@@ -378,9 +458,11 @@ function encodedJsonKeyValues(value: string | undefined): readonly string[] {
   if (!value?.trim()) return [];
   try {
     const parsed = JSON.parse(value) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
-    return Object.values(parsed as Record<string, unknown>)
-      .filter((item): item is string => typeof item === "string");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return [];
+    return Object.values(parsed as Record<string, unknown>).filter(
+      (item): item is string => typeof item === "string",
+    );
   } catch {
     return [];
   }
@@ -388,13 +470,16 @@ function encodedJsonKeyValues(value: string | undefined): readonly string[] {
 
 export function inspectRuntimeEnvironment(
   mode: RuntimeMode,
-  source: Readonly<Record<string, string | undefined>> = process.env,
+  inputSource: Readonly<Record<string, string | undefined>> = process.env,
 ): RuntimeReadiness {
+  const source =
+    mode === "web" ? withWebReleaseIdentity(inputSource) : inputSource;
   const production = source.NODE_ENV === "production";
   const requiredNames = runtimeEnvironmentRequirementNames(mode, production);
   const missing = requiredNames.filter((name) => !source[name]?.trim());
   const invalid: string[] = [];
   const allowLocalHttp = !production;
+  const webRemoteBackends = mode === "web";
 
   if (
     source.XERO_ENABLE_ADVANCED_JOURNALS !== undefined &&
@@ -414,29 +499,57 @@ export function inspectRuntimeEnvironment(
   ) {
     invalid.push("ALBERT_OPENAI_TRACING_ENABLED");
   }
-  if(source.ALBERT_TURN_TIMEOUT_MS!==undefined){
-    const timeout=Number(source.ALBERT_TURN_TIMEOUT_MS);
-    if(!Number.isInteger(timeout)||timeout<30_000||timeout>300_000)invalid.push("ALBERT_TURN_TIMEOUT_MS");
+  if (
+    source.ALBERT_ANALYTICAL_RUNTIME !== undefined &&
+    !["v1", "v2"].includes(source.ALBERT_ANALYTICAL_RUNTIME.trim())
+  ) {
+    invalid.push("ALBERT_ANALYTICAL_RUNTIME");
+  }
+  if (source.ALBERT_TURN_TIMEOUT_MS !== undefined) {
+    const timeout = Number(source.ALBERT_TURN_TIMEOUT_MS);
+    if (!Number.isInteger(timeout) || timeout < 30_000 || timeout > 300_000)
+      invalid.push("ALBERT_TURN_TIMEOUT_MS");
   }
 
   for (const name of [
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "SYNC_WORKER_INTERNAL_URL",
-    "SEMANTIC_QUERY_SERVICE_URL",
-    "OPERATOR_DIAGNOSTIC_SERVICE_URL",
-    "OPENAI_BASE_URL",
+    ...WEB_REMOTE_SERVICE_URL_NAMES,
     "ALBERT_PUBLIC_ORIGIN",
-    "WEBHOOK_GATEWAY_PUBLIC_URL",
-    "SUPABASE_STORAGE_S3_ENDPOINT",
   ]) {
     const value = source[name]?.trim();
-    if (value && !isAllowedServiceUrl(value, allowLocalHttp)) invalid.push(name);
+    if (!value) continue;
+    const allowLoopback = name === "ALBERT_PUBLIC_ORIGIN"
+      ? allowLocalHttp
+      : !webRemoteBackends && allowLocalHttp;
+    if (!isAllowedServiceUrl(value, { allowLocalHttp: allowLoopback, allowLoopback })) {
+      invalid.push(name);
+    }
+  }
+
+  if (
+    source.XAI_BASE_URL?.trim() &&
+    source.XAI_BASE_URL.trim().replace(/\/+$/u, "") !== XAI_API_BASE_URL
+  ) {
+    invalid.push("XAI_BASE_URL");
+  }
+  if (
+    source.ANTHROPIC_BASE_URL?.trim()
+    && source.ANTHROPIC_BASE_URL.trim().replace(/\/+$/u, "") !== ANTHROPIC_API_BASE_URL
+  ) {
+    invalid.push("ANTHROPIC_BASE_URL");
   }
 
   if (production) {
     if (mode === "web") {
       for (const name of webForbiddenProductionValues) {
         if (source[name]?.trim()) invalid.push(name);
+      }
+      if (source.ANTHROPIC_API_KEY?.trim()) {
+        if (source.ALBERT_ANTHROPIC_APP8_APPROVED?.trim() !== "true") {
+          invalid.push("ALBERT_ANTHROPIC_APP8_APPROVED");
+        }
+        if (source.ALBERT_ANTHROPIC_ZDR_APPROVED?.trim() !== "true") {
+          invalid.push("ALBERT_ANTHROPIC_ZDR_APPROVED");
+        }
       }
     }
     if (source.ALBERT_CONTROL_PLANE_REGION?.trim() !== SYDNEY_REGION) {
@@ -455,13 +568,17 @@ export function inspectRuntimeEnvironment(
       invalid.push("SUPABASE_STORAGE_S3_REGION");
     }
     if (
-      productionRequirements[mode].includes("ALBERT_MODEL_DATA_RESIDENCY_REGION") &&
+      productionRequirements[mode].includes(
+        "ALBERT_MODEL_DATA_RESIDENCY_REGION",
+      ) &&
       source.ALBERT_MODEL_DATA_RESIDENCY_REGION?.trim() !== "au"
     ) {
       invalid.push("ALBERT_MODEL_DATA_RESIDENCY_REGION");
     }
     if (
-      productionRequirements[mode].includes("ALBERT_MODEL_DATA_CONTROL_APPROVED") &&
+      productionRequirements[mode].includes(
+        "ALBERT_MODEL_DATA_CONTROL_APPROVED",
+      ) &&
       source.ALBERT_MODEL_DATA_CONTROL_APPROVED?.trim() !== "true"
     ) {
       invalid.push("ALBERT_MODEL_DATA_CONTROL_APPROVED");
@@ -472,6 +589,13 @@ export function inspectRuntimeEnvironment(
     ) {
       invalid.push("ALBERT_LIGHTSPEED_PRODUCT");
     }
+    if (
+      (mode === "web" || mode === "worker") &&
+      source.LIGHTSPEED_X_CLIENT_ID?.trim() &&
+      source.ALBERT_LIGHTSPEED_X_PRODUCT?.trim() !== "x-series"
+    ) {
+      invalid.push("ALBERT_LIGHTSPEED_X_PRODUCT");
+    }
     if (mode === "web") {
       if (source.ALBERT_CONVERSATION_RUNTIME?.trim() !== "live") {
         invalid.push("ALBERT_CONVERSATION_RUNTIME");
@@ -481,13 +605,16 @@ export function inspectRuntimeEnvironment(
       }
       if (
         source.ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST?.trim() !==
-          ALBERT_BLOCKING_QUESTIONS_CONTRACT_DIGEST
+        ALBERT_BLOCKING_QUESTIONS_CONTRACT_DIGEST
       ) {
         invalid.push("ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST");
       }
     }
     if (
-      productionRequirements[mode].includes("ALBERT_MODEL_DATA_RESIDENCY_REGION") &&
+      mode === "web" &&
+      productionRequirements[mode].includes(
+        "ALBERT_MODEL_DATA_RESIDENCY_REGION",
+      ) &&
       source.OPENAI_BASE_URL?.trim().replace(/\/+$/u, "") !== AU_OPENAI_BASE_URL
     ) {
       invalid.push("OPENAI_BASE_URL");
@@ -500,68 +627,99 @@ export function inspectRuntimeEnvironment(
     }
     if (
       productionRequirements[mode].includes("ALBERT_DEPLOYMENT_ID") &&
-      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u.test(source.ALBERT_DEPLOYMENT_ID?.trim() ?? "")
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u.test(
+        source.ALBERT_DEPLOYMENT_ID?.trim() ?? "",
+      )
     ) {
       invalid.push("ALBERT_DEPLOYMENT_ID");
     }
 
     const projectRef = source.ALBERT_CONTROL_PLANE_PROJECT_REF?.trim();
     if (
-      productionRequirements[mode].includes("ALBERT_CONTROL_PLANE_PROJECT_REF") &&
+      productionRequirements[mode].includes(
+        "ALBERT_CONTROL_PLANE_PROJECT_REF",
+      ) &&
       !/^[a-z0-9]{20}$/u.test(projectRef ?? "")
     ) {
       invalid.push("ALBERT_CONTROL_PLANE_PROJECT_REF");
     }
     if (
-      projectRef && source.NEXT_PUBLIC_SUPABASE_URL?.trim() &&
-      !projectRefMatchesSupabaseUrl(source.NEXT_PUBLIC_SUPABASE_URL.trim(), projectRef)
+      projectRef &&
+      source.NEXT_PUBLIC_SUPABASE_URL?.trim() &&
+      !projectRefMatchesSupabaseUrl(
+        source.NEXT_PUBLIC_SUPABASE_URL.trim(),
+        projectRef,
+      )
     ) {
       invalid.push("NEXT_PUBLIC_SUPABASE_URL");
     }
     if (
-      projectRef && source.SUPABASE_STORAGE_S3_ENDPOINT?.trim() &&
-      !projectRefMatchesStorageEndpoint(source.SUPABASE_STORAGE_S3_ENDPOINT.trim(), projectRef)
+      projectRef &&
+      source.SUPABASE_STORAGE_S3_ENDPOINT?.trim() &&
+      !projectRefMatchesStorageEndpoint(
+        source.SUPABASE_STORAGE_S3_ENDPOINT.trim(),
+        projectRef,
+      )
     ) {
       invalid.push("SUPABASE_STORAGE_S3_ENDPOINT");
     }
 
-    for (const [name, expectedLogin] of Object.entries(databaseLoginByMode[mode])) {
+    for (const [name, expectedLogin] of Object.entries(
+      databaseLoginByMode[mode],
+    )) {
       const value = source[name]?.trim();
       if (!value) continue;
       const databaseUrl = parsedPostgresUrl(value);
-      if (!databaseUrl || !databaseLoginMatches(databaseUrl, expectedLogin) ||
-        !databaseRequiresTls(databaseUrl)) {
+      if (
+        !databaseUrl ||
+        !databaseLoginMatches(databaseUrl, expectedLogin) ||
+        !databaseRequiresTls(databaseUrl)
+      ) {
         invalid.push(name);
       }
       if (
-        projectRef && (name === "CONTROL_PLANE_DATABASE_URL" ||
+        projectRef &&
+        (name === "CONTROL_PLANE_DATABASE_URL" ||
+          name === "ANTHROPIC_CONTROL_PLANE_DATABASE_URL" ||
           name === "TRANSFORM_CONTROL_PLANE_DATABASE_URL" ||
           name === "OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL") &&
-        databaseUrl && !databaseMatchesControlProject(databaseUrl, projectRef)
+        databaseUrl &&
+        !databaseMatchesControlProject(databaseUrl, projectRef)
       ) {
         invalid.push(name);
       }
     }
 
     const controlTarget = databaseTarget(
-      source.CONTROL_PLANE_DATABASE_URL ?? source.TRANSFORM_CONTROL_PLANE_DATABASE_URL ??
-        source.OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL,
+      source.CONTROL_PLANE_DATABASE_URL ??
+        source.TRANSFORM_CONTROL_PLANE_DATABASE_URL ??
+        source.OPERATOR_DIAGNOSTIC_CONTROL_PLANE_DATABASE_URL ??
+        source.ANTHROPIC_CONTROL_PLANE_DATABASE_URL,
     );
     const analyticalTarget = databaseTarget(
-      source.ANALYTICAL_DATABASE_URL ?? source.TRANSFORM_DATABASE_URL ??
+      source.ANALYTICAL_DATABASE_URL ??
+        source.TRANSFORM_DATABASE_URL ??
         source.DELETION_ANALYTICAL_DATABASE_URL ??
         source.OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL,
     );
-    if (controlTarget && analyticalTarget && controlTarget === analyticalTarget) {
+    if (
+      controlTarget &&
+      analyticalTarget &&
+      controlTarget === analyticalTarget
+    ) {
       invalid.push(
-        mode === "transform-worker" ? "TRANSFORM_DATABASE_URL" :
-          mode === "deletion-worker" ? "DELETION_ANALYTICAL_DATABASE_URL" :
-          mode === "operator-diagnostic" ? "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL" :
-            "ANALYTICAL_DATABASE_URL",
+        mode === "deletion-worker"
+            ? "DELETION_ANALYTICAL_DATABASE_URL"
+            : mode === "operator-diagnostic"
+              ? "OPERATOR_DIAGNOSTIC_ANALYTICAL_DATABASE_URL"
+              : "ANALYTICAL_DATABASE_URL",
       );
     }
   }
-  if (source.ALBERT_PUBLIC_ORIGIN?.trim() && !isCleanOrigin(source.ALBERT_PUBLIC_ORIGIN.trim())) {
+  if (
+    source.ALBERT_PUBLIC_ORIGIN?.trim() &&
+    !isCleanOrigin(source.ALBERT_PUBLIC_ORIGIN.trim())
+  ) {
     invalid.push("ALBERT_PUBLIC_ORIGIN");
   }
 
@@ -589,10 +747,13 @@ export function inspectRuntimeEnvironment(
         for (const [keyId, key] of entries) {
           if (
             !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u.test(keyId) ||
-            keyId === tokenKeyId || typeof key !== "string" ||
+            keyId === tokenKeyId ||
+            typeof key !== "string" ||
             !looksLikeCanonicalBase64UrlKey(key, 32) ||
-            key === source.TOKEN_ENCRYPTION_KEY?.trim() || seenValues.has(key)
-          ) previousKeysInvalid = true;
+            key === source.TOKEN_ENCRYPTION_KEY?.trim() ||
+            seenValues.has(key)
+          )
+            previousKeysInvalid = true;
           if (typeof key === "string") seenValues.add(key);
         }
       }
@@ -603,7 +764,10 @@ export function inspectRuntimeEnvironment(
   }
   if (
     source.DEPUTY_WEBHOOK_ENCRYPTION_KEY?.trim() &&
-    !looksLikeCanonicalBase64UrlKey(source.DEPUTY_WEBHOOK_ENCRYPTION_KEY.trim(), 32)
+    !looksLikeCanonicalBase64UrlKey(
+      source.DEPUTY_WEBHOOK_ENCRYPTION_KEY.trim(),
+      32,
+    )
   ) {
     invalid.push("DEPUTY_WEBHOOK_ENCRYPTION_KEY");
   }
@@ -621,16 +785,25 @@ export function inspectRuntimeEnvironment(
   }
   if (
     source.WEBHOOK_INBOX_ENCRYPTION_KEY?.trim() &&
-    !looksLikeCanonicalBase64UrlKey(source.WEBHOOK_INBOX_ENCRYPTION_KEY.trim(), 32)
+    !looksLikeCanonicalBase64UrlKey(
+      source.WEBHOOK_INBOX_ENCRYPTION_KEY.trim(),
+      32,
+    )
   ) {
     invalid.push("WEBHOOK_INBOX_ENCRYPTION_KEY");
   }
   const webhookAttestationKeyId = source.WEBHOOK_ATTESTATION_KEY_ID?.trim();
-  if (webhookAttestationKeyId && !/^[a-z][a-z0-9._-]{0,63}$/u.test(webhookAttestationKeyId)) {
+  if (
+    webhookAttestationKeyId &&
+    !/^[a-z][a-z0-9._-]{0,63}$/u.test(webhookAttestationKeyId)
+  ) {
     invalid.push("WEBHOOK_ATTESTATION_KEY_ID");
   }
   const webhookAttestationSecret = source.WEBHOOK_ATTESTATION_SECRET?.trim();
-  if (webhookAttestationSecret && !looksLikeCanonicalBase64UrlKey(webhookAttestationSecret, 32)) {
+  if (
+    webhookAttestationSecret &&
+    !looksLikeCanonicalBase64UrlKey(webhookAttestationSecret, 32)
+  ) {
     invalid.push("WEBHOOK_ATTESTATION_SECRET");
   }
   if (
@@ -643,29 +816,110 @@ export function inspectRuntimeEnvironment(
   for (const name of [
     "ALBERT_OAUTH_STATE_SECRET",
     "ALBERT_OAUTH_WORKER_SIGNING_SECRET",
-    "ALBERT_SEMANTIC_SIGNING_SECRET",
+    "ALBERT_SHOPIFYQL_SIGNING_SECRET",
+    "ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET",
     "ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET",
+    "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
     "ALBERT_USER_HASH_SECRET",
     "DELETION_PROOF_HMAC_KEY",
   ]) {
     const value = source[name]?.trim();
-    if (value && new TextEncoder().encode(value).byteLength < 32) invalid.push(name);
+    if (value && new TextEncoder().encode(value).byteLength < 32)
+      invalid.push(name);
   }
-  const operatorDiagnosticSecret = source.ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET?.trim();
-  if (operatorDiagnosticSecret && [
-    source.ALBERT_OAUTH_STATE_SECRET?.trim(),
-    source.ALBERT_OAUTH_WORKER_SIGNING_SECRET?.trim(),
-    source.ALBERT_SEMANTIC_SIGNING_SECRET?.trim(),
-    source.ALBERT_USER_HASH_SECRET?.trim(),
-  ].some((candidate) => candidate === operatorDiagnosticSecret)) {
+  const operatorDiagnosticSecret =
+    source.ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET?.trim();
+  if (
+    operatorDiagnosticSecret &&
+    [
+      source.ALBERT_OAUTH_STATE_SECRET?.trim(),
+      source.ALBERT_OAUTH_WORKER_SIGNING_SECRET?.trim(),
+      source.ALBERT_SEMANTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_USER_HASH_SECRET?.trim(),
+    ].some((candidate) => candidate === operatorDiagnosticSecret)
+  ) {
     invalid.push("ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET");
+  }
+  const codexRuntimeSecret = source.ALBERT_CODEX_RUNTIME_SIGNING_SECRET?.trim();
+  if (
+    codexRuntimeSecret
+    && [
+      source.ALBERT_OAUTH_STATE_SECRET?.trim(),
+      source.ALBERT_OAUTH_WORKER_SIGNING_SECRET?.trim(),
+      source.ALBERT_SEMANTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_USER_HASH_SECRET?.trim(),
+    ].some((candidate) => candidate === codexRuntimeSecret)
+  ) {
+    invalid.push("ALBERT_CODEX_RUNTIME_SIGNING_SECRET");
+  }
+  const shopifyQLSigningSecret = source.ALBERT_SHOPIFYQL_SIGNING_SECRET?.trim();
+  if (
+    shopifyQLSigningSecret &&
+    [
+      source.ALBERT_OAUTH_STATE_SECRET?.trim(),
+      source.ALBERT_OAUTH_WORKER_SIGNING_SECRET?.trim(),
+      source.ALBERT_SEMANTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_ANTHROPIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_USER_HASH_SECRET?.trim(),
+    ].some((candidate) => candidate === shopifyQLSigningSecret)
+  ) {
+    invalid.push("ALBERT_SHOPIFYQL_SIGNING_SECRET");
+  }
+  const shopifyAdminSigningSecret = source.ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET?.trim();
+  if (
+    shopifyAdminSigningSecret &&
+    [
+      source.ALBERT_OAUTH_STATE_SECRET?.trim(),
+      source.ALBERT_OAUTH_WORKER_SIGNING_SECRET?.trim(),
+      source.ALBERT_SHOPIFYQL_SIGNING_SECRET?.trim(),
+      source.ALBERT_SEMANTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_ANTHROPIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_USER_HASH_SECRET?.trim(),
+    ].some((candidate) => candidate === shopifyAdminSigningSecret)
+  ) {
+    invalid.push("ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET");
+  }
+  const anthropicSigningSecret = source.ALBERT_ANTHROPIC_SIGNING_SECRET?.trim();
+  if (
+    anthropicSigningSecret &&
+    [
+      source.ALBERT_OAUTH_STATE_SECRET?.trim(),
+      source.ALBERT_OAUTH_WORKER_SIGNING_SECRET?.trim(),
+      source.ALBERT_SEMANTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_USER_HASH_SECRET?.trim(),
+    ].some((candidate) => candidate === anthropicSigningSecret)
+  ) {
+    invalid.push("ALBERT_ANTHROPIC_SIGNING_SECRET");
+  }
+  const semanticProfileSigningSecret =
+    source.ALBERT_SEMANTIC_PROFILE_SIGNING_SECRET?.trim();
+  if (
+    semanticProfileSigningSecret &&
+    [
+      source.ALBERT_OAUTH_STATE_SECRET?.trim(),
+      source.ALBERT_OAUTH_WORKER_SIGNING_SECRET?.trim(),
+      source.ALBERT_SEMANTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_ANTHROPIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET?.trim(),
+      source.ALBERT_USER_HASH_SECRET?.trim(),
+    ].some((candidate) => candidate === semanticProfileSigningSecret)
+  ) {
+    invalid.push("ALBERT_SEMANTIC_PROFILE_SIGNING_SECRET");
   }
 
   const deputyWebhookKeyId = source.DEPUTY_WEBHOOK_ENCRYPTION_KEY_ID?.trim();
-  if (deputyWebhookKeyId && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u.test(deputyWebhookKeyId)) {
+  if (
+    deputyWebhookKeyId &&
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u.test(deputyWebhookKeyId)
+  ) {
     invalid.push("DEPUTY_WEBHOOK_ENCRYPTION_KEY_ID");
   }
-  const deputyPreviousKeys = source.DEPUTY_WEBHOOK_PREVIOUS_ENCRYPTION_KEYS?.trim();
+  const deputyPreviousKeys =
+    source.DEPUTY_WEBHOOK_PREVIOUS_ENCRYPTION_KEYS?.trim();
   if (deputyPreviousKeys) {
     let previousKeysInvalid = false;
     try {
@@ -679,26 +933,32 @@ export function inspectRuntimeEnvironment(
         for (const [keyId, key] of entries) {
           if (
             !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u.test(keyId) ||
-            keyId === deputyWebhookKeyId || typeof key !== "string" ||
-            !looksLikeCanonicalBase64UrlKey(key, 32) || key === source.DEPUTY_WEBHOOK_ENCRYPTION_KEY?.trim() ||
-            key === source.TOKEN_ENCRYPTION_KEY || key === source.WEBHOOK_INBOX_ENCRYPTION_KEY ||
+            keyId === deputyWebhookKeyId ||
+            typeof key !== "string" ||
+            !looksLikeCanonicalBase64UrlKey(key, 32) ||
+            key === source.DEPUTY_WEBHOOK_ENCRYPTION_KEY?.trim() ||
+            key === source.TOKEN_ENCRYPTION_KEY ||
+            key === source.WEBHOOK_INBOX_ENCRYPTION_KEY ||
             key === source.XERO_WEBHOOK_SIGNING_KEY ||
             seenValues.has(key)
-          ) previousKeysInvalid = true;
+          )
+            previousKeysInvalid = true;
           if (typeof key === "string") seenValues.add(key);
         }
       }
     } catch {
       previousKeysInvalid = true;
     }
-    if (previousKeysInvalid) invalid.push("DEPUTY_WEBHOOK_PREVIOUS_ENCRYPTION_KEYS");
+    if (previousKeysInvalid)
+      invalid.push("DEPUTY_WEBHOOK_PREVIOUS_ENCRYPTION_KEYS");
   }
 
   const xeroInboxKeyId = source.WEBHOOK_INBOX_ENCRYPTION_KEY_ID?.trim();
   if (xeroInboxKeyId && !/^[a-z][a-z0-9._-]{0,63}$/u.test(xeroInboxKeyId)) {
     invalid.push("WEBHOOK_INBOX_ENCRYPTION_KEY_ID");
   }
-  const xeroPreviousKeys = source.WEBHOOK_INBOX_PREVIOUS_ENCRYPTION_KEYS?.trim();
+  const xeroPreviousKeys =
+    source.WEBHOOK_INBOX_PREVIOUS_ENCRYPTION_KEYS?.trim();
   if (xeroPreviousKeys) {
     let previousKeysInvalid = false;
     try {
@@ -712,32 +972,41 @@ export function inspectRuntimeEnvironment(
         for (const [keyId, key] of entries) {
           if (
             !/^[a-z][a-z0-9._-]{0,63}$/u.test(keyId) ||
-            keyId === xeroInboxKeyId || typeof key !== "string" ||
+            keyId === xeroInboxKeyId ||
+            typeof key !== "string" ||
             !looksLikeCanonicalBase64UrlKey(key, 32) ||
             key === source.WEBHOOK_INBOX_ENCRYPTION_KEY?.trim() ||
             seenValues.has(key)
-          ) previousKeysInvalid = true;
+          )
+            previousKeysInvalid = true;
           if (typeof key === "string") seenValues.add(key);
         }
       }
     } catch {
       previousKeysInvalid = true;
     }
-    if (previousKeysInvalid) invalid.push("WEBHOOK_INBOX_PREVIOUS_ENCRYPTION_KEYS");
+    if (previousKeysInvalid)
+      invalid.push("WEBHOOK_INBOX_PREVIOUS_ENCRYPTION_KEYS");
   }
 
-  const deputyKeyValues = new Set([
-    source.DEPUTY_WEBHOOK_ENCRYPTION_KEY?.trim(),
-    ...encodedJsonKeyValues(source.DEPUTY_WEBHOOK_PREVIOUS_ENCRYPTION_KEYS),
-  ].filter((value): value is string => Boolean(value)));
-  const xeroInboxKeyValues = new Set([
-    source.WEBHOOK_INBOX_ENCRYPTION_KEY?.trim(),
-    ...encodedJsonKeyValues(source.WEBHOOK_INBOX_PREVIOUS_ENCRYPTION_KEYS),
-  ].filter((value): value is string => Boolean(value)));
-  const tokenKeyValues = new Set([
-    source.TOKEN_ENCRYPTION_KEY?.trim(),
-    ...encodedJsonKeyValues(source.TOKEN_PREVIOUS_ENCRYPTION_KEYS),
-  ].filter((value): value is string => Boolean(value)));
+  const deputyKeyValues = new Set(
+    [
+      source.DEPUTY_WEBHOOK_ENCRYPTION_KEY?.trim(),
+      ...encodedJsonKeyValues(source.DEPUTY_WEBHOOK_PREVIOUS_ENCRYPTION_KEYS),
+    ].filter((value): value is string => Boolean(value)),
+  );
+  const xeroInboxKeyValues = new Set(
+    [
+      source.WEBHOOK_INBOX_ENCRYPTION_KEY?.trim(),
+      ...encodedJsonKeyValues(source.WEBHOOK_INBOX_PREVIOUS_ENCRYPTION_KEYS),
+    ].filter((value): value is string => Boolean(value)),
+  );
+  const tokenKeyValues = new Set(
+    [
+      source.TOKEN_ENCRYPTION_KEY?.trim(),
+      ...encodedJsonKeyValues(source.TOKEN_PREVIOUS_ENCRYPTION_KEYS),
+    ].filter((value): value is string => Boolean(value)),
+  );
   if ([...tokenKeyValues].some((key) => deputyKeyValues.has(key))) {
     invalid.push("TOKEN_PREVIOUS_ENCRYPTION_KEYS");
   }
@@ -754,28 +1023,27 @@ export function inspectRuntimeEnvironment(
   if (xeroSigningKey && deputyKeyValues.has(xeroSigningKey)) {
     invalid.push("DEPUTY_WEBHOOK_ENCRYPTION_KEY");
   }
-  if (webhookAttestationSecret && (
-    xeroSigningKey === webhookAttestationSecret ||
-    xeroInboxKeyValues.has(webhookAttestationSecret) ||
-    deputyKeyValues.has(webhookAttestationSecret) ||
-    tokenKeyValues.has(webhookAttestationSecret)
-  )) {
+  if (
+    webhookAttestationSecret &&
+    (xeroSigningKey === webhookAttestationSecret ||
+      xeroInboxKeyValues.has(webhookAttestationSecret) ||
+      deputyKeyValues.has(webhookAttestationSecret) ||
+      tokenKeyValues.has(webhookAttestationSecret))
+  ) {
     invalid.push("WEBHOOK_ATTESTATION_SECRET");
   }
 
   for (const name of [
     "CONTROL_PLANE_DATABASE_URL",
     "ANALYTICAL_DATABASE_URL",
-    "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
-    "TRANSFORM_DATABASE_URL",
     "DELETION_ANALYTICAL_DATABASE_URL",
-    "ALBERT_SEMANTIC_METADATA_DATABASE_URL",
   ]) {
     const value = source[name]?.trim();
     if (!value) continue;
     try {
       const protocol = new URL(value).protocol;
-      if (protocol !== "postgres:" && protocol !== "postgresql:") invalid.push(name);
+      if (protocol !== "postgres:" && protocol !== "postgresql:")
+        invalid.push(name);
     } catch {
       invalid.push(name);
     }
@@ -800,5 +1068,7 @@ export function assertRuntimeEnvironment(
     result.missing.length ? `missing: ${result.missing.join(", ")}` : "",
     result.invalid.length ? `invalid: ${result.invalid.join(", ")}` : "",
   ].filter(Boolean);
-  throw new Error(`Albert ${mode} configuration is not ready (${parts.join("; ")}).`);
+  throw new Error(
+    `Albert ${mode} configuration is not ready (${parts.join("; ")}).`,
+  );
 }

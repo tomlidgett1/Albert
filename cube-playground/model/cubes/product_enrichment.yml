@@ -1,0 +1,241 @@
+cubes:
+  - name: item_prices
+    title: Item price list
+    public: false
+    description: >
+      One row per price entry per item: the Default selling price, MSRP and
+      any additional price types configured (for example online or trade
+      prices), by use_type. Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        The full price list per item. The common Default and MSRP amounts are
+        also flattened onto items (default_price / msrp); use this grain when
+        the question is about other price types or comparing price types.
+    # ls_item_prices lands item_id as NULL on every row; the item is encoded in
+    # the "<item_id>:<n>" row key, so the join resolves it from there (the same
+    # rule the items and item_shops cubes use for their list-price columns).
+    sql: >
+      SELECT t.*,
+        COALESCE(t.item_id,
+                 CASE WHEN split_part(t.source_record_id, ':', 1) ~ '^[0-9]+$'
+                      THEN split_part(t.source_record_id, ':', 1)::numeric END) AS resolved_item_id
+      FROM source_lightspeed_official.ls_item_prices t
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.resolved_item_id = {items}.item_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: price_type
+        sql: use_type
+        type: string
+        title: Price type
+        description: What the price is used for (Default, MSRP, or a custom price type).
+      - name: amount
+        sql: amount
+        type: number
+        format: currency
+        description: The price amount for this price type.
+      - name: price_description
+        sql: '{CUBE}."description"'
+        type: string
+        public: false
+      - name: archived
+        sql: archived
+        type: boolean
+        public: false
+      - name: use_type_id
+        sql: use_type_id
+        type: number
+        public: false
+      - name: item_id
+        sql: resolved_item_id
+        type: number
+        public: false
+
+    measures:
+      - name: price_entry_count
+        type: count
+        description: Number of price entries across items and price types.
+
+  - name: price_levels
+    title: Price levels
+    public: false
+    description: >
+      Named pricing tiers configured in Lightspeed (for example retail, trade,
+      VIP) with the calculation each tier applies. Reference list; stores and
+      customers can be assigned a price level. Tombstoned rows are excluded
+      at source.
+    sql: >
+      SELECT t.* FROM source_lightspeed_official.ls_price_levels t
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: price_level_id
+        sql: price_level_id
+        type: number
+        public: false
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Price level
+        description: Name of the pricing tier.
+      - name: level_type
+        sql: '{CUBE}."type"'
+        type: string
+        description: How the tier prices are derived (for example fixed or calculated).
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the price level has been archived.
+
+    measures:
+      - name: count
+        type: count
+        description: Number of price levels defined.
+
+  - name: item_components
+    title: Item components (assemblies / bundles)
+    public: false
+    description: >
+      Bill of materials for assembly and box items: one row per component item
+      inside an assembly, with the quantity used. The items join is the
+      assembly (parent) item. Tombstoned rows are excluded at source.
+    meta:
+      ai_context: >
+        "What's inside a bundle / box / assembly" = this grain. The joined
+        item is the assembly; component_item_id points at the component
+        product.
+    sql: >
+      SELECT t.* FROM source_lightspeed_official.ls_item_components t
+      WHERE NOT t.tombstone
+
+    joins:
+      - name: items
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {items}.tenant_id
+          AND {CUBE}.assembly_item_id = {items}.item_id
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: item_component_id
+        sql: item_component_id
+        type: number
+        public: false
+      - name: component_quantity
+        sql: quantity
+        type: number
+        description: Units of the component used in one assembly.
+      - name: component_group
+        sql: component_group
+        type: number
+        public: false
+      - name: assembly_item_id
+        sql: assembly_item_id
+        type: number
+        public: false
+        description: The parent assembly / box item (the items join).
+      - name: component_item_id
+        sql: component_item_id
+        type: number
+        description: The component product inside the assembly.
+
+    measures:
+      - name: component_count
+        type: count
+        description: Number of component rows across assemblies.
+
+  - name: item_fees
+    title: Item fees
+    public: false
+    description: >
+      Fees that can attach to items at the point of sale (for example
+      environmental levies or assembly fees), with the calculation method and
+      value. Reference list. Tombstoned rows are excluded at source.
+    sql: >
+      SELECT t.* FROM source_lightspeed_official.ls_item_fees t
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: item_fee_id
+        sql: item_fee_id
+        type: number
+        public: false
+      - name: name
+        sql: '{CUBE}."name"'
+        type: string
+        title: Fee name
+        description: Name of the fee.
+      - name: calculation_method
+        sql: calculation_method
+        type: string
+        description: How the fee is calculated (flat amount or percentage).
+      - name: fee_value
+        sql: fee_value
+        type: number
+        description: The fee amount or rate, per the calculation method.
+      - name: is_taxable
+        sql: taxable
+        type: boolean
+        description: Whether the fee is taxed.
+      - name: is_discountable
+        sql: discountable
+        type: boolean
+        public: false
+      - name: non_refundable
+        sql: non_refundable
+        type: boolean
+        public: false
+      - name: archived
+        sql: archived
+        type: boolean
+        description: True when the fee has been archived.
+      - name: created_at
+        sql: create_time
+        type: time
+        public: false
+
+    measures:
+      - name: count
+        type: count
+        description: Number of fees defined.

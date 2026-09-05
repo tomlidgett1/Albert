@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import styles from "../dash.module.css";
+import UsageWorkspace from "./UsageWorkspace";
 
 type OrganisationRole = "owner" | "manager" | "bookkeeper";
 type Organisation = Readonly<{
@@ -37,6 +38,11 @@ type Settings = Readonly<{
 type WorkspacePayload = Readonly<{ organisations: readonly Organisation[]; settings: Settings }>;
 
 const roles: readonly OrganisationRole[] = ["owner", "manager", "bookkeeper"];
+const SETTINGS_TABS = [
+  { key: "organisation", label: "Organisation" },
+  { key: "usage", label: "Usage" },
+] as const;
+type SettingsTab = (typeof SETTINGS_TABS)[number]["key"];
 
 function formatRole(role: OrganisationRole) {
   return role.charAt(0).toUpperCase() + role.slice(1);
@@ -88,6 +94,14 @@ export default function OrganizationWorkspace({
   const [memberRole, setMemberRole] = useState<OrganisationRole>("manager");
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [eraseConfirmation, setEraseConfirmation] = useState("");
+  const [tab, setTab] = useState<SettingsTab>("organisation");
+  const [usageRefreshToken, setUsageRefreshToken] = useState(0);
+  const tabRowRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef<Record<SettingsTab, HTMLButtonElement | null>>({
+    organisation: null,
+    usage: null,
+  });
+  const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -107,6 +121,15 @@ export default function OrganizationWorkspace({
     const task = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(task);
   }, [load]);
+
+  useLayoutEffect(() => {
+    const button = tabRefs.current[tab];
+    const row = tabRowRef.current;
+    if (!button || !row) return;
+    const rowBox = row.getBoundingClientRect();
+    const buttonBox = button.getBoundingClientRect();
+    setTabIndicator({ left: buttonBox.left - rowBox.left, width: buttonBox.width });
+  }, [tab, loading]);
 
   const mutate = useCallback(async (key: string, action: () => Promise<void>, success?: string) => {
     setBusy(key);
@@ -138,6 +161,8 @@ export default function OrganizationWorkspace({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ displayName: createName, timezone: createTimezone }),
       });
+      setShowCreate(false);
+      setCreateName("");
       onOrganisationChanged?.();
     });
   };
@@ -259,128 +284,353 @@ export default function OrganizationWorkspace({
   };
 
   return (
-    <section className={styles.organizationWorkspace} aria-labelledby="organization-title">
-      <header className={styles.organizationHero}>
-        <div>
-          <span>ORGANISATION</span>
-          <h2 id="organization-title">{workspace?.settings.tenant.name || "Organisation settings"}</h2>
-          <p>Manage the active workspace, member roles, and the verified deletion lifecycle.</p>
-        </div>
-        <button type="button" className={styles.organizationRefresh} onClick={() => void load()} disabled={loading || Boolean(busy)}>
-          {loading ? "Refreshing…" : "Refresh"}
+    <section className={styles.organizationWorkspace} aria-labelledby="organization-title" aria-busy={loading}>
+      <header className={styles.organizationSettingsHero}>
+        <h2 id="organization-title">{tab === "usage" ? "Usage" : "Organisation"}</h2>
+        <button
+          type="button"
+          className={styles.organizationSettingsButton}
+          onClick={() => {
+            if (tab === "usage") setUsageRefreshToken((value) => value + 1);
+            else void load();
+          }}
+          disabled={tab === "organisation" && (loading || Boolean(busy))}
+        >
+          {tab === "organisation" && loading ? "Refreshing…" : "Refresh"}
         </button>
       </header>
 
-      {error ? <div className={styles.organizationAlert} data-kind="error" role="alert"><strong>Change not saved</strong><span>{error}</span></div> : null}
-      {notice ? <div className={styles.organizationAlert} data-kind="success" role="status"><strong>Saved</strong><span>{notice}</span></div> : null}
+      <nav className={`${styles.opsViewTabs} ${styles.organizationSettingsTabs}`} aria-label="Settings">
+        <div className={styles.opsViewTabRow} ref={tabRowRef}>
+          {SETTINGS_TABS.map((item) => (
+            <button
+              type="button"
+              key={item.key}
+              ref={(node) => {
+                tabRefs.current[item.key] = node;
+              }}
+              className={tab === item.key ? styles.opsViewTabActive : undefined}
+              aria-current={tab === item.key ? "page" : undefined}
+              onClick={() => setTab(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
+          <span
+            className={styles.opsViewTabIndicator}
+            style={{ left: tabIndicator.left, width: tabIndicator.width }}
+            aria-hidden="true"
+          />
+        </div>
+      </nav>
 
-      <div className={styles.organizationLayout} aria-busy={loading}>
-        <aside className={styles.organizationRail} aria-label="Your organisations">
-          <div className={styles.organizationSectionHeading}>
-            <div><span>WORKSPACES</span><h3>Your organisations</h3></div>
-            <button type="button" onClick={() => setShowCreate((value) => !value)} aria-expanded={showCreate}>+ New</button>
-          </div>
-          {showCreate ? (
-            <form className={styles.organizationCreateForm} onSubmit={create}>
-              <label>Name<input value={createName} onChange={(event) => setCreateName(event.target.value)} required maxLength={120} /></label>
-              <label>Timezone<input value={createTimezone} onChange={(event) => setCreateTimezone(event.target.value)} required maxLength={100} /></label>
-              <div><button type="button" onClick={() => setShowCreate(false)}>Cancel</button><button type="submit" disabled={busy === "create"}>{busy === "create" ? "Creating…" : "Create"}</button></div>
-            </form>
-          ) : null}
-          <div className={styles.organizationList}>
+      {tab === "usage" ? (
+        <UsageWorkspace refreshToken={usageRefreshToken} />
+      ) : (
+        <>
+      {error ? (
+        <div className={styles.organizationSettingsAlert} data-kind="error" role="alert">
+          <strong>Change not saved</strong>
+          <span>{error}</span>
+        </div>
+      ) : null}
+      {notice ? (
+        <div className={styles.organizationSettingsAlert} data-kind="success" role="status">
+          <strong>Saved</strong>
+          <span>{notice}</span>
+        </div>
+      ) : null}
+
+      <div className={styles.organizationSettingsStack}>
+        <section className={styles.organizationSettingsGroup} aria-label="Workspaces">
+          <h3 className={styles.organizationSettingsGroupLabel}>Workspaces</h3>
+          <div className={styles.organizationSettingsCard}>
             {sortedOrganisations.map((organisation) => (
-              <button
-                type="button"
-                key={organisation.tenantId}
-                data-selected={organisation.selected}
-                disabled={organisation.selected || Boolean(busy) || organisation.status !== "active"}
-                onClick={() => void mutate("select", async () => {
-                  await jsonRequest("/api/organisations/select", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ tenantId: organisation.tenantId }),
-                  });
-                  onOrganisationChanged?.();
-                })}
-              >
-                <span>{organisation.name.charAt(0).toUpperCase()}</span>
-                <span><strong>{organisation.name}</strong><small>{formatRole(organisation.role)} · {organisation.timezone}</small></span>
-                <i>{organisation.selected ? "Active" : organisation.status === "active" ? "Switch" : formatStatus(organisation.status)}</i>
-              </button>
+              <div className={styles.organizationSettingsRow} key={organisation.tenantId}>
+                <div className={styles.organizationSettingsRowCopy}>
+                  <strong>{organisation.name}</strong>
+                  <p>{formatRole(organisation.role)} · {organisation.timezone}</p>
+                </div>
+                <div className={styles.organizationSettingsRowControl}>
+                  {organisation.selected ? (
+                    <span className={styles.organizationSettingsValue}>Active</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.organizationSettingsButton}
+                      disabled={Boolean(busy) || organisation.status !== "active"}
+                      onClick={() => void mutate("select", async () => {
+                        await jsonRequest("/api/organisations/select", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ tenantId: organisation.tenantId }),
+                        });
+                        onOrganisationChanged?.();
+                      })}
+                    >
+                      {organisation.status === "active" ? "Switch" : formatStatus(organisation.status)}
+                    </button>
+                  )}
+                </div>
+              </div>
             ))}
-          </div>
-        </aside>
-
-        <div className={styles.organizationMain}>
-          <section className={styles.organizationPanel}>
-            <div className={styles.organizationSectionHeading}>
-              <div><span>PROFILE</span><h3>Organisation details</h3></div>
-              <span className={styles.organizationRoleBadge}>{workspace ? formatRole(workspace.settings.tenant.role) : "Loading"}</span>
+            <div className={styles.organizationSettingsRow}>
+              <div className={styles.organizationSettingsRowCopy}>
+                <strong>New organisation</strong>
+                <p>Create another workspace for a separate business.</p>
+              </div>
+              <div className={styles.organizationSettingsRowControl}>
+                <button
+                  type="button"
+                  className={styles.organizationSettingsButton}
+                  aria-expanded={showCreate}
+                  onClick={() => setShowCreate((value) => !value)}
+                >
+                  {showCreate ? "Cancel" : "New"}
+                </button>
+              </div>
             </div>
-            <form className={styles.organizationInlineForm} onSubmit={rename}>
-              <label>Display name<input value={renameValue} onChange={(event) => setRenameValue(event.target.value)} disabled={!isOwner} maxLength={120} /></label>
-              <label>Timezone<input value={workspace?.settings.tenant.timezone ?? ""} disabled /></label>
-              {isOwner ? <button type="submit" disabled={busy === "rename" || !renameValue.trim()}>{busy === "rename" ? "Saving…" : "Save"}</button> : null}
-            </form>
-          </section>
-
-          <section className={styles.organizationPanel}>
-            <div className={styles.organizationSectionHeading}>
-              <div><span>ACCESS</span><h3>Members</h3></div>
-              <span className={styles.organizationCount}>{workspace?.settings.members.length ?? 0}</span>
-            </div>
-            {isOwner ? (
-              <form className={styles.organizationMemberForm} onSubmit={addMember}>
-                <label>Email<input type="email" value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} placeholder="name@business.com" required /></label>
-                <label>Role<select value={memberRole} onChange={(event) => setMemberRole(event.target.value as OrganisationRole)}>{roles.map((role) => <option value={role} key={role}>{formatRole(role)}</option>)}</select></label>
-                <button type="submit" disabled={busy === "member-add"}>{busy === "member-add" ? "Adding…" : "Add member"}</button>
+            {showCreate ? (
+              <form className={styles.organizationSettingsFormRow} onSubmit={create}>
+                <label>
+                  <span>Name</span>
+                  <input
+                    value={createName}
+                    onChange={(event) => setCreateName(event.target.value)}
+                    required
+                    maxLength={120}
+                  />
+                </label>
+                <label>
+                  <span>Timezone</span>
+                  <input
+                    value={createTimezone}
+                    onChange={(event) => setCreateTimezone(event.target.value)}
+                    required
+                    maxLength={100}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className={styles.organizationSettingsButton}
+                  disabled={busy === "create"}
+                >
+                  {busy === "create" ? "Creating…" : "Create"}
+                </button>
               </form>
             ) : null}
-            <div className={styles.organizationMembers} role="list">
-              {(workspace?.settings.members ?? []).map((member) => (
-                <article key={member.userId} role="listitem">
-                  <span className={styles.organizationMemberAvatar}>{(member.email || "A").charAt(0).toUpperCase()}</span>
-                  <div><strong>{member.email || "Albert member"}{member.isCurrentUser ? " · You" : ""}</strong><small>{formatStatus(member.status)}</small></div>
+          </div>
+        </section>
+
+        <section className={styles.organizationSettingsGroup} aria-label="Profile">
+          <h3 className={styles.organizationSettingsGroupLabel}>Profile</h3>
+          <div className={styles.organizationSettingsCard}>
+            <form className={styles.organizationSettingsRow} onSubmit={rename}>
+              <div className={styles.organizationSettingsRowCopy}>
+                <strong>Display name</strong>
+                <p>Shown across Albert for this workspace.</p>
+              </div>
+              <div className={styles.organizationSettingsRowControl}>
+                <input
+                  className={styles.organizationSettingsInlineInput}
+                  value={renameValue}
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  disabled={!isOwner}
+                  maxLength={120}
+                  aria-label="Display name"
+                />
+                {isOwner ? (
+                  <button
+                    type="submit"
+                    className={styles.organizationSettingsButton}
+                    disabled={busy === "rename" || !renameValue.trim()}
+                  >
+                    {busy === "rename" ? "Saving…" : "Save"}
+                  </button>
+                ) : null}
+              </div>
+            </form>
+            <div className={styles.organizationSettingsRow}>
+              <div className={styles.organizationSettingsRowCopy}>
+                <strong>Timezone</strong>
+                <p>Used for reporting periods and schedules.</p>
+              </div>
+              <div className={styles.organizationSettingsRowControl}>
+                <span className={styles.organizationSettingsValue}>
+                  {workspace?.settings.tenant.timezone || "—"}
+                </span>
+              </div>
+            </div>
+            <div className={styles.organizationSettingsRow}>
+              <div className={styles.organizationSettingsRowCopy}>
+                <strong>Your role</strong>
+                <p>Access level in the active organisation.</p>
+              </div>
+              <div className={styles.organizationSettingsRowControl}>
+                <span className={styles.organizationSettingsValue}>
+                  {workspace ? formatRole(workspace.settings.tenant.role) : "Loading"}
+                </span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className={styles.organizationSettingsGroup} aria-label="Members">
+          <h3 className={styles.organizationSettingsGroupLabel}>Members</h3>
+          <div className={styles.organizationSettingsCard}>
+            {(workspace?.settings.members ?? []).map((member) => (
+              <div className={styles.organizationSettingsRow} key={member.userId}>
+                <div className={styles.organizationSettingsRowCopy}>
+                  <strong>
+                    {member.email || "Albert member"}
+                    {member.isCurrentUser ? " · You" : ""}
+                  </strong>
+                  <p>{formatStatus(member.status)}</p>
+                </div>
+                <div className={styles.organizationSettingsRowControl}>
                   {isOwner ? (
                     <select
+                      className={styles.organizationSettingsSelect}
                       aria-label={`Role for ${member.email || "member"}`}
                       value={member.role}
                       disabled={busy === `member-${member.userId}`}
                       onChange={(event) => updateMember(member, event.target.value as OrganisationRole, "active")}
-                    >{roles.map((role) => <option value={role} key={role}>{formatRole(role)}</option>)}</select>
-                  ) : <span>{formatRole(member.role)}</span>}
-                  {isOwner && !member.isCurrentUser ? <button type="button" onClick={() => updateMember(member, member.role, "revoked")} disabled={busy === `member-${member.userId}`}>Revoke</button> : null}
-                </article>
-              ))}
-            </div>
-          </section>
-
-          {isOwner ? (
-            <section className={`${styles.organizationPanel} ${styles.organizationDangerPanel}`}>
-              <div className={styles.organizationSectionHeading}>
-                <div><span>DATA LIFECYCLE</span><h3>Delete organisation</h3></div>
-                {deletion ? <span className={styles.organizationDeletionStatus}>{formatStatus(deletion.status)}</span> : null}
+                    >
+                      {roles.map((role) => (
+                        <option value={role} key={role}>{formatRole(role)}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className={styles.organizationSettingsValue}>{formatRole(member.role)}</span>
+                  )}
+                  {isOwner && !member.isCurrentUser ? (
+                    <button
+                      type="button"
+                      className={styles.organizationSettingsButton}
+                      onClick={() => updateMember(member, member.role, "revoked")}
+                      disabled={busy === `member-${member.userId}`}
+                    >
+                      Revoke
+                    </button>
+                  ) : null}
+                </div>
               </div>
+            ))}
+            {isOwner ? (
+              <form className={styles.organizationSettingsFormRow} onSubmit={addMember}>
+                <label>
+                  <span>Email</span>
+                  <input
+                    type="email"
+                    value={memberEmail}
+                    onChange={(event) => setMemberEmail(event.target.value)}
+                    placeholder="name@business.com"
+                    required
+                  />
+                </label>
+                <label>
+                  <span>Role</span>
+                  <select
+                    className={styles.organizationSettingsSelect}
+                    value={memberRole}
+                    onChange={(event) => setMemberRole(event.target.value as OrganisationRole)}
+                  >
+                    {roles.map((role) => (
+                      <option value={role} key={role}>{formatRole(role)}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="submit"
+                  className={styles.organizationSettingsButton}
+                  disabled={busy === "member-add"}
+                >
+                  {busy === "member-add" ? "Adding…" : "Add"}
+                </button>
+              </form>
+            ) : null}
+          </div>
+        </section>
+
+        {isOwner ? (
+          <section className={styles.organizationSettingsGroup} aria-label="Danger zone">
+            <h3 className={styles.organizationSettingsGroupLabel}>Delete organisation</h3>
+            <div className={`${styles.organizationSettingsCard} ${styles.organizationSettingsDangerCard}`}>
               {!deletion ? (
-                <form className={styles.organizationDeletionForm} onSubmit={requestDeletion}>
-                  <p>This fences every connection, destroys credentials, and starts a verified cross-store purge. Enter <code>DELETE {workspace?.settings.tenant.name}</code>.</p>
-                  <div><input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} aria-label="Deletion confirmation" /><button type="submit" disabled={busy === "delete-request"}>Request deletion</button></div>
+                <form className={styles.organizationSettingsDangerBody} onSubmit={requestDeletion}>
+                  <div className={styles.organizationSettingsRowCopy}>
+                    <strong>Verified deletion</strong>
+                    <p>
+                      Fences connections and starts a verified purge. Enter{" "}
+                      <code>DELETE {workspace?.settings.tenant.name}</code>.
+                    </p>
+                  </div>
+                  <div className={styles.organizationSettingsDangerActions}>
+                    <input
+                      className={styles.organizationSettingsInlineInput}
+                      value={deleteConfirmation}
+                      onChange={(event) => setDeleteConfirmation(event.target.value)}
+                      aria-label="Deletion confirmation"
+                    />
+                    <button
+                      type="submit"
+                      className={styles.organizationSettingsDangerButton}
+                      disabled={busy === "delete-request"}
+                    >
+                      Request deletion
+                    </button>
+                  </div>
                 </form>
               ) : awaitingDeletionApproval ? (
-                <form className={styles.organizationDeletionForm} onSubmit={approveDeletion}>
-                  <p>The request is reversible until final approval. Enter <code>ERASE {workspace?.settings.tenant.name}</code> within 30 minutes.</p>
-                  <div><input value={eraseConfirmation} onChange={(event) => setEraseConfirmation(event.target.value)} aria-label="Final erasure confirmation" /><button type="button" onClick={cancelDeletion} disabled={busy === "delete-cancel"}>Cancel</button><button type="submit" disabled={busy === "delete-approve"}>Approve erasure</button></div>
+                <form className={styles.organizationSettingsDangerBody} onSubmit={approveDeletion}>
+                  <div className={styles.organizationSettingsRowCopy}>
+                    <strong>Final approval</strong>
+                    <p>
+                      Reversible until approved. Enter{" "}
+                      <code>ERASE {workspace?.settings.tenant.name}</code> within 30 minutes.
+                    </p>
+                  </div>
+                  <div className={styles.organizationSettingsDangerActions}>
+                    <input
+                      className={styles.organizationSettingsInlineInput}
+                      value={eraseConfirmation}
+                      onChange={(event) => setEraseConfirmation(event.target.value)}
+                      aria-label="Final erasure confirmation"
+                    />
+                    <button
+                      type="button"
+                      className={styles.organizationSettingsButton}
+                      onClick={cancelDeletion}
+                      disabled={busy === "delete-cancel"}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className={styles.organizationSettingsDangerButton}
+                      disabled={busy === "delete-approve"}
+                    >
+                      Approve erasure
+                    </button>
+                  </div>
                 </form>
               ) : (
-                <div className={styles.organizationDeletionProgress}>
-                  <span aria-hidden="true" />
-                  <p><strong>Verified deletion is {formatStatus(deletion.status)}.</strong> New writes are fenced while credentials, raw objects, analytical rows, semantic artefacts, and caches are removed and counted.</p>
+                <div className={styles.organizationSettingsDangerBody}>
+                  <div className={styles.organizationSettingsRowCopy}>
+                    <strong>Deletion {formatStatus(deletion.status)}</strong>
+                    <p>New writes are fenced while credentials and data stores are removed.</p>
+                  </div>
+                  <span className={styles.organizationSettingsValue}>
+                    {formatStatus(deletion.status)}
+                  </span>
                 </div>
               )}
-            </section>
-          ) : null}
-        </div>
+            </div>
+          </section>
+        ) : null}
       </div>
+        </>
+      )}
     </section>
   );
 }

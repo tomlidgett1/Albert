@@ -36,10 +36,12 @@ SELECT set_config('albert.tenant_id',:'lifecycle_tenant_tenant_id',true);
 
 INSERT INTO control_plane.connections(
   tenant_id,connection_id,connector_key,display_name,external_account_reference,
-  status,auth_health,authorised_by,connection_generation
+  status,auth_health,authorised_by,connection_generation,ingestion_start_mode,
+  ingestion_activated_at,ingestion_activated_by,ingestion_activated_generation
 ) VALUES (
   :'lifecycle_tenant_tenant_id','01K50000000000000000000001','xero',
   'Lifecycle Xero','xero-lifecycle-account','connected','healthy',
+  '58000000-0000-4000-8000-000000000005',1,'manual',clock_timestamp(),
   '58000000-0000-4000-8000-000000000005',1
 );
 

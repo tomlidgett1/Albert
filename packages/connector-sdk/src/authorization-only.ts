@@ -205,6 +205,7 @@ export function authorizationOnlyManifest(input: Readonly<{
     apiVersion: input.apiVersion,
     releasedAt: input.releasedAt,
     documentation: input.documentation,
+    ingestion: { initialStart: "automatic" },
     oauth: {
       scopes: input.scopes,
       leastPrivilegeNotes: input.leastPrivilegeNotes,

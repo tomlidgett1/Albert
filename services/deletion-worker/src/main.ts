@@ -15,6 +15,10 @@ import {
 import { LeaseBoundRawStoragePurger } from "./raw-storage.js";
 import { DeletionAnalyticalStore, DeletionControlStore } from "./store.js";
 import {
+  ShopifyPrivacyControlStore,
+  ShopifyPrivacyProcessor,
+} from "./shopify-privacy.js";
+import {
   AesKeyringWrapper,
   EnvelopeCryptography,
 } from "../../sync-workers/src/credential-vault.js";
@@ -76,6 +80,7 @@ export async function runDeletionWorker(): Promise<void> {
     maxConnections: 3,
   });
   const control = new DeletionControlStore(controlDb, config.workerId);
+  const privacyControl = new ShopifyPrivacyControlStore(controlDb, config.workerId);
   const analytical = new DeletionAnalyticalStore(analyticalDb);
   const cryptography = new EnvelopeCryptography(new AesKeyringWrapper({
     currentKeyReference: config.tokenKeyReference,
@@ -101,12 +106,14 @@ export async function runDeletionWorker(): Promise<void> {
     config.proofHmacKey,
     releaseSha,
   );
+  const privacyProcessor = new ShopifyPrivacyProcessor(privacyControl);
 
   const dependenciesReady = async () => {
     await Promise.all([
       controlDb.ping(),
       analyticalDb.ping(),
       control.preflight(),
+      privacyControl.preflight(),
       analytical.preflight(),
       rawObjects.ready(),
     ]);
@@ -118,26 +125,45 @@ export async function runDeletionWorker(): Promise<void> {
   let activeJobs = 0;
   let lastClaimAt: string | null = null;
   let lastCompletionAt: string | null = null;
+  let lastPrivacyDispatchAt: string | null = null;
   let lastErrorCode: string | null = null;
+  let privacyMetrics: Readonly<Record<string, unknown>> = Object.freeze({});
   let ready = true;
+  let preferPrivacy = true;
   const workerLoop = async () => {
     while (!abort.signal.aborted) {
       try {
-        const claim = await control.claim();
-        if (!claim) {
+        const privacyClaim = preferPrivacy ? await privacyControl.claim() : null;
+        const deletionClaim = privacyClaim ? null : await control.claim();
+        const fallbackPrivacyClaim = !privacyClaim && !deletionClaim && !preferPrivacy
+          ? await privacyControl.claim()
+          : null;
+        preferPrivacy = !preferPrivacy;
+        const effectivePrivacyClaim = privacyClaim ?? fallbackPrivacyClaim;
+        if (!deletionClaim && !effectivePrivacyClaim) {
           await wait(config.pollDelayMs, abort.signal);
           continue;
         }
         lastClaimAt = new Date().toISOString();
         activeJobs += 1;
         try {
-          const outcome = await processor.process(claim);
-          const attemptHealth = recordDeletionProcessOutcome(
-            { lastCompletionAt, lastErrorCode },
-            outcome,
-          );
-          lastCompletionAt = attemptHealth.lastCompletionAt;
-          lastErrorCode = attemptHealth.lastErrorCode;
+          if (effectivePrivacyClaim) {
+            const outcome = await privacyProcessor.process(effectivePrivacyClaim);
+            if (outcome.status === "dispatched") {
+              lastPrivacyDispatchAt = new Date().toISOString();
+              lastErrorCode = null;
+            } else {
+              lastErrorCode = outcome.failure.code;
+            }
+          } else if (deletionClaim) {
+            const outcome = await processor.process(deletionClaim);
+            const attemptHealth = recordDeletionProcessOutcome(
+              { lastCompletionAt, lastErrorCode },
+              outcome,
+            );
+            lastCompletionAt = attemptHealth.lastCompletionAt;
+            lastErrorCode = attemptHealth.lastErrorCode;
+          }
         } finally {
           activeJobs -= 1;
         }
@@ -154,12 +180,22 @@ export async function runDeletionWorker(): Promise<void> {
   };
 
   const heartbeat = async () => {
+    await privacyControl.reconcile();
+    privacyMetrics = await privacyControl.metrics();
     await control.heartbeat({
       serviceVersion: releaseSha,
       deploymentId,
       startedAt,
       activeJobs,
-      metadata: { ready, lastClaimAt, lastCompletionAt, lastErrorCode, service: "deletion-worker" },
+      metadata: {
+        ready,
+        lastClaimAt,
+        lastCompletionAt,
+        lastPrivacyDispatchAt,
+        lastErrorCode,
+        privacy: privacyMetrics,
+        service: "deletion-worker",
+      },
     });
   };
 
@@ -188,7 +224,14 @@ export async function runDeletionWorker(): Promise<void> {
         return;
       }
       if (request.method === "GET" && pathname === "/v1/metrics") {
-        json(response, 200, { activeJobs, lastClaimAt, lastCompletionAt, lastErrorCode });
+        json(response, 200, {
+          activeJobs,
+          lastClaimAt,
+          lastCompletionAt,
+          lastPrivacyDispatchAt,
+          lastErrorCode,
+          privacy: privacyMetrics,
+        });
         return;
       }
       json(response, 404, { error: "not_found" });

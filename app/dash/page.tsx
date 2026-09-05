@@ -1,22 +1,56 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SVGProps } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SVGProps } from "react";
 import { AnimatePresence, animate, motion, useReducedMotion } from "framer-motion";
-import { useRouter } from "next/navigation";
+import Image from "next/image";
+import { usePathname, useRouter } from "next/navigation";
 import { ThinkingOrb } from "thinking-orbs";
+import { notifyThemePreferenceChanged } from "@/app/theme-preference";
 import {
   DEFAULT_AGENT_PREFERENCES,
+  DEFAULT_OMNI_PREFERENCES,
+  CLAUDE_HAIKU_4_5_MODEL_ID,
+  CLAUDE_SONNET_5_MODEL_ID,
+  describeChatFailure,
+  isAnthropicModel,
+  isXaiModel,
   normalizeAgentPreferences,
   type AgentRunPreferences,
+  type AlbertModelId,
+  type ReasoningEffort,
+  type AnswerState,
+  type TraceAnswerEvent,
+  type TraceClarificationEvent,
   type TraceEvent,
+  type TraceTableEvent,
 } from "@/packages/shared/src";
+import { swarmEmptyProvenance, swarmLiveCommentary, swarmPlanSteps } from "@/services/swarm/src/parent-events";
+import {
+  SALES_DEEP_OWNER_QUESTION,
+  SALES_DEEP_PREFERENCES,
+} from "@/services/swarm/src/sales-deep";
+import {
+  SUPER_AGENT_KIND,
+  SUPER_AGENT_PREFERENCES,
+  SUPER_AGENT_PRO_MODE,
+  SUPER_AGENT_SOL_PLANNER,
+} from "@/services/swarm/src/super-agent";
+import {
+  getPublicSpecialistAgentDefinition,
+  normalizeSpecialistAgentId,
+  parseSpecialistAgentId,
+  specialistAgentAllowedForRole,
+  type SpecialistAgentId,
+} from "@/packages/albert-v3/src/specialist-agents/registry";
 import { createClient } from "@/utils/supabase/client";
 import InsightsStyleTrace from "./components/InsightsStyleTrace";
+import OmniTrace from "./components/OmniTrace";
 import AdminWorkspace from "./components/AdminWorkspace";
 import ConnectionsWorkspace, {
   buildSidebarSyncCommentary,
   collectWorkspaceSyncDomains,
   COMING_SOON_PROVIDERS,
+  connectionIngestionIsPending,
   connectionSyncSummary,
   ConnectionSyncProgress,
   emptyConnectionsWorkspace,
@@ -26,18 +60,78 @@ import ConnectionsWorkspace, {
   type ConnectionProviderId,
   type ConnectionsWorkspaceData,
 } from "./components/ConnectionsWorkspace";
+import DictationWaveform from "./components/DictationWaveform";
 import { ModelRunControls } from "./components/ModelRunControls";
+import DiscoverWorkspace from "./components/DiscoverWorkspace";
+import ScheduledWorkspace from "./components/ScheduledWorkspace";
+import AlertsWorkspace from "./components/AlertsWorkspace";
+import { ALERTS_CONVERSATION_TITLE_PREFIX } from "@/services/alerts/src/contracts";
+import { DAILY_BRIEF_CONVERSATION_TITLE_PREFIX } from "@/services/recommended-analysis/src/daily-brief";
+import { ChatSurfaceTabs, type ChatSurface } from "./components/ChatSurfaceTabs";
+import { View2ConnectedTools } from "./components/View2ConnectedTools";
+import { CollapsibleUserQuestion } from "./components/CollapsibleUserQuestion";
+import RuntimeComparisonWorkspace, { type ConversationRuntimeTab } from "./components/runtime-comparison-workspace";
 import OrganizationWorkspace from "./components/OrganizationWorkspace";
+import BusinessContextWorkspace from "./components/BusinessContextWorkspace";
+import SemanticMemoryWorkspace from "./components/SemanticMemoryWorkspace";
 import RawDebugger from "./components/RawDebugger";
 import {
   createRawDebugRecorder,
   mergeRawDebugTurn,
   type RawDebugTurn,
 } from "./lib/raw-debug";
+import { useChatDictation } from "./lib/use-chat-dictation";
+import {
+  useVoiceSession,
+  type VoiceTurnObserver,
+} from "./lib/use-voice-session";
 import TenantDeletionWorkspace, {
   parseTenantDeletionReceipt,
   type TenantDeletionReceipt,
 } from "./components/TenantDeletionWorkspace";
+import DashboardWorkspace, { type DashboardElementRef } from "./components/DashboardWorkspace";
+import DashboardsWorkspace from "./components/DashboardsWorkspace";
+import DashboardBuildPanel from "./components/DashboardBuildPanel";
+import {
+  applyDashboardBuildTurn,
+  attachDashboardBuildDashboard,
+  attachDashboardBuildTurn,
+  beginDashboardBuildTurn,
+  dashboardBuildSnapshot,
+  failDashboardBuildTurn,
+  stopDashboardBuildTurn,
+  subscribeDashboardBuild,
+} from "./lib/dashboard-build-controller";
+import { isDashboardBuildTurn } from "./lib/dashboard-build-view";
+import {
+  dashboardBriefDisplayText,
+  parseDashboardBriefMessage,
+} from "@/services/dashboard-build/src/contracts";
+import ProactiveWorkspace from "./components/ProactiveWorkspace";
+import DashboardMasterWorkspace from "./components/DashboardMasterWorkspace";
+import SwarmPanel, { SWARM_PANEL_DEFAULT_WIDTH } from "./components/SwarmPanel";
+
+/** Dashboard mode split: the chat card never drops below this width. */
+const DASHBOARD_CHAT_MIN_WIDTH = 380;
+const DASHBOARD_PANEL_MIN_WIDTH = 480;
+/** The split handle between the two cards (the shell itself has no inset). */
+const DASHBOARD_SPLIT_CHROME = 12;
+import RecommendedAnalysis from "./components/RecommendedAnalysis";
+import {
+  hydrateSwarmFromRun,
+  startSwarmFleet,
+  stopSwarmFleet,
+  subscribeSwarmRun,
+  swarmRunSnapshot,
+  type SwarmAgentLiveState,
+} from "./lib/swarm-run-controller";
+import MyDataWorkspace from "./components/MyDataWorkspace";
+import TestChartWorkspace from "./components/TestChartWorkspace";
+import NewTestWorkspace from "./components/NewTestWorkspace";
+import AgentsWorkspace from "./components/AgentsWorkspace";
+import QueryLogsWorkspace from "./components/QueryLogsWorkspace";
+import { reloadPublishedNivoChartDesign } from "./lib/nivo-chart-design-store";
+import { latestReasoningSummary } from "./lib/reasoning-summary";
 import styles from "./dash.module.css";
 import traceStyles from "./components/insights-trace.module.css";
 
@@ -60,19 +154,106 @@ type IconName =
   | "sort"
   | "sidebarRight"
   | "microphone"
+  | "terminal"
   | "pin"
   | "archive"
   | "settings"
   | "stop"
   | "calendar"
   | "chevronDown"
-  | "leaf";
+  | "leaf"
+  | "sparkles"
+  | "dashboard"
+  | "database"
+  | "agents"
+  | "chart"
+  | "list"
+  | "radar"
+  | "target"
+  | "voice";
 
-type Theme = "system" | "light" | "dark" | "green";
+type ActiveItem =
+  | "Chat"
+  | "Agents"
+  | "Proactive"
+  | "DashboardMaster"
+  | "Dashboard"
+  | "My Data"
+  | "Test chart"
+  | "New test"
+  | "Logs"
+  | "Connections"
+  | "Admin"
+  | "BusinessContext"
+  | "SemanticMemory"
+  | "Organization"
+  | "Deletion";
+
+type Theme = "system" | "light" | "beige" | "sage" | "dark" | "green";
+
+const codexStarterPrompts = Object.freeze([
+  "Give me a candid health check across sales, customers, inventory and cash",
+  "What changed most in the last 90 days, and what evidence explains it?",
+  "Find one high-confidence opportunity I could test this month",
+  "Challenge the assumptions I may be making about business performance",
+  "Reconcile POS cash in with Xero receipts and explain every material gap with named evidence",
+  "Prove whether margin compression is mix, discounting, cost or write-offs, not a blended average",
+  "Find SKUs that look profitable on contribution but destroy cash through inventory days",
+  "Isolate labour cost per sale-hour that is rising faster than the sales those hours produce",
+  "Identify customers who look loyal on repeat rate while cohort LTV is collapsing",
+  "Stress-test working capital if the top ten customers paid 14 days later",
+  "Separate price, volume and new-customer effects inside headline growth",
+  "Detect category or product cannibalisation hidden inside a growing total",
+  "Explain why cash moved differently from profit last quarter, with the sales or journals that caused it",
+  "Find inventory that is aged, still being reordered, and still being promoted",
+  "Rank risks by expected cash impact, not by how alarming the metric looks",
+  "Find the first assumption in my current run-rate that would break under scrutiny",
+  "Separate seasonality from a genuine structural shift in demand",
+  "Reconstruct the full economic story of the worst week and the best week",
+  "Find contradictions between Xero aged receivables and customer outstanding in sales",
+  "Detect roster hours that do not match the sales they were meant to cover",
+  "Quantify how much best-seller status is volume theatre versus economic profit",
+  "Find the weakest causal chain from staffing to conversion to collected cash",
+  "Identify the concentration risk a sceptical CFO would refuse to ignore",
+  "Show what the current numbers look like if I refuse to average away the tails",
+]);
+
+const CODEX_MODEL_IDS = Object.freeze([
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+] as const satisfies readonly AlbertModelId[]);
+const OMNI_MODEL_IDS = Object.freeze([
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  CLAUDE_SONNET_5_MODEL_ID,
+  CLAUDE_HAIKU_4_5_MODEL_ID,
+] as const satisfies readonly AlbertModelId[]);
+const V3_MODEL_IDS = Object.freeze([
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "grok-4.6",
+  CLAUDE_HAIKU_4_5_MODEL_ID,
+] as const satisfies readonly AlbertModelId[]);
+const CODEX_REASONING_EFFORTS = Object.freeze([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const satisfies readonly ReasoningEffort[]);
+/** Codex quality preflight is on by default, with an explicit per-session off switch. */
+const DEFAULT_CODEX_SOL_PLANNER = true;
+/** OpenAI recommends Pro selectively; keep the independent mode opt-in. */
+const DEFAULT_CODEX_PRO_MODE = false;
 
 const themeOptions: Array<{ value: Theme; label: string; icon: IconName }> = [
   { value: "system", label: "System theme", icon: "monitor" },
   { value: "light", label: "Light theme", icon: "sun" },
+  { value: "beige", label: "Beige theme", icon: "sparkles" },
+  { value: "sage", label: "Sage theme", icon: "leaf" },
   { value: "dark", label: "Dark theme", icon: "moon" },
   { value: "green", label: "Green theme", icon: "leaf" },
 ];
@@ -83,7 +264,12 @@ const themeListeners = new Set<() => void>();
 let themeSnapshot: Theme = "system";
 
 function isTheme(value: string | null): value is Theme {
-  return value === "system" || value === "light" || value === "dark" || value === "green";
+  return value === "system"
+    || value === "light"
+    || value === "beige"
+    || value === "sage"
+    || value === "dark"
+    || value === "green";
 }
 
 function getThemeSnapshot(): Theme {
@@ -124,6 +310,7 @@ function setThemePreference(nextTheme: Theme) {
   }
 
   themeListeners.forEach((listener) => listener());
+  notifyThemePreferenceChanged(nextTheme);
 }
 
 function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) {
@@ -151,8 +338,31 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
       return <svg {...shared}><path d="M19.7 14.5A7.8 7.8 0 0 1 9.5 4.3a8 8 0 1 0 10.2 10.2Z" /></svg>;
     case "leaf":
       return <svg {...shared}><path d="M5 19c8 0 12-6 14-14-8 2-14 6-14 14Z" /><path d="M8 16c3-3 6-6 11-9" /></svg>;
+    case "sparkles":
+      return <svg {...shared}><path d="M12 3.5c.7 3.4 2.6 5.3 6 6-3.4.7-5.3 2.6-6 6-.7-3.4-2.6-5.3-6-6 3.4-.7 5.3-2.6 6-6Z" /><path d="M18.5 15.5c.3 1.5 1.2 2.4 2.7 2.7-1.5.3-2.4 1.2-2.7 2.7-.3-1.5-1.2-2.4-2.7-2.7 1.5-.3 2.4-1.2 2.7-2.7Z" /></svg>;
     case "chat":
       return <svg {...shared}><path d="M20.2 11.2c0 4.5-3.7 8.1-8.3 8.1a8.8 8.8 0 0 1-3.2-.6l-4.7 1.2 1.2-4.3a7.8 7.8 0 0 1-1.5-4.4c0-4.5 3.7-8.1 8.2-8.1s8.3 3.6 8.3 8.1Z" /></svg>;
+    case "dashboard":
+      return <svg {...shared}><rect x="3.5" y="4" width="17" height="16" rx="2.5" /><path d="M3.5 10h17M10 10v10" /></svg>;
+    case "database":
+      return <svg {...shared}><ellipse cx="12" cy="5.5" rx="7.5" ry="3" /><path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6M4.5 11.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6" /></svg>;
+    case "agents":
+      return <svg {...shared}><circle cx="9" cy="8" r="3" /><path d="M3.8 19c.4-3.5 2.1-5.3 5.2-5.3s4.8 1.8 5.2 5.3" /><circle cx="17.2" cy="9" r="2.3" /><path d="M15.3 14.3c.6-.3 1.3-.4 2.1-.4 2.1 0 3.3 1.3 3.6 3.8" /></svg>;
+    case "chart":
+      return <svg {...shared}><path d="M4 19V5M4 19h16" /><path d="M8 15v-3M12 15V8M16 15v-6" /></svg>;
+    case "list":
+      return (
+        <svg {...shared}>
+          <path d="M9 6h11M9 12h11M9 18h11" />
+          <circle cx="5" cy="6" r="1.1" fill="currentColor" stroke="none" />
+          <circle cx="5" cy="12" r="1.1" fill="currentColor" stroke="none" />
+          <circle cx="5" cy="18" r="1.1" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "radar":
+      return <svg {...shared}><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="4.6" /><path d="M12 12l5.5-6.4" /><circle cx="12" cy="12" r="0.9" fill="currentColor" stroke="none" /></svg>;
+    case "target":
+      return <svg {...shared}><circle cx="12" cy="12" r="8.5" /><path d="M12 3.5v3.2M12 17.3v3.2M3.5 12h3.2M17.3 12h3.2" /><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" /></svg>;
     case "connections":
       return <svg {...shared}><path d="M9.2 14.8 7.6 16.4a3.2 3.2 0 0 1-4.5-4.5l3.3-3.3a3.2 3.2 0 0 1 4.5 0" /><path d="m14.8 9.2 1.6-1.6a3.2 3.2 0 0 1 4.5 4.5l-3.3 3.3a3.2 3.2 0 0 1-4.5 0" /><path d="m8.5 15.5 7-7" /></svg>;
     case "logs":
@@ -175,8 +385,12 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
       return <svg {...shared}><path d="M5 7h10M5 12h7M5 17h4" /></svg>;
     case "sidebarRight":
       return <svg {...shared}><rect x="3.5" y="4" width="17" height="16" rx="2.5" /><path d="M14.5 4v16" /></svg>;
+    case "terminal":
+      return <svg {...shared}><rect x="3.5" y="5" width="17" height="14" rx="2" /><path d="m7.5 10 2.5 2-2.5 2M12.5 14h4" /></svg>;
     case "microphone":
       return <svg {...shared}><rect x="9" y="3.5" width="6" height="11" rx="3" /><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.5M9 20.5h6" /></svg>;
+    case "voice":
+      return <svg {...shared}><path d="M4 10.5v3M8 7.5v9M12 4.5v15M16 7.5v9M20 10.5v3" /></svg>;
     case "pin":
       return <svg {...shared}><path d="M12 17v5M9.5 3.5h5l1.5 6.5H18l-3.5 4v2h-5v-2L6 10h2Z" /></svg>;
     case "archive":
@@ -204,19 +418,67 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
   }
 }
 
+type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "omni" | "compare";
+
+function chatRuntimeFromProfile(value: unknown): Exclude<ChatRuntime, "fixture"> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "openai";
+  const profile = value as Record<string, unknown>;
+  if (profile.runtime === "omni-agent" || profile.analyticalRuntime === "cube-omni-v1") {
+    return "omni";
+  }
+  if (profile.runtime === "codex-app-server" || profile.analyticalRuntime === "cube-codex-v1") {
+    return "codex";
+  }
+  if (profile.runtime === "xero-mcp" || profile.analyticalRuntime === "xero-mcp") {
+    return "xero_mcp";
+  }
+  if (profile.runtime === "albert-v3" || profile.analyticalRuntime === "cube-v3") {
+    return "v3";
+  }
+  if (profile.runtime === "cubecore-v1" || profile.analyticalRuntime === "cubecore") {
+    return "cubecore";
+  }
+  if (profile.model === CLAUDE_HAIKU_4_5_MODEL_ID) {
+    return "v3";
+  }
+  if (
+    profile.runtime === "anthropic-agent-sdk"
+    || (typeof profile.model === "string" && profile.model.startsWith("claude-"))
+  ) {
+    return "anthropic";
+  }
+  // History used to omit runtime. Grok is served by Albert v3; sending it to
+  // the v1 OpenAI route trips the immutable runtime lock (HTTP 503).
+  if (typeof profile.model === "string" && profile.model === "grok-4.6") {
+    return "v3";
+  }
+  return "openai";
+}
+
+function specialistAgentIdFromProfile(value: unknown): SpecialistAgentId {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "general";
+  return normalizeSpecialistAgentId((value as Record<string, unknown>).specialistAgentId);
+}
+
 type ChatMessage = {
   id: number;
   role: "user" | "assistant";
   text: string;
   isStreaming?: boolean;
   events?: TraceEvent[];
-  runtime?: "fixture" | "openai";
+  runtime?: ChatRuntime;
   conversationId?: string;
   turnId?: string;
   suppressEnter?: boolean;
   animateReveal?: boolean;
   /** When false, hide thinking/answer trail until the user bubble has pinned. */
   trailVisible?: boolean;
+  /** This turn ran in dashboard-architect mode (dashboard mode send). */
+  dashboardBuild?: boolean;
+  /** The dashboard a build turn targeted (ADR 0134); reopening re-enters it. */
+  dashboardId?: string;
+  /** The element an element-edit turn rebuilt. */
+  dashboardEditTileId?: string;
 };
 
 function buildStoppedTraceEvent(
@@ -236,6 +498,75 @@ function buildStoppedTraceEvent(
 }
 
 /** End any live-looking assistant rows. Used when leaving a chat or replacing a turn. */
+function swarmAgentPhase(status: string): SwarmAgentLiveState["phase"] {
+  if (status === "completed") return "done";
+  if (status === "failed") return "failed";
+  if (status === "stopped") return "stopped";
+  if (status === "running") return "researching";
+  return "pending";
+}
+
+type PersistedSwarmAgent = Readonly<{
+  agentKey: string;
+  title: string;
+  tagline: string;
+  role: string;
+  status: string;
+  headline: string | null;
+  answerState: string | null;
+  conversationId: string | null;
+  turnId: string | null;
+  failureNote: string | null;
+}>;
+
+type PersistedSwarmRun = Readonly<{
+  runId: string;
+  parentConversationId: string;
+  parentTurnId: string;
+  question: string;
+  status: string;
+  startedAt?: string;
+  plan?: {
+    periodLabel?: string;
+    kind?: "question" | "sales-deep" | "super-agent";
+    runtime?: "codex" | "omni";
+    durationMs?: number;
+    checkpointIntervalMs?: number;
+  };
+  synthesis?: {
+    answer?: string;
+    answerState?: string;
+    source?: "model" | "model-repaired" | "fallback";
+    recovery?: "standard-after-pro" | null;
+    followUps?: string[];
+  } | null;
+  agents?: readonly PersistedSwarmAgent[];
+}>;
+
+function swarmAgentsFromPersisted(
+  agents: readonly PersistedSwarmAgent[],
+): SwarmAgentLiveState[] {
+  return agents.map((agent) => ({
+    key: agent.agentKey,
+    title: agent.title,
+    tagline: agent.tagline,
+    role: agent.role,
+    phase: swarmAgentPhase(agent.status),
+    statusLine: agent.headline
+      ?? (agent.status === "failed"
+        ? (agent.failureNote ?? "Failed")
+        : agent.status === "running"
+          ? "Working…"
+          : "Queued"),
+    queriesSeen: 0,
+    headline: agent.headline,
+    answerState: agent.answerState,
+    conversationId: agent.conversationId,
+    turnId: agent.turnId,
+    error: agent.failureNote,
+  }));
+}
+
 function finalizeStreamingMessages(
   messages: readonly ChatMessage[],
   message = "This analysis was interrupted.",
@@ -292,6 +623,8 @@ type ConversationSummary = Readonly<{
   updatedAt: string;
   lastMessage: string;
   lastTurnStatus?: string;
+  runtime: Exclude<ChatRuntime, "fixture">;
+  specialistAgentId: SpecialistAgentId;
 }>;
 
 type OAuthNotice = Readonly<{
@@ -302,7 +635,12 @@ type OAuthNotice = Readonly<{
 
 const oauthProviderLabels: Readonly<Record<ConnectableProviderId, string>> = Object.freeze({
   lightspeed: "Lightspeed",
+  "lightspeed-x": "Lightspeed X-Series",
   xero: "Xero",
+  "fivetran-xero": "Xero (Fivetran)",
+  "fivetran-lightspeed": "Lightspeed (Fivetran)",
+  "fivetran-deputy": "Deputy (Fivetran)",
+  "fivetran-stripe": "Stripe (Fivetran)",
   deputy: "Deputy",
   square: "Square",
   shopify: "Shopify",
@@ -314,7 +652,7 @@ const oauthProviderLabels: Readonly<Record<ConnectableProviderId, string>> = Obj
 
 function isConnectableProviderId(value: string | null | undefined): value is ConnectableProviderId {
   return typeof value === "string" &&
-    ["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]
+    ["lightspeed", "lightspeed-x", "xero", "fivetran-xero", "fivetran-lightspeed", "deputy", "fivetran-deputy", "fivetran-stripe", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]
       .includes(value);
 }
 
@@ -343,7 +681,10 @@ function oauthNoticeFrom(searchParams: URLSearchParams): OAuthNotice | null {
     case "connected":
       return { kind: "success", message: `${provider} is connected. The recent-first sync has started.` };
     case "connected_without_sync":
-      return { kind: "success", message: `${provider} is connected. No data has been synced yet.` };
+      return {
+        kind: "success",
+        message: `${provider} is connected. Data will not be ingested until you choose Start ingestion.`,
+      };
     case "selection_required":
       return { kind: "info", message: `Choose the ${provider} account below to finish connecting it.` };
     case "cancelled":
@@ -356,10 +697,28 @@ function oauthNoticeFrom(searchParams: URLSearchParams): OAuthNotice | null {
       return { kind: "error", message: "Choose or create an organisation before connecting a source." };
     case "unknown_provider":
       return { kind: "error", message: "That connection provider is not supported." };
+    case "setup_incomplete":
+      return {
+        kind: "info",
+        message: `${provider} was not finished. Choose Connect again, then on the secure connection page click Authorize, sign in to Xero, pick your organisation, and press Save & Test.`,
+        detail,
+      };
+    case "start_failed":
+      return {
+        kind: "error",
+        message: /stripe/i.test(provider) && /STRIPE_|oauth_provider_not_configured/u.test(detail ?? "")
+          ? "Stripe (Fivetran) needs the Stripe Connect app keys on the sync worker before Connect will open Stripe."
+          : `${provider} could not be started right now. Try again in a moment; if it keeps happening, the connection may not be set up for this workspace yet.`,
+        detail,
+      };
     default:
       return {
         kind: "error",
-        message: `${provider} authorization could not be completed. Try connecting again.`,
+        message: /stripe/i.test(provider) && /fivetran_stripe_live_key_required|test-mode key/u.test(detail ?? "")
+          ? "Stripe (Fivetran) needs a live Stripe account. Test-mode keys cannot land the official ERD."
+          : /stripe/i.test(provider) && /fivetran_stripe_token_missing|secret or Restricted key/u.test(detail ?? "")
+          ? "Stripe Connect did not return a key Fivetran can use. Reconnect after confirming the Connect app still issues a secret or Restricted key."
+          : `${provider} authorization could not be completed. Try connecting again.`,
         detail,
       };
   }
@@ -368,17 +727,19 @@ function oauthNoticeFrom(searchParams: URLSearchParams): OAuthNotice | null {
 const traceEventTypes = new Set([
   "progress",
   "narrative",
+  "plan",
   "query",
   "table",
   "chart",
   "validation",
   "answer",
   "clarification",
+  "tasks",
+  "research",
+  "dashboard_plan",
   "error",
 ]);
 const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
-/** Opt-in switch for the raw debugger outside development. */
-const rawDebugStorageKey = "albert:chat:raw-debugger";
 
 function parseTraceEvent(value: unknown): TraceEvent | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -436,6 +797,8 @@ function parseConversationSummaries(value: unknown): readonly ConversationSummar
     const lastTurnStatus = lastTurnRecord && typeof lastTurnRecord.status === "string"
       ? lastTurnRecord.status
       : undefined;
+    const runtime = chatRuntimeFromProfile(lastTurnRecord?.runtime_profile);
+    const specialistAgentId = specialistAgentIdFromProfile(lastTurnRecord?.runtime_profile);
     const storedTitle = typeof candidate.title === "string" ? candidate.title.trim() : "";
     summaries.push({
       conversationId: candidate.conversation_id,
@@ -445,6 +808,8 @@ function parseConversationSummaries(value: unknown): readonly ConversationSummar
       updatedAt: candidate.updated_at,
       lastMessage,
       lastTurnStatus,
+      runtime,
+      specialistAgentId,
     });
   }
   return summaries;
@@ -478,7 +843,7 @@ function isSameCalendarDay(left: Date, right: Date): boolean {
 }
 
 /** Local calendar day key for sorting sections (newest first). */
-function conversationDayKey(updatedAt: string, now = new Date()): string {
+function conversationDayKey(updatedAt: string): string {
   const date = new Date(updatedAt);
   if (Number.isNaN(date.valueOf())) return "0000-00-00";
   const year = date.getFullYear();
@@ -549,6 +914,8 @@ function saveConversationSidebarPrefs(email: string, prefs: ConversationSidebarP
 
 export default function DashPage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const isView2 = pathname === "/view2";
   const supabase = useMemo(() => createClient(), []);
   const [accountEmail, setAccountEmail] = useState("");
   const [accountOrganisation, setAccountOrganisation] = useState<{
@@ -556,6 +923,7 @@ export default function DashPage() {
     role: "owner" | "manager" | "bookkeeper" | "internal_operator" | null;
   }>({ name: "Organisation", role: null });
   const [isInternalOperator, setIsInternalOperator] = useState(false);
+  const [canViewQueryLogs, setCanViewQueryLogs] = useState(false);
   const [oauthNotice, setOAuthNotice] = useState<OAuthNotice | null>(null);
   const [connectionsData, setConnectionsData] = useState<ConnectionsWorkspaceData>(emptyConnectionsWorkspace);
   const [connectionsStatus, setConnectionsStatus] = useState<{
@@ -565,7 +933,8 @@ export default function DashPage() {
   const [tenantDeletionReceipt, setTenantDeletionReceipt] = useState<TenantDeletionReceipt | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [accountError, setAccountError] = useState("");
-  const [activeItem, setActiveItem] = useState("Chat");
+  const [activeItem, setActiveItem] = useState<ActiveItem>("Chat");
+  const dashboardRevisionRef = useRef<number | null>(null);
   const theme = useSyncExternalStore(
     subscribeToTheme,
     getThemeSnapshot,
@@ -580,10 +949,19 @@ export default function DashPage() {
   const [sidebarNavRevealed, setSidebarNavRevealed] = useState(true);
   const sidebarWasCollapsedRef = useRef(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [view2HistoryOpen, setView2HistoryOpen] = useState(false);
+  const [view2PagesOpen, setView2PagesOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(false);
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
-  const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_AGENT_PREFERENCES);
+  const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("omni");
+  /** Chat is the conversation; Discover the grid of questions worth asking; Scheduled the reports Albert texts on a timer. */
+  const [chatSurface, setChatSurface] = useState<ChatSurface>("chat");
+  const [specialistAgentId, setSpecialistAgentId] = useState<SpecialistAgentId>("general");
+  const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_OMNI_PREFERENCES);
+  const [codexSolPlannerEnabled, setCodexSolPlannerEnabled] = useState(DEFAULT_CODEX_SOL_PLANNER);
+  const [codexProModeEnabled, setCodexProModeEnabled] = useState(DEFAULT_CODEX_PRO_MODE);
   const [isChatResponding, setIsChatResponding] = useState(false);
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
   const [chatDetailedMode, setChatDetailedMode] = useState(() => {
@@ -594,12 +972,110 @@ export default function DashPage() {
       return false;
     }
   });
-  const [takeawaysOpen, setTakeawaysOpen] = useState(false);
-  // Development inspector. Available automatically outside production, and in a
-  // deployed environment only when a developer opts in explicitly.
-  const [rawDebugAvailable, setRawDebugAvailable] = useState(
-    () => process.env.NODE_ENV !== "production",
+  const [reasoningPanelOpen, setReasoningPanelOpen] = useState(false);
+  const [swarmEnabled, setSwarmEnabled] = useState(false);
+  const [superAgentEnabled, setSuperAgentEnabled] = useState(false);
+  const [swarmPanelOpen, setSwarmPanelOpen] = useState(false);
+  const [swarmPanelWidth, setSwarmPanelWidth] = useState(SWARM_PANEL_DEFAULT_WIDTH);
+  const [swarmPanelResizing, setSwarmPanelResizing] = useState(false);
+  const [swarmConversationIds, setSwarmConversationIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
   );
+  const swarmEnabledRef = useRef(false);
+  const superAgentEnabledRef = useRef(false);
+  const setSwarmMode = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === "function" ? next(swarmEnabledRef.current) : next;
+    // Send routing reads the ref synchronously. Updating both here prevents a
+    // click-and-send in the same event loop from rendering Swarm as selected
+    // while still posting an ordinary /api/codex-conversation turn.
+    swarmEnabledRef.current = resolved;
+    setSwarmEnabled(resolved);
+  }, []);
+  const setSuperAgentMode = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === "function" ? next(superAgentEnabledRef.current) : next;
+    superAgentEnabledRef.current = resolved;
+    setSuperAgentEnabled(resolved);
+  }, []);
+  // Dashboard mode (ADR 0129 rework): sends route through the dashboard
+  // architect on Omni, the chat shows the working, and the build panel shows
+  // the dashboard forming in real time.
+  const [dashboardModeEnabled, setDashboardModeEnabled] = useState(false);
+  const dashboardModeEnabledRef = useRef(false);
+  const [dashboardPanelOpen, setDashboardPanelOpen] = useState(false);
+  const [dashboardPanelExpanded, setDashboardPanelExpanded] = useState(false);
+  // Dashboards, plural (ADR 0134): the dashboard this mode is building, the
+  // dashboard open in the Dashboards tab, and a reload key for the list.
+  const [dashboardModeDashboardId, setDashboardModeDashboardId] = useState<string | null>(null);
+  const dashboardModeDashboardIdRef = useRef<string | null>(null);
+  const setDashboardModeDashboard = useCallback((dashboardId: string | null) => {
+    dashboardModeDashboardIdRef.current = dashboardId;
+    setDashboardModeDashboardId(dashboardId);
+  }, []);
+  const [dashboardViewId, setDashboardViewId] = useState<string | null>(null);
+  const [dashboardsReloadKey, setDashboardsReloadKey] = useState(0);
+  const [creatingDashboard, setCreatingDashboard] = useState(false);
+  const dashboardBuild = useSyncExternalStore(subscribeDashboardBuild, dashboardBuildSnapshot, dashboardBuildSnapshot);
+  useEffect(() => {
+    // A settled build changes the list's titles and element counts.
+    if (dashboardBuild.settledCount > 0) setDashboardsReloadKey((key) => key + 1);
+  }, [dashboardBuild.settledCount]);
+  // The split between the chat card and the dashboard card is draggable and
+  // remembered per browser; null keeps the stylesheet's proportional default.
+  const [dashboardPanelWidth, setDashboardPanelWidth] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const stored = Number(window.localStorage.getItem("albert:dashboard-mode:panel-width"));
+      return Number.isFinite(stored) && stored >= DASHBOARD_PANEL_MIN_WIDTH ? Math.round(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [dashboardPanelResizing, setDashboardPanelResizing] = useState(false);
+  const chatShellRef = useRef<HTMLDivElement>(null);
+  const dashboardSplitDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+  const clampDashboardPanelWidth = useCallback((width: number) => {
+    const shellWidth = chatShellRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+    const maxWidth = Math.max(
+      DASHBOARD_PANEL_MIN_WIDTH,
+      shellWidth - DASHBOARD_SPLIT_CHROME - DASHBOARD_CHAT_MIN_WIDTH,
+    );
+    return Math.round(Math.min(maxWidth, Math.max(DASHBOARD_PANEL_MIN_WIDTH, width)));
+  }, []);
+  const applyDashboardPanelWidth = useCallback((width: number) => {
+    setDashboardPanelWidth(clampDashboardPanelWidth(width));
+  }, [clampDashboardPanelWidth]);
+  useEffect(() => {
+    if (dashboardPanelWidth === null) return;
+    try {
+      window.localStorage.setItem("albert:dashboard-mode:panel-width", String(dashboardPanelWidth));
+    } catch {
+      // Ignore private-mode storage failures.
+    }
+  }, [dashboardPanelWidth]);
+  const currentDashboardPanelWidth = useCallback(() => {
+    if (dashboardPanelWidth !== null) return dashboardPanelWidth;
+    const aside = document.getElementById("analysis-takeaways");
+    return Math.round(aside?.getBoundingClientRect().width ?? DASHBOARD_PANEL_MIN_WIDTH);
+  }, [dashboardPanelWidth]);
+  const setDashboardMode = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === "function" ? next(dashboardModeEnabledRef.current) : next;
+    // Send routing reads the ref synchronously, like Swarm's.
+    dashboardModeEnabledRef.current = resolved;
+    setDashboardModeEnabled(resolved);
+  }, []);
+  const swarmSnapshot = useSyncExternalStore(subscribeSwarmRun, swarmRunSnapshot, swarmRunSnapshot);
+  // First-seen timestamps for the synthesized swarm trace events, per run.
+  const swarmEventTimesRef = useRef<{ runId: string | null; times: Map<string, string> }>({
+    runId: null,
+    times: new Map(),
+  });
+  const [codexPromptsOpen, setCodexPromptsOpen] = useState(false);
+  const codexPromptMenuId = useId();
+  const codexPromptMenuRef = useRef<HTMLDivElement>(null);
+  const codexPromptTriggerRef = useRef<HTMLButtonElement>(null);
+  // Development inspector. Always available, including production, while the
+  // product is in dogfood; it only shows what this client already received.
+  const rawDebugAvailable = true;
   const [rawDebugOpen, setRawDebugOpen] = useState(false);
   const [rawDebugTurns, setRawDebugTurns] = useState<readonly RawDebugTurn[]>([]);
   // Record whenever the inspector is available, not only while it is open, so
@@ -608,23 +1084,15 @@ export default function DashPage() {
   rawDebugOnRef.current = rawDebugAvailable;
 
   useEffect(() => {
-    if (process.env.NODE_ENV !== "production") return;
-    try {
-      const optedIn = window.localStorage.getItem(rawDebugStorageKey) === "true"
-        || new URLSearchParams(window.location.search).get("debug") === "1";
-      if (optedIn) setRawDebugAvailable(true);
-    } catch {
-      // Ignore private-mode storage failures.
-    }
-  }, []);
-
-  useEffect(() => {
     try {
       window.localStorage.setItem("albert:chat:detailed-mode", chatDetailedMode ? "true" : "false");
     } catch {
       // Ignore private-mode storage failures.
     }
   }, [chatDetailedMode]);
+  useEffect(() => {
+    void reloadPublishedNivoChartDesign();
+  }, []);
   const [conversationSummaries, setConversationSummaries] = useState<readonly ConversationSummary[]>([]);
   const seenSidebarConversationIdsRef = useRef<Set<string>>(new Set());
   const [computingConversationIds, setComputingConversationIds] = useState<ReadonlySet<string>>(
@@ -665,6 +1133,30 @@ export default function DashPage() {
   );
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [composerMultiline, setComposerMultiline] = useState(false);
+  const dictation = useChatDictation();
+  // Live speech mode: the realtime voice fronts the same governed codex turn
+  // the composer sends, so spoken questions land in the visible chat thread.
+  const voice = useVoiceSession({
+    runAnalysis: (question, observer) => {
+      const current = agentPreferencesRef.current;
+      void sendChatMessage(question, undefined, {
+        allowWhileResponding: true,
+        forceRuntime: "codex",
+        // A spoken wait hurts far more than a read one: voice runs the fast
+        // profile (low effort + fast mode) instead of the selector's depth,
+        // and falls back to a codex-capable model if another runtime's model
+        // is selected.
+        preferencesOverride: {
+          model: (CODEX_MODEL_IDS as readonly string[]).includes(current.model)
+            ? current.model
+            : "gpt-5.6-luna",
+          reasoningEffort: "low",
+          fastMode: true,
+        },
+        observer,
+      });
+    },
+  });
   const [mobileConnectOpen, setMobileConnectOpen] = useState(false);
   const [mobileConnectClosing, setMobileConnectClosing] = useState(false);
   const [mobileNumber, setMobileNumber] = useState("");
@@ -674,14 +1166,21 @@ export default function DashPage() {
   const accountAreaRef = useRef<HTMLDivElement>(null);
   const accountPopoverRef = useRef<HTMLDivElement>(null);
   const accountTriggerRef = useRef<HTMLButtonElement>(null);
+  const view2HistoryRef = useRef<HTMLDivElement>(null);
   const accountPreviousFocusRef = useRef<HTMLElement | null>(null);
+  const agentsAreaRef = useRef<HTMLDivElement>(null);
+  const agentsPopoverRef = useRef<HTMLDivElement>(null);
+  const agentsTriggerRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const chatWorkspaceRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const chatSpacerRef = useRef<HTMLDivElement>(null);
   const chatComposerRef = useRef<HTMLFormElement>(null);
   const chatTextareaRef = useRef<HTMLTextAreaElement>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const editComposerRef = useRef<HTMLDivElement>(null);
+  const editResendConfirmButtonRef = useRef<HTMLButtonElement>(null);
+  const confirmEditedMessageResendRef = useRef<() => Promise<void>>(async () => {});
   const lastPinnedUserMessageIdRef = useRef<number | null>(null);
   const composerOriginTopRef = useRef<number | null>(null);
   const shouldAnimatePinRef = useRef(false);
@@ -693,23 +1192,40 @@ export default function DashPage() {
     controller: AbortController;
     assistantId: number;
     preferences: AgentRunPreferences;
+    runtime: Exclude<ChatRuntime, "fixture">;
+    specialistAgentId: SpecialistAgentId;
+    turnId?: string;
   }>());
   const activeConversationIdRef = useRef<string | undefined>(undefined);
+  const activeChatRuntimeRef = useRef<Exclude<ChatRuntime, "fixture">>("omni");
+  const specialistAgentIdRef = useRef<SpecialistAgentId>("general");
   const viewingKeyRef = useRef<string | null>(null);
   const agentPreferencesRef = useRef(agentPreferences);
   agentPreferencesRef.current = agentPreferences;
+  const codexSolPlannerEnabledRef = useRef(codexSolPlannerEnabled);
+  codexSolPlannerEnabledRef.current = codexSolPlannerEnabled;
+  const codexProModeEnabledRef = useRef(codexProModeEnabled);
+  codexProModeEnabledRef.current = codexProModeEnabled;
   const openConversationAbortRef = useRef<AbortController | null>(null);
   const openConversationRequestIdRef = useRef(0);
   const conversationCacheRef = useRef(new Map<string, {
     messages: ChatMessage[];
     preferences: AgentRunPreferences;
     messageSequence: number;
+    runtime: Exclude<ChatRuntime, "fixture">;
+    specialistAgentId: SpecialistAgentId;
   }>());
 
   useEffect(() => {
     activeConversationIdRef.current = activeConversationId;
     viewingKeyRef.current = activeConversationId ?? viewingKeyRef.current;
   }, [activeConversationId]);
+  useEffect(() => {
+    activeChatRuntimeRef.current = activeChatRuntime;
+  }, [activeChatRuntime]);
+  useEffect(() => {
+    specialistAgentIdRef.current = specialistAgentId;
+  }, [specialistAgentId]);
   const [openingConversationId, setOpeningConversationId] = useState<string | null>(null);
   const [conversationSkelPhase, setConversationSkelPhase] = useState<"idle" | "loading" | "revealing">("idle");
   const [conversationSkelRevealed, setConversationSkelRevealed] = useState(false);
@@ -727,6 +1243,52 @@ export default function DashPage() {
     && chatMessages.length === 0
     && !openingConversationId
     && !conversationSkelActive;
+  const reasoningTurns = chatMessages.flatMap((message, index) => {
+    if (message.role !== "assistant" || message.runtime !== "codex") return [];
+    const question = [...chatMessages.slice(0, index)]
+      .reverse()
+      .find((candidate) => candidate.role === "user")?.text.trim() ?? "";
+    // A swarm parent turn runs no model of its own — its reasoning lives on
+    // the child conversations, so the panel shows one entry per specialist.
+    if (
+      swarmSnapshot.parentTurnId
+      && message.turnId === swarmSnapshot.parentTurnId
+      && swarmSnapshot.agents.length > 0
+    ) {
+      return swarmSnapshot.agents
+        .filter((agent) => agent.phase !== "pending")
+        .map((agent) => ({
+          id: `${message.id}_${agent.key}`,
+          question: agent.tagline ? `${agent.title} — ${agent.tagline}` : agent.title,
+          summary: agent.reasoningSummary ?? null,
+          streaming: agent.phase === "starting"
+            || agent.phase === "researching"
+            || agent.phase === "recording",
+        }));
+    }
+    const summary = latestReasoningSummary(message.events ?? []);
+    if (!summary && !message.isStreaming) return [];
+    return [{
+      id: String(message.id),
+      question,
+      summary: summary as string | null,
+      streaming: Boolean(message.isStreaming),
+    }];
+  });
+  // The viewed conversation's most recent dashboard-architect turn feeds the
+  // build panel: its trace is the live view while it streams, and the marker
+  // by which a reopened build conversation re-enters dashboard mode.
+  const dashboardTurnMessage = useMemo(() => [...chatMessages].reverse().find((message) => (
+    message.role === "assistant"
+    && (message.dashboardBuild === true || isDashboardBuildTurn(message.events ?? []))
+  )), [chatMessages]);
+  const sidePanelOpen = reasoningPanelOpen || swarmPanelOpen || dashboardPanelOpen;
+  const chatBusy = isChatResponding
+    || (
+      swarmSnapshot.active
+      && Boolean(swarmSnapshot.parentConversationId)
+      && swarmSnapshot.parentConversationId === (activeConversationId ?? null)
+    );
   // Empty "New Analysis" keeps the Ask-me-anything title, but uses the same
   // compact input height as an active conversation. Tall hero sizing only runs
   // briefly after the first send while the docked transition finishes.
@@ -735,21 +1297,61 @@ export default function DashPage() {
     && !composerExpanded
     && !openingConversationId
     && !conversationSkelActive;
+  useEffect(() => {
+    if (chatComposerHero && activeChatRuntime === "codex") return;
+    setCodexPromptsOpen(false);
+  }, [activeChatRuntime, chatComposerHero]);
+  useEffect(() => {
+    if (!codexPromptsOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (codexPromptMenuRef.current?.contains(event.target as Node)) return;
+      setCodexPromptsOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setCodexPromptsOpen(false);
+      codexPromptTriggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [codexPromptsOpen]);
   const resizeComposerTextarea = useCallback(() => {
     const textarea = chatTextareaRef.current;
     if (!textarea) return;
-    const singleLineHeight = 34;
+    const singleLineHeight = showHeroComposer ? 34 : 28;
     const maxHeight = 168;
     textarea.style.height = "0px";
-    const contentHeight = textarea.scrollHeight;
+    // An empty field measures its wrapped placeholder as content, which
+    // would grow the box and flip the bar into its multiline layout inside a
+    // narrow card; the empty field is always exactly one line.
+    const contentHeight = textarea.value === "" ? singleLineHeight : textarea.scrollHeight;
     const nextHeight = Math.min(Math.max(contentHeight, singleLineHeight), maxHeight);
     textarea.style.height = `${nextHeight}px`;
-    setComposerMultiline(contentHeight > singleLineHeight + 2);
-  }, []);
+    // Prefer real wrapping / newlines over scrollHeight noise so the empty
+    // single-line field does not pick up multiline layout metrics.
+    const hasNewline = textarea.value.includes("\n");
+    setComposerMultiline(hasNewline || contentHeight > singleLineHeight + 4);
+  }, [showHeroComposer]);
 
   useLayoutEffect(() => {
     resizeComposerTextarea();
   }, [chatDraft, showHeroComposer, composerMultiline, resizeComposerTextarea]);
+
+  const previousDictationStatusRef = useRef(dictation.status);
+  useEffect(() => {
+    const previous = previousDictationStatusRef.current;
+    previousDictationStatusRef.current = dictation.status;
+    if (dictation.status !== "idle" || previous === "idle") return;
+    window.requestAnimationFrame(() => {
+      resizeComposerTextarea();
+      chatTextareaRef.current?.focus();
+    });
+  }, [dictation.status, resizeComposerTextarea]);
 
   const closeMobileConnect = useCallback(() => {
     if (!mobileConnectOpen || mobileConnectClosing) return;
@@ -798,6 +1400,11 @@ export default function DashPage() {
   }, [closeMobileConnect, mobileConnectClosing, mobileConnectOpen]);
 
   const canManageConnections = accountOrganisation.role === "owner" || accountOrganisation.role === "manager";
+  const canUseCustomerAgent = specialistAgentAllowedForRole("customers", accountOrganisation.role)
+    || isInternalOperator;
+  const activeSpecialistAgent = getPublicSpecialistAgentDefinition(specialistAgentId);
+  const customerSpecialistAgent = getPublicSpecialistAgentDefinition("customers");
+  const isCustomerAgent = specialistAgentId === "customers";
   const accountInitial = accountEmail.trim().charAt(0).toUpperCase() || "P";
   const accountRoleLabel = accountOrganisation.role
     ? accountOrganisation.role
@@ -809,6 +1416,83 @@ export default function DashPage() {
     () => new Set(conversationSidebarPrefs.archivedIds),
     [conversationSidebarPrefs.archivedIds],
   );
+  const [proactiveConversationIds, setProactiveConversationIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  useEffect(() => {
+    // Keep proactive research conversations out of sidebar history even before
+    // the Proactive tab is opened; the workspace refreshes this set afterwards.
+    let cancelled = false;
+    void fetch("/api/proactive", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: unknown) => {
+        if (cancelled || !payload || typeof payload !== "object") return;
+        const ids = (payload as { conversationIds?: unknown }).conversationIds;
+        if (!Array.isArray(ids)) return;
+        setProactiveConversationIds(new Set(
+          ids.filter((id): id is string => typeof id === "string"),
+        ));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const [dashboardMasterConversationIds, setDashboardMasterConversationIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  useEffect(() => {
+    // Dashboard Master worker conversations stay out of sidebar history too;
+    // the workspace refreshes this set whenever its panel reloads.
+    let cancelled = false;
+    void fetch("/api/dashboard-master", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: unknown) => {
+        if (cancelled || !payload || typeof payload !== "object") return;
+        const ids = (payload as { conversationIds?: unknown }).conversationIds;
+        if (!Array.isArray(ids)) return;
+        setDashboardMasterConversationIds(new Set(
+          ids.filter((id): id is string => typeof id === "string"),
+        ));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/swarm", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: unknown) => {
+        if (cancelled || !payload || typeof payload !== "object") return;
+        const ids = (payload as { conversationIds?: unknown }).conversationIds;
+        if (!Array.isArray(ids)) return;
+        setSwarmConversationIds(new Set(
+          ids.filter((id): id is string => typeof id === "string"),
+        ));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [swarmSnapshot.settledCount, swarmSnapshot.runId]);
+  useEffect(() => {
+    const ids = swarmSnapshot.agents
+      .map((agent) => agent.conversationId)
+      .filter((id): id is string => Boolean(id));
+    if (ids.length === 0) return;
+    setSwarmConversationIds((current) => {
+      const next = new Set(current);
+      let changed = false;
+      for (const id of ids) {
+        if (next.has(id)) continue;
+        next.add(id);
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [swarmSnapshot.agents]);
   const pinnedConversationIds = useMemo(
     () => conversationSidebarPrefs.pinnedIds,
     [conversationSidebarPrefs.pinnedIds],
@@ -821,12 +1505,21 @@ export default function DashPage() {
     const needle = query.trim().toLowerCase();
     return conversationSummaries.filter((conversation) => {
       if (archivedConversationIds.has(conversation.conversationId)) return false;
+      // Proactive research conversations live in the control panel, not history.
+      if (proactiveConversationIds.has(conversation.conversationId)) return false;
+      if (swarmConversationIds.has(conversation.conversationId)) return false;
+      if (dashboardMasterConversationIds.has(conversation.conversationId)) return false;
+      // Alert checks run their turn leases in a standing conversation; it is
+      // bookkeeping, not an analysis, so it stays out of history.
+      if (conversation.title.startsWith(ALERTS_CONVERSATION_TITLE_PREFIX)) return false;
+      // The daily look runs its turn in a standing conversation for the same reason.
+      if (conversation.title.startsWith(DAILY_BRIEF_CONVERSATION_TITLE_PREFIX)) return false;
       if (!needle) return true;
       return conversation.title.toLowerCase().includes(needle)
         || conversation.lastMessage.toLowerCase().includes(needle)
         || conversation.status.toLowerCase().includes(needle);
     });
-  }, [archivedConversationIds, conversationSummaries, query]);
+  }, [archivedConversationIds, conversationSummaries, dashboardMasterConversationIds, proactiveConversationIds, query, swarmConversationIds]);
   const conversationGroups = useMemo(() => {
     const byId = new Map(
       filteredConversations.map((conversation) => [conversation.conversationId, conversation]),
@@ -861,6 +1554,16 @@ export default function DashPage() {
     }
     return groups;
   }, [filteredConversations, pinnedConversationIdSet, pinnedConversationIds]);
+  const showRecommendedHome = chatComposerHero
+    && !isCustomerAgent
+    && conversationSummaries.some((conversation) => (
+      !archivedConversationIds.has(conversation.conversationId)
+      && !proactiveConversationIds.has(conversation.conversationId)
+      && !swarmConversationIds.has(conversation.conversationId)
+      && !dashboardMasterConversationIds.has(conversation.conversationId)
+      && !conversation.title.startsWith(ALERTS_CONVERSATION_TITLE_PREFIX)
+      && !conversation.title.startsWith(DAILY_BRIEF_CONVERSATION_TITLE_PREFIX)
+    ));
   const chatTitle = useMemo(() => {
     if (activeConversationId) {
       const match = conversationSummaries.find((item) => item.conversationId === activeConversationId);
@@ -870,6 +1573,25 @@ export default function DashPage() {
     if (firstUser?.text) return formatConversationTitle(firstUser.text);
     return "New Analysis";
   }, [activeConversationId, chatMessages, conversationSummaries]);
+  const pageHeading = activeItem === "SemanticMemory"
+    ? "Albert's memory"
+    : activeItem === "BusinessContext"
+      ? "About your business"
+      : activeItem === "DashboardMaster"
+        ? "Dashboard Master"
+        : activeItem === "Dashboard"
+          ? "Dashboards"
+          : activeItem;
+  const view2Pages = useMemo(() => ([
+    { id: "Chat" as const, label: "Chat", icon: "chat" as const, show: true },
+    { id: "Agents" as const, label: "Agents", icon: "agents" as const, show: true },
+    { id: "Proactive" as const, label: "Proactive", icon: "radar" as const, show: true },
+    { id: "DashboardMaster" as const, label: "Master", icon: "target" as const, show: true },
+    { id: "Dashboard" as const, label: "Dashboards", icon: "dashboard" as const, show: true },
+    { id: "My Data" as const, label: "My Data", icon: "database" as const, show: true },
+    { id: "New test" as const, label: "New test", icon: "chat" as const, show: true },
+    { id: "Logs" as const, label: "Logs", icon: "logs" as const, show: canViewQueryLogs },
+  ]), [canViewQueryLogs]);
 
   useEffect(() => {
     let isMounted = true;
@@ -897,9 +1619,25 @@ export default function DashPage() {
       url.searchParams.delete("oauth_detail");
       window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
     }
-    if (requestedView !== "Connections" && !nextOAuthNotice) return;
+    if (
+      requestedView !== "Connections"
+      && requestedView !== "MyData"
+      && requestedView !== "TestChart"
+      && requestedView !== "NewTest"
+      && requestedView !== "Proactive"
+      && requestedView !== "Agents"
+      && requestedView !== "Dashboard"
+      && !nextOAuthNotice
+    ) return;
+    if (requestedView === "NewTest") setActiveItem("New test");
     const task = window.setTimeout(() => {
-      if (requestedView === "Connections" || nextOAuthNotice) setActiveItem("Connections");
+      if (requestedView === "MyData") setActiveItem("My Data");
+      else if (requestedView === "TestChart") setActiveItem("Test chart");
+      else if (requestedView === "NewTest") setActiveItem("New test");
+      else if (requestedView === "Proactive") setActiveItem("Proactive");
+      else if (requestedView === "Agents") setActiveItem("Agents");
+      else if (requestedView === "Dashboard") setActiveItem("Dashboard");
+      else if (requestedView === "Connections" || nextOAuthNotice) setActiveItem("Connections");
       setOAuthNotice(nextOAuthNotice);
     }, 0);
     return () => window.clearTimeout(task);
@@ -909,6 +1647,12 @@ export default function DashPage() {
     const focusSearch = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== "k") return;
       event.preventDefault();
+      if (isView2) {
+        setAccountOpen(false);
+        setView2HistoryOpen(true);
+        window.requestAnimationFrame(() => searchInputRef.current?.focus());
+        return;
+      }
       setSidebarSearchOpen(true);
       if (collapsed) {
         setCollapsed(false);
@@ -920,7 +1664,13 @@ export default function DashPage() {
 
     document.addEventListener("keydown", focusSearch);
     return () => document.removeEventListener("keydown", focusSearch);
-  }, [collapsed]);
+  }, [collapsed, isView2]);
+
+  useEffect(() => {
+    if (swarmPanelOpen) return;
+    setSwarmPanelWidth(SWARM_PANEL_DEFAULT_WIDTH);
+    setSwarmPanelResizing(false);
+  }, [swarmPanelOpen]);
 
   useEffect(() => {
     if (collapsed) {
@@ -953,6 +1703,7 @@ export default function DashPage() {
         error?: string;
         needsBootstrap?: boolean;
         internalOperator?: boolean;
+        queryLogsViewer?: boolean;
         deletionReceipt?: unknown;
         user?: {
           email?: string | null;
@@ -966,6 +1717,11 @@ export default function DashPage() {
       };
       if (!sessionResponse.ok) throw new Error(sessionPayload.error || "Your organisation could not be loaded.");
       setIsInternalOperator(sessionPayload.internalOperator === true);
+      const queryLogsViewer = sessionPayload.queryLogsViewer === true;
+      setCanViewQueryLogs(queryLogsViewer);
+      if (!queryLogsViewer) {
+        setActiveItem((current) => current === "Logs" ? "Chat" : current);
+      }
       const nextDeletionReceipt = sessionPayload.deletionReceipt === null
         || sessionPayload.deletionReceipt === undefined
         ? null
@@ -1047,8 +1803,12 @@ export default function DashPage() {
     [sidebarSyncDomains],
   );
   const sidebarSyncActive = useMemo(
-    () => workspaceSyncIsActive(sidebarSyncDomains),
-    [sidebarSyncDomains],
+    () => workspaceSyncIsActive(sidebarSyncDomains) || connectionsData.providers.some((provider) =>
+      provider.connections.some((connection) =>
+        connectionIngestionIsPending(connection.ingestionState, connection.domains)
+      )
+    ),
+    [connectionsData.providers, sidebarSyncDomains],
   );
   const sidebarSyncFullyComplete = useMemo(() => {
     if (sidebarSyncDomains.length === 0) return false;
@@ -1106,7 +1866,7 @@ export default function DashPage() {
   };
 
   const selectOAuthAccount = async (oauthSessionId: string, externalAccountId: string) => {
-    setConnectionsStatus({ kind: "loading", message: "Finishing the connection and starting the first sync." });
+    setConnectionsStatus({ kind: "loading", message: "Finishing the connection." });
     const response = await fetch("/api/oauth/select", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1208,6 +1968,8 @@ export default function DashPage() {
     const restored: ChatMessage[] = [];
     let messageId = 0;
     let restoredPreferences = fallbackPreferences;
+    let restoredRuntime: Exclude<ChatRuntime, "fixture"> = "openai";
+    let restoredSpecialistAgentId: SpecialistAgentId = "general";
     if (!Array.isArray(history.turns)) {
       return null;
     }
@@ -1221,7 +1983,15 @@ export default function DashPage() {
         || !Array.isArray(turn.events)
       ) continue;
       messageId += 1;
-      restored.push({ id: messageId, role: "user", text: turn.user_message, suppressEnter: true });
+      const brief = parseDashboardBriefMessage(turn.user_message);
+      restored.push({
+        id: messageId,
+        role: "user",
+        text: dashboardBriefDisplayText(turn.user_message),
+        suppressEnter: true,
+        ...(brief?.dashboardId ? { dashboardId: brief.dashboardId } : {}),
+        ...(brief?.kind === "edit" && brief.tileId ? { dashboardEditTileId: brief.tileId } : {}),
+      });
       const events = turn.events
         .map(parseTraceEvent)
         .filter((event): event is TraceEvent => event !== null)
@@ -1232,16 +2002,22 @@ export default function DashPage() {
       const restoredEvents = turn.status === "running"
         ? [...events, buildStoppedTraceEvent(messageId, "This analysis was interrupted.", events.length + 1)]
         : events;
+      const turnRuntime = chatRuntimeFromProfile(turn.runtime_profile);
+      restoredRuntime = turnRuntime;
+      restoredSpecialistAgentId = specialistAgentIdFromProfile(turn.runtime_profile);
       restored.push({
         id: messageId,
         role: "assistant",
         text: "",
         events: restoredEvents,
         isStreaming: false,
-        runtime: "openai",
+        runtime: turnRuntime,
         conversationId,
         turnId: turn.turn_id,
         suppressEnter: true,
+        ...(brief ? { dashboardBuild: true } : {}),
+        ...(brief?.dashboardId ? { dashboardId: brief.dashboardId } : {}),
+        ...(brief?.kind === "edit" && brief.tileId ? { dashboardEditTileId: brief.tileId } : {}),
       });
       restoredPreferences = normalizeAgentPreferences(turn.runtime_profile);
     }
@@ -1250,6 +2026,8 @@ export default function DashPage() {
       messages: restored,
       preferences: restoredPreferences,
       messageSequence: messageId,
+      runtime: restoredRuntime,
+      specialistAgentId: restoredSpecialistAgentId,
     };
   }, []);
 
@@ -1300,6 +2078,8 @@ export default function DashPage() {
       messages: ChatMessage[];
       preferences: AgentRunPreferences;
       messageSequence: number;
+      runtime: Exclude<ChatRuntime, "fixture">;
+      specialistAgentId: SpecialistAgentId;
     },
   ) => {
     const live = liveTurnsRef.current.has(conversationId);
@@ -1318,6 +2098,32 @@ export default function DashPage() {
     viewingKeyRef.current = conversationId;
     clearConversationUnread(conversationId);
     setAgentPreferences(cached.preferences);
+    setActiveChatRuntime(cached.runtime);
+    activeChatRuntimeRef.current = cached.runtime;
+    setSpecialistAgentId(cached.specialistAgentId);
+    specialistAgentIdRef.current = cached.specialistAgentId;
+    // A build conversation reopens straight into dashboard mode — chat left,
+    // dashboard right — and an ordinary conversation drops back out of it.
+    const hasDashboardTurn = cached.messages.some((message) => (
+      message.role === "assistant"
+      && (message.dashboardBuild === true || isDashboardBuildTurn(message.events ?? []))
+    ));
+    if (hasDashboardTurn) {
+      // The dashboard the conversation built travels on its messages (parsed
+      // from the persisted brief), so the mode reopens on the same one.
+      const targeted = [...cached.messages].reverse().find((message) => typeof message.dashboardId === "string");
+      setDashboardModeDashboard(targeted?.dashboardId ?? null);
+      setSwarmMode(false);
+      setSuperAgentMode(false);
+      setDashboardMode(true);
+      setReasoningPanelOpen(false);
+      setSwarmPanelOpen(false);
+      setDashboardPanelOpen(true);
+    } else if (dashboardModeEnabledRef.current) {
+      setDashboardMode(false);
+      setDashboardModeDashboard(null);
+      setDashboardPanelOpen(false);
+    }
     const baseMessages = (live ? cached.messages : finalizeStreamingMessages(cached.messages)).map((message) => ({
       ...message,
       suppressEnter: true,
@@ -1328,6 +2134,8 @@ export default function DashPage() {
       messages: baseMessages,
       preferences: cached.preferences,
       messageSequence: cached.messageSequence,
+      runtime: cached.runtime,
+      specialistAgentId: cached.specialistAgentId,
     });
     setChatMessages(baseMessages);
     setIsChatResponding(live);
@@ -1360,7 +2168,7 @@ export default function DashPage() {
           : item
       )));
     }
-  }, [clearConversationUnread]);
+  }, [clearConversationUnread, setDashboardMode, setDashboardModeDashboard, setSuperAgentMode, setSwarmMode]);
 
   const prefetchConversation = useCallback(async (conversationId: string) => {
     if (conversationCacheRef.current.has(conversationId)) return;
@@ -1392,8 +2200,119 @@ export default function DashPage() {
       messages,
       preferences: agentPreferencesRef.current,
       messageSequence: chatMessageSequenceRef.current,
+      runtime: activeChatRuntimeRef.current,
+      specialistAgentId: specialistAgentIdRef.current,
     });
   };
+
+  const hydrateSwarmConversation = useCallback((conversationId: string) => {
+    void (async () => {
+      const response = await fetch(
+        `/api/swarm?conversationId=${encodeURIComponent(conversationId)}`,
+        { cache: "no-store" },
+      ).catch(() => null);
+      if (!response?.ok) return;
+      const payload = await response.json().catch(() => null) as
+        | { run?: PersistedSwarmRun }
+        | null;
+      let run = payload?.run;
+      if (!run || run.parentConversationId !== conversationId || !run.agents) return;
+
+      // A run still marked open with no fleet in this browser was stranded by
+      // a disconnect (or is live on another device). Reconciliation is
+      // lease-gated server-side, so asking is safe either way: a stranded run
+      // settles with its completed findings intact, a live one is untouched.
+      const liveHere = swarmRunSnapshot().active && swarmRunSnapshot().runId === run.runId;
+      if (!liveHere && (run.status === "running" || run.status === "synthesising")) {
+        const reconciled = await fetch("/api/swarm/reconcile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ runId: run.runId }),
+        }).then((result) => (result.ok ? result.json() : null)).catch(() => null) as
+          | { run?: PersistedSwarmRun }
+          | null;
+        if (reconciled?.run?.runId === run.runId && reconciled.run.agents) {
+          run = reconciled.run;
+        }
+      }
+      if (!run.agents) return;
+
+      const agents = swarmAgentsFromPersisted(run.agents);
+      hydrateSwarmFromRun({
+        runId: run.runId,
+        parentConversationId: run.parentConversationId,
+        parentTurnId: run.parentTurnId,
+        question: run.question,
+        periodLabel: run.plan?.periodLabel ?? "As asked",
+        agents,
+        answer: run.synthesis?.answer ?? null,
+        answerState: run.synthesis?.answerState ?? null,
+        synthesisSource: run.synthesis?.source ?? null,
+        synthesisRecovery: run.synthesis?.recovery ?? null,
+        followUps: run.synthesis?.followUps,
+        kind: run.plan?.kind,
+        runtime: run.plan?.runtime,
+        startedAt: run.startedAt,
+        durationMs: run.plan?.durationMs,
+        checkpointIntervalMs: run.plan?.checkpointIntervalMs,
+      });
+      if (run.status === "running" || run.status === "synthesising" || run.synthesis) {
+        setSwarmPanelOpen(true);
+        setReasoningPanelOpen(false);
+        setDashboardPanelOpen(false);
+      }
+      const settled = run.agents.every((agent) => (
+        agent.status === "completed" || agent.status === "failed" || agent.status === "stopped"
+      ));
+      const anyCompleted = run.agents.some((agent) => agent.status === "completed");
+      if (
+        !settled
+        || !anyCompleted
+        || run.synthesis
+        || run.status === "stopped"
+        || run.status === "abandoned"
+      ) {
+        return;
+      }
+      const finalRun = run;
+      await fetch("/api/swarm/synthesis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: finalRun.runId }),
+      }).then((result) => (result.ok ? result.json() : null)).then((result: unknown) => {
+        const synthesis = result && typeof result === "object"
+          ? (result as {
+            synthesis?: {
+              answer?: string;
+              answerState?: string;
+              source?: "model" | "model-repaired" | "fallback";
+              recovery?: "standard-after-pro" | null;
+              followUps?: string[];
+            };
+          }).synthesis
+          : null;
+        if (!synthesis?.answer) return;
+        hydrateSwarmFromRun({
+          runId: finalRun.runId,
+          parentConversationId: finalRun.parentConversationId,
+          parentTurnId: finalRun.parentTurnId,
+          question: finalRun.question,
+          periodLabel: finalRun.plan?.periodLabel ?? "As asked",
+          agents,
+          answer: synthesis.answer,
+          answerState: synthesis.answerState ?? null,
+          synthesisSource: synthesis.source ?? null,
+          synthesisRecovery: synthesis.recovery ?? null,
+          followUps: synthesis.followUps,
+          kind: finalRun.plan?.kind,
+          runtime: finalRun.plan?.runtime,
+          startedAt: finalRun.startedAt,
+          durationMs: finalRun.plan?.durationMs,
+          checkpointIntervalMs: finalRun.plan?.checkpointIntervalMs,
+        });
+      }).catch(() => undefined);
+    })();
+  }, []);
 
   const openSavedConversation = async (conversationId: string) => {
     if (conversationId === activeConversationId && activeItem === "Chat" && !openingConversationId) {
@@ -1412,9 +2331,15 @@ export default function DashPage() {
     setChatClarification(null);
     setClarifyDraft("");
     setActiveItem("Chat");
+    setChatSurface("chat");
     setActiveConversationId(conversationId);
     activeConversationIdRef.current = conversationId;
     viewingKeyRef.current = conversationId;
+    const summarySpecialist = conversationSummaries.find((item) => item.conversationId === conversationId)?.specialistAgentId;
+    if (summarySpecialist) {
+      setSpecialistAgentId(summarySpecialist);
+      specialistAgentIdRef.current = summarySpecialist;
+    }
     void loadConversationSummaries();
     setComposerExpanded(true);
     shouldAnimatePinRef.current = false;
@@ -1438,6 +2363,12 @@ export default function DashPage() {
 
     // A live background turn already owns the freshest transcript.
     if (liveTurnsRef.current.has(conversationId)) {
+      if (swarmRunSnapshot().parentConversationId === conversationId) {
+        setSwarmPanelOpen(true);
+        setReasoningPanelOpen(false);
+      } else {
+        hydrateSwarmConversation(conversationId);
+      }
       return;
     }
 
@@ -1471,11 +2402,13 @@ export default function DashPage() {
       // Keep local follow-ups that are ahead of the persisted server history.
       if (local && localUserCount > serverUserCount) {
         applyCachedConversation(conversationId, local);
+        hydrateSwarmConversation(conversationId);
         return;
       }
 
       conversationCacheRef.current.set(conversationId, restored);
       applyCachedConversation(conversationId, restored);
+      hydrateSwarmConversation(conversationId);
     } catch (error) {
       if (controller.signal.aborted || requestId !== openConversationRequestIdRef.current) return;
       setOpeningConversationId(null);
@@ -1504,6 +2437,60 @@ export default function DashPage() {
     if (chatPinTimerRef.current !== undefined) window.clearTimeout(chatPinTimerRef.current);
     if (composerExpandTimerRef.current !== undefined) window.clearTimeout(composerExpandTimerRef.current);
   }, []);
+
+  // Wheel over the top bar / composer (and other non-scroller chrome) should still
+  // drive the messages scroller so the chat page feels like one scroll surface.
+  useEffect(() => {
+    if (activeItem !== "Chat") return;
+    const workspace = chatWorkspaceRef.current;
+    if (!workspace) return;
+
+    const findScrollableAncestor = (
+      start: EventTarget | null,
+      boundary: HTMLElement,
+    ): HTMLElement | null => {
+      let el = start instanceof Element ? start : null;
+      while (el && el !== boundary) {
+        if (el instanceof HTMLElement) {
+          const overflowY = getComputedStyle(el).overflowY;
+          if (
+            (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") &&
+            el.scrollHeight > el.clientHeight + 1
+          ) {
+            return el;
+          }
+        }
+        el = el.parentElement;
+      }
+      return null;
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.defaultPrevented) return;
+      const scroller = chatMessagesRef.current;
+      if (!scroller) return;
+
+      const nested = findScrollableAncestor(event.target, workspace);
+      if (nested) {
+        if (nested === scroller) return;
+        const atTop = nested.scrollTop <= 0;
+        const atBottom = nested.scrollTop + nested.clientHeight >= nested.scrollHeight - 1;
+        if ((event.deltaY < 0 && !atTop) || (event.deltaY > 0 && !atBottom)) {
+          return;
+        }
+      }
+
+      const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+      if (maxScroll <= 0) return;
+      const next = Math.min(maxScroll, Math.max(0, scroller.scrollTop + event.deltaY));
+      if (next === scroller.scrollTop) return;
+      scroller.scrollTop = next;
+      event.preventDefault();
+    };
+
+    workspace.addEventListener("wheel", onWheel, { passive: false });
+    return () => workspace.removeEventListener("wheel", onWheel);
+  }, [activeItem, chatMessages.length, conversationSkelActive]);
 
   useLayoutEffect(() => {
     const container = chatMessagesRef.current;
@@ -1820,6 +2807,84 @@ export default function DashPage() {
     };
   }, [accountOpen]);
 
+  useEffect(() => {
+    if (accountOpen) return;
+    setView2PagesOpen(false);
+  }, [accountOpen]);
+
+  useEffect(() => {
+    if (!view2HistoryOpen) return;
+
+    const closeHistoryOnOutsidePress = (event: PointerEvent) => {
+      if (!view2HistoryRef.current?.contains(event.target as Node)) {
+        setView2HistoryOpen(false);
+      }
+    };
+
+    const handleHistoryKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setView2HistoryOpen(false);
+    };
+
+    document.addEventListener("pointerdown", closeHistoryOnOutsidePress);
+    document.addEventListener("keydown", handleHistoryKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", closeHistoryOnOutsidePress);
+      document.removeEventListener("keydown", handleHistoryKeyDown);
+    };
+  }, [view2HistoryOpen]);
+
+  useEffect(() => {
+    if (canUseCustomerAgent) return;
+    setAgentsOpen(false);
+  }, [canUseCustomerAgent]);
+
+  useEffect(() => {
+    if (!agentsOpen) return;
+
+    const popover = agentsPopoverRef.current;
+    const focusFrame = window.requestAnimationFrame(() => {
+      popover?.querySelector<HTMLElement>("[role=\"menuitemradio\"]")?.focus();
+    });
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      if (!agentsAreaRef.current?.contains(event.target as Node)) setAgentsOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setAgentsOpen(false);
+        window.requestAnimationFrame(() => agentsTriggerRef.current?.focus());
+        return;
+      }
+      if (event.key === "Tab") {
+        setAgentsOpen(false);
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      const items = [...(popover?.querySelectorAll<HTMLElement>("[role=\"menuitemradio\"]") ?? [])];
+      if (items.length === 0) return;
+      event.preventDefault();
+      const current = Math.max(0, items.indexOf(document.activeElement as HTMLElement));
+      const next = event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? items.length - 1
+          : event.key === "ArrowDown"
+            ? (current + 1) % items.length
+            : (current - 1 + items.length) % items.length;
+      items[next]?.focus();
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsidePress);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("pointerdown", closeOnOutsidePress);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [agentsOpen]);
+
   const markConversationComputing = useCallback((conversationId: string) => {
     const token = Symbol(conversationId);
     computingTokensRef.current.set(conversationId, token);
@@ -1840,6 +2905,15 @@ export default function DashPage() {
       conversationId?: string | null;
       priorMessageCount?: number;
       allowWhileResponding?: boolean;
+      /** Voice mode pins the governed codex pipeline regardless of the selector. */
+      forceRuntime?: "codex";
+      /** Voice mode trades analysis depth for latency with a fast profile. */
+      preferencesOverride?: AgentRunPreferences;
+      /** Voice narration listens to the turn without owning the chat UI. */
+      observer?: VoiceTurnObserver;
+      swarmKind?: "sales-deep" | "super-agent";
+      /** An element edit (ADR 0134): the dashboard-mode send rebuilds this one tile. */
+      dashboardEdit?: DashboardElementRef;
     }>,
   ) => {
     const text = (suggestedText ?? chatDraft).trim();
@@ -1858,12 +2932,33 @@ export default function DashPage() {
     const requestConversationId = options && "conversationId" in options
       ? (options.conversationId ?? undefined)
       : activeConversationId;
+    const liveSwarm = swarmRunSnapshot();
+    if (
+      liveSwarm.active
+      && liveSwarm.parentConversationId
+      && liveSwarm.parentConversationId === requestConversationId
+    ) {
+      stopSwarmFleet();
+    }
     let turnKey = requestConversationId && ulidPattern.test(requestConversationId)
       ? requestConversationId
       : `draft:${Date.now().toString(36)}`;
 
-    // Only replace an in-flight turn on the same conversation; others keep running.
+    const priorMessages = options?.priorMessageCount !== undefined
+      ? chatMessages.slice(0, options.priorMessageCount)
+      : chatMessages;
     const existing = liveTurnsRef.current.get(turnKey);
+    // Replacement is only for an accepted turn that is still in flight and
+    // is being superseded by a newly typed follow-up. A completed assistant
+    // turn is conversation history: sending its id here rewinds it instead of
+    // appending, which destroys the context referential follow-ups need.
+    const replaceTurnId = existing?.turnId;
+    const lastConversationRuntime = [...priorMessages]
+      .reverse()
+      .find((message) => message.runtime && message.runtime !== "fixture")
+      ?.runtime as Exclude<ChatRuntime, "fixture"> | undefined;
+
+    // Only replace an in-flight turn on the same conversation; others keep running.
     if (existing && !existing.controller.signal.aborted) {
       existing.controller.abort();
       liveTurnsRef.current.delete(turnKey);
@@ -1879,7 +2974,44 @@ export default function DashPage() {
     let computingToken = trackedConversationId
       ? markConversationComputing(trackedConversationId)
       : null;
-    const runPreferences = agentPreferencesRef.current;
+    const runPreferences = options?.preferencesOverride ?? agentPreferencesRef.current;
+    const runSpecialistAgentId = specialistAgentIdRef.current;
+    // Dashboard mode routes the send through the dashboard architect on Omni.
+    // Swarm and Super agent win if somehow both are set (toggles are exclusive).
+    const runDashboardBuild = dashboardModeEnabledRef.current
+      && !swarmEnabledRef.current
+      && !superAgentEnabledRef.current
+      && !options?.forceRuntime
+      && !options?.swarmKind;
+    const runDashboardTargetId = runDashboardBuild ? dashboardModeDashboardIdRef.current : null;
+    const runDashboardEdit = runDashboardBuild ? options?.dashboardEdit ?? null : null;
+    const runRuntime = runDashboardBuild
+      ? "omni"
+      : swarmEnabledRef.current && !superAgentEnabledRef.current && activeChatRuntimeRef.current === "omni"
+      ? "omni"
+      : swarmEnabledRef.current || superAgentEnabledRef.current
+      ? "codex"
+      : options?.forceRuntime
+      ? options.forceRuntime
+      : activeChatRuntimeRef.current === "codex"
+      ? "codex"
+      : activeChatRuntimeRef.current === "omni"
+      ? "omni"
+      : isAnthropicModel(runPreferences.model)
+      ? "v3"
+      : activeChatRuntimeRef.current === "xero_mcp"
+      ? "xero_mcp"
+      : isXaiModel(runPreferences.model)
+        ? "v3"
+    : (requestConversationId && lastConversationRuntime)
+          ? lastConversationRuntime
+          : activeChatRuntimeRef.current;
+    const runSolPlanner = runRuntime === "codex"
+      ? codexSolPlannerEnabledRef.current
+      : false;
+    const runProMode = runRuntime === "codex"
+      ? codexProModeEnabledRef.current
+      : false;
     if (firstFlight && chatComposerRef.current) {
       composerOriginTopRef.current = chatComposerRef.current.getBoundingClientRect().top;
     } else {
@@ -1889,21 +3021,31 @@ export default function DashPage() {
     viewingKeyRef.current = turnKey;
 
     const initialMessages = (() => {
-      const base = options?.priorMessageCount !== undefined
-        ? chatMessages.slice(0, options.priorMessageCount)
-        : chatMessages;
+      const base = priorMessages;
       const finalized = finalizeStreamingMessages(base, "Stopped.");
       return [
         ...finalized,
-        { id: userId, role: "user" as const, text, suppressEnter: firstFlight },
+        {
+          id: userId,
+          role: "user" as const,
+          // An element edit reads as one in the trail, as it does on reload.
+          text: runDashboardEdit ? `Edit “${runDashboardEdit.title}”: ${text}` : text,
+          suppressEnter: firstFlight,
+          ...(runDashboardTargetId ? { dashboardId: runDashboardTargetId } : {}),
+          ...(runDashboardEdit ? { dashboardEditTileId: runDashboardEdit.tileId } : {}),
+        },
         {
           id: assistantId,
           role: "assistant" as const,
           text: "",
           isStreaming: true,
           events: [] as TraceEvent[],
+          runtime: runRuntime,
           suppressEnter: firstFlight,
           trailVisible: Boolean(reduceMotion) || !firstFlight,
+          ...(runDashboardBuild ? { dashboardBuild: true } : {}),
+          ...(runDashboardTargetId ? { dashboardId: runDashboardTargetId } : {}),
+          ...(runDashboardEdit ? { dashboardEditTileId: runDashboardEdit.tileId } : {}),
         },
       ];
     })();
@@ -1913,6 +3055,8 @@ export default function DashPage() {
       messages: initialMessages,
       preferences: runPreferences,
       messageSequence: messageSequenceAtStart,
+      runtime: runRuntime,
+      specialistAgentId: runSpecialistAgentId,
     });
     if (trackedConversationId) {
       const now = new Date().toISOString();
@@ -1955,8 +3099,12 @@ export default function DashPage() {
       controller,
       assistantId,
       preferences: runPreferences,
+      runtime: runRuntime,
+      specialistAgentId: runSpecialistAgentId,
     });
     const receivedEvents: TraceEvent[] = [];
+    let observerNotified = false;
+    let observerFailure: string | null = null;
     const debug = createRawDebugRecorder({
       enabled: rawDebugOnRef.current,
       id: `turn_${assistantId}`,
@@ -1977,6 +3125,8 @@ export default function DashPage() {
       conversationCacheRef.current.set(cacheKey, {
         messages: next,
         preferences: runPreferences,
+        runtime: runRuntime,
+        specialistAgentId: runSpecialistAgentId,
         messageSequence: Math.max(
           messageSequenceAtStart,
           conversationCacheRef.current.get(cacheKey)?.messageSequence ?? 0,
@@ -1987,8 +3137,16 @@ export default function DashPage() {
       }
     };
 
+    // Everything patched onto the assistant row so far. The terminal commits
+    // below fold this in: they read the conversation cache synchronously,
+    // and when a response arrives in one chunk React has not yet flushed the
+    // functional updaters that wrote the turn identifiers (and runtime) —
+    // without this the final plain setState would drop them, which silently
+    // disables every per-turn affordance (Add to dashboard, source links).
+    const assistantPatches: Partial<ChatMessage> = {};
     const updateAssistant = (patch: Partial<ChatMessage>) => {
       if (liveTurnsRef.current.get(turnKey)?.controller !== controller) return;
+      Object.assign(assistantPatches, patch);
       const cacheKey = trackedConversationId && ulidPattern.test(trackedConversationId)
         ? trackedConversationId
         : turnKey;
@@ -2002,6 +3160,8 @@ export default function DashPage() {
             messages: next,
             preferences: runPreferences,
             messageSequence: chatMessageSequenceRef.current,
+            runtime: runRuntime,
+            specialistAgentId: runSpecialistAgentId,
           });
           return next;
         });
@@ -2011,15 +3171,229 @@ export default function DashPage() {
       if (current) commitMessages(apply(current));
     };
 
+    let swarmFleetStarted = false;
+    let dashboardRunToken: number | null = null;
     try {
+      if (swarmEnabledRef.current || superAgentEnabledRef.current) {
+        const swarmKind = options?.swarmKind
+          ?? (superAgentEnabledRef.current ? SUPER_AGENT_KIND : undefined);
+        const swarmRuntime = runRuntime === "omni" ? "omni" as const : "codex" as const;
+        debug.request("/api/swarm", {
+          message: text,
+          preferences: runPreferences,
+          solPlanner: runSolPlanner,
+          proMode: runProMode,
+          ...(swarmKind ? { kind: swarmKind } : {}),
+          ...(swarmRuntime === "omni" ? { runtime: swarmRuntime } : {}),
+        });
+        const response = await fetch("/api/swarm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: text,
+            preferences: runPreferences,
+            solPlanner: runSolPlanner,
+            proMode: runProMode,
+            ...(requestConversationId ? { conversationId: requestConversationId } : {}),
+            ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
+            ...(swarmKind ? { kind: swarmKind } : {}),
+            ...(swarmRuntime === "omni" ? { runtime: swarmRuntime } : {}),
+          }),
+          signal: controller.signal,
+        });
+        if (liveTurnsRef.current.get(turnKey)?.controller !== controller) return;
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null) as { error?: string } | null;
+          throw new Error(describeChatFailure(payload?.error || `HTTP ${response.status}`, {
+            runtime: swarmRuntime,
+            httpStatus: response.status,
+            phase: "start",
+          }));
+        }
+        const responseConversationId = response.headers.get("X-Albert-Conversation-Id");
+        const responseTurnId = response.headers.get("X-Albert-Turn-Id");
+        const payload = await response.json() as {
+          run?: { runId?: string; plan?: { periodLabel?: string } };
+          agents?: readonly {
+            key: string;
+            title: string;
+            tagline: string;
+            role: string;
+            prompt: string;
+          }[];
+          preferences?: {
+            model: string;
+            reasoningEffort: string;
+            fastMode: boolean;
+            solPlanner: boolean;
+            proMode: boolean;
+          };
+          concurrency?: number;
+          kind?: "question" | "sales-deep" | "super-agent";
+          runtime?: "codex" | "omni";
+          durationMs?: number;
+          checkpointIntervalMs?: number;
+        };
+        if (
+          !responseConversationId || !ulidPattern.test(responseConversationId)
+          || !responseTurnId || !ulidPattern.test(responseTurnId)
+          || !payload.run?.runId
+          || !payload.agents
+        ) {
+          throw new Error("The swarm did not return its conversation or agents.");
+        }
+        if (trackedConversationId && computingToken && trackedConversationId !== responseConversationId) {
+          clearConversationComputing(trackedConversationId, computingToken);
+        }
+        const previousKey = turnKey;
+        trackedConversationId = responseConversationId;
+        turnKey = responseConversationId;
+        computingToken = markConversationComputing(responseConversationId);
+        const live = liveTurnsRef.current.get(previousKey);
+        if (live) {
+          liveTurnsRef.current.delete(previousKey);
+          liveTurnsRef.current.set(turnKey, { ...live, turnId: responseTurnId });
+        }
+        const draftCache = conversationCacheRef.current.get(previousKey);
+        if (draftCache) {
+          conversationCacheRef.current.delete(previousKey);
+          conversationCacheRef.current.set(turnKey, draftCache);
+        }
+        if (viewingKeyRef.current === previousKey) viewingKeyRef.current = turnKey;
+        if (
+          !activeConversationIdRef.current
+          || activeConversationIdRef.current === requestConversationId
+          || viewingKeyRef.current === turnKey
+        ) {
+          setActiveConversationId(responseConversationId);
+          activeConversationIdRef.current = responseConversationId;
+        }
+        const settledSwarmRuntime = payload.runtime ?? swarmRuntime;
+        setActiveChatRuntime(settledSwarmRuntime);
+        activeChatRuntimeRef.current = settledSwarmRuntime;
+        const now = new Date().toISOString();
+        setConversationSummaries((current) => {
+          const existingSummary = current.find((item) => item.conversationId === responseConversationId);
+          return [{
+            conversationId: responseConversationId,
+            title: existingSummary?.title || formatConversationTitle(text),
+            titlePending: existingSummary?.titlePending ?? true,
+            status: existingSummary?.status || "active",
+            updatedAt: now,
+            lastMessage: text,
+            lastTurnStatus: "running",
+            runtime: settledSwarmRuntime,
+            specialistAgentId: runSpecialistAgentId,
+          }, ...current.filter((item) => item.conversationId !== responseConversationId)];
+        });
+        updateAssistant({
+          runtime: settledSwarmRuntime,
+          conversationId: responseConversationId,
+          turnId: responseTurnId,
+        });
+        startSwarmFleet({
+          runId: payload.run.runId,
+          parentConversationId: responseConversationId,
+          parentTurnId: responseTurnId,
+          question: text,
+          periodLabel: payload.run.plan?.periodLabel ?? "As asked",
+          agents: payload.agents,
+          preferences: payload.preferences ?? {
+            model: runPreferences.model,
+            reasoningEffort: runPreferences.reasoningEffort,
+            fastMode: runPreferences.fastMode,
+            solPlanner: runSolPlanner,
+            proMode: runProMode,
+          },
+          concurrency: payload.concurrency ?? 3,
+          kind: payload.kind,
+          runtime: settledSwarmRuntime,
+          durationMs: payload.durationMs,
+          checkpointIntervalMs: payload.checkpointIntervalMs,
+        });
+        swarmFleetStarted = true;
+        setSwarmPanelOpen(true);
+        setReasoningPanelOpen(false);
+        return;
+      }
+      // Dashboard mode: compose the architect brief server-side — the owner's
+      // ask plus the current tiles for refinement context — then run it as a
+      // real Omni turn with dashboardBuild so the working streams into this
+      // chat while the build panel shows the tiles landing.
+      let requestMessage = text;
+      let requestPreferences = runPreferences;
+      let dashboardEditTopic: string | null = null;
+      if (runDashboardBuild) {
+        dashboardRunToken = beginDashboardBuildTurn(text, {
+          dashboardId: runDashboardTargetId,
+          editTile: runDashboardEdit,
+        });
+        setDashboardPanelOpen(true);
+        setReasoningPanelOpen(false);
+        setSwarmPanelOpen(false);
+        const briefRequest = {
+          instruction: text,
+          ...(runDashboardTargetId ? { dashboardId: runDashboardTargetId } : {}),
+          ...(runDashboardEdit ? { tileId: runDashboardEdit.tileId } : {}),
+        };
+        debug.request("/api/dashboard/build", briefRequest);
+        const briefResponse = await fetch("/api/dashboard/build", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(briefRequest),
+          signal: controller.signal,
+        });
+        const briefPayload = await briefResponse.json().catch(() => null) as {
+          message?: string;
+          preferences?: AgentRunPreferences;
+          dashboardId?: string;
+          editTopic?: string;
+          error?: string;
+        } | null;
+        if (!briefResponse.ok || typeof briefPayload?.message !== "string") {
+          throw new Error(briefPayload?.error || "The dashboard build could not be started.");
+        }
+        requestMessage = briefPayload.message;
+        if (briefPayload.preferences) requestPreferences = briefPayload.preferences;
+        if (typeof briefPayload.editTopic === "string") dashboardEditTopic = briefPayload.editTopic;
+        // An unnamed build lands on the dashboard the server resolved (or
+        // created); the mode follows it so the panel shows that document.
+        if (typeof briefPayload.dashboardId === "string" && ulidPattern.test(briefPayload.dashboardId)) {
+          attachDashboardBuildDashboard(dashboardRunToken, briefPayload.dashboardId);
+          if (dashboardModeDashboardIdRef.current !== briefPayload.dashboardId) {
+            setDashboardModeDashboard(briefPayload.dashboardId);
+          }
+        }
+      }
       const requestBody = {
-        message: text,
-        preferences: runPreferences,
+        message: requestMessage,
+        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "omni" || runRuntime === "xero_mcp" ? { preferences: requestPreferences } : {}),
+        ...(runRuntime === "codex" ? { solPlanner: runSolPlanner } : {}),
+        ...(runRuntime === "codex" ? { proMode: runProMode } : {}),
         ...(requestConversationId ? { conversationId: requestConversationId } : {}),
+        ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
+        ...(runRuntime === "v3" ? { specialistAgentId: runSpecialistAgentId } : {}),
+        ...(runDashboardBuild ? { dashboardBuild: true } : {}),
+        // An element edit runs the lean edit mode with its topic inlined (ADR 0134).
+        ...(runDashboardBuild && runDashboardEdit ? { dashboardEdit: true } : {}),
+        ...(runDashboardBuild && runDashboardEdit && dashboardEditTopic ? { dashboardEditTopic } : {}),
         confirmedOption,
       };
-      debug.request("/api/conversation", requestBody);
-      const response = await fetch("/api/conversation", {
+      const endpoint = runRuntime === "codex"
+        ? "/api/codex-conversation"
+        : runRuntime === "omni"
+        ? "/api/omni-conversation"
+        : runRuntime === "anthropic"
+        ? "/api/anthropic-conversation"
+        : runRuntime === "cubecore"
+          ? "/api/cube-conversation"
+          : runRuntime === "xero_mcp"
+            ? "/api/xero-mcp-conversation"
+            : runRuntime === "v3"
+              ? "/api/v3-conversation"
+              : "/api/conversation";
+      debug.request(endpoint, requestBody);
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
@@ -2032,18 +3406,52 @@ export default function DashPage() {
         const payload = await response.json().catch(() => null) as { error?: string } | null;
         debug.response(response, { runtime: "n/a", conversationId: null, turnId: null });
         debug.note("Request rejected before streaming", payload);
-        throw new Error(payload?.error || "Albert could not start this analysis.");
+        throw new Error(describeChatFailure(payload?.error || `HTTP ${response.status}`, {
+          runtime: runRuntime,
+          httpStatus: response.status,
+          phase: "start",
+        }));
       }
 
-      const runtime = response.headers.get("X-Albert-Runtime") === "fixture" ? "fixture" : "openai";
+      const runtimeHeader = response.headers.get("X-Albert-Runtime");
+      const runtime: ChatRuntime = runtimeHeader === "fixture"
+        ? "fixture"
+        : runtimeHeader === "codex"
+          ? "codex"
+        : runtimeHeader === "omni"
+          ? "omni"
+        : runtimeHeader === "anthropic"
+          ? "anthropic"
+          : runtimeHeader === "cubecore"
+            ? "cubecore"
+            : runtimeHeader === "xero_mcp"
+              ? "xero_mcp"
+              : runtimeHeader === "v3"
+                ? "v3"
+                : "openai";
       const responseConversationId = response.headers.get("X-Albert-Conversation-Id");
       const responseTurnId = response.headers.get("X-Albert-Turn-Id");
+      const responseSpecialistAgentId = parseSpecialistAgentId(
+        response.headers.get("X-Albert-Specialist-Agent"),
+      );
       debug.response(response, {
         runtime,
         conversationId: responseConversationId,
         turnId: responseTurnId,
       });
-      if (runtime === "openai" && (
+      if (runtime !== "fixture" && runtime !== runRuntime) {
+        await response.body?.cancel("runtime_lock_mismatch");
+        throw new Error("The conversation runtime did not match the selected method.");
+      }
+      if ((runtime === "codex" || runtime === "omni") && response.headers.get("X-Albert-Model") !== requestPreferences.model) {
+        await response.body?.cancel("codex_model_mismatch");
+        throw new Error("The conversation did not use the selected model.");
+      }
+      if (runtime === "v3" && responseSpecialistAgentId !== runSpecialistAgentId) {
+        await response.body?.cancel("specialist_agent_lock_mismatch");
+        throw new Error("The conversation specialist did not match the selected agent.");
+      }
+      if (runtime !== "fixture" && (
         !responseConversationId || !ulidPattern.test(responseConversationId)
         || !responseTurnId || !ulidPattern.test(responseTurnId)
       )) {
@@ -2061,7 +3469,10 @@ export default function DashPage() {
         const live = liveTurnsRef.current.get(previousKey);
         if (live) {
           liveTurnsRef.current.delete(previousKey);
-          liveTurnsRef.current.set(turnKey, live);
+          liveTurnsRef.current.set(turnKey, {
+            ...live,
+            ...(responseTurnId && ulidPattern.test(responseTurnId) ? { turnId: responseTurnId } : {}),
+          });
         }
         const draftCache = conversationCacheRef.current.get(previousKey);
         if (draftCache) {
@@ -2091,6 +3502,8 @@ export default function DashPage() {
             updatedAt: now,
             lastMessage: text,
             lastTurnStatus: "running",
+            runtime: runRuntime,
+            specialistAgentId: runSpecialistAgentId,
           };
           return [nextItem, ...current.filter((item) => item.conversationId !== responseConversationId)];
         });
@@ -2102,8 +3515,31 @@ export default function DashPage() {
           turnId: responseTurnId,
         } : {}),
       });
+      if (responseTurnId && ulidPattern.test(responseTurnId)) {
+        const live = liveTurnsRef.current.get(turnKey);
+        if (live) liveTurnsRef.current.set(turnKey, { ...live, turnId: responseTurnId });
+      }
+      if (
+        dashboardRunToken !== null
+        && responseConversationId && ulidPattern.test(responseConversationId)
+        && responseTurnId && ulidPattern.test(responseTurnId)
+      ) {
+        attachDashboardBuildTurn(dashboardRunToken, {
+          conversationId: responseConversationId,
+          turnId: responseTurnId,
+        });
+      }
+      if (runtime !== "fixture" && isViewingThisTurn()) {
+        setActiveChatRuntime(runtime);
+        activeChatRuntimeRef.current = runtime;
+      }
 
-      if (!response.body) throw new Error("The conversation stream was unavailable.");
+      if (!response.body) {
+        throw new Error(describeChatFailure(new Error("The conversation stream was unavailable."), {
+          runtime,
+          phase: "stream",
+        }));
+      }
       const reader = response.body.getReader();
       const cancelReader = () => {
         void reader.cancel("client_stop").catch(() => undefined);
@@ -2171,6 +3607,7 @@ export default function DashPage() {
         receivedEvents.push(event);
         receivedEvents.sort((first, second) => first.sequence - second.sequence);
         updateAssistant({ events: [...receivedEvents] });
+        options?.observer?.onEvent(event);
       };
 
       while (true) {
@@ -2191,6 +3628,7 @@ export default function DashPage() {
       }
       if (controller.signal.aborted) {
         debug.finish("stopped");
+        if (dashboardRunToken !== null) stopDashboardBuildTurn(dashboardRunToken);
         const stoppedEvent = buildStoppedTraceEvent(
           assistantId,
           "Stopped.",
@@ -2204,6 +3642,7 @@ export default function DashPage() {
           message.id === assistantId
             ? {
               ...message,
+              ...assistantPatches,
               isStreaming: false,
               events: receivedEvents.length > 0 ? [...receivedEvents, stoppedEvent] : [stoppedEvent],
             }
@@ -2213,7 +3652,12 @@ export default function DashPage() {
       }
       if (liveTurnsRef.current.get(turnKey)?.controller !== controller) return;
       if (buffer.trim()) acceptBlock(buffer);
-      if (receivedEvents.length === 0) throw new Error("Albert returned an empty analysis trace.");
+      if (receivedEvents.length === 0) {
+        throw new Error(describeChatFailure(new Error("empty analysis trace"), {
+          runtime,
+          phase: "empty_trace",
+        }));
+      }
       debug.finish("complete");
 
       const cacheKey = trackedConversationId && ulidPattern.test(trackedConversationId)
@@ -2222,9 +3666,33 @@ export default function DashPage() {
       const current = conversationCacheRef.current.get(cacheKey)?.messages ?? initialMessages;
       commitMessages(current.map((message) => (
         message.id === assistantId
-          ? { ...message, isStreaming: false, events: [...receivedEvents] }
+          ? { ...message, ...assistantPatches, isStreaming: false, events: [...receivedEvents] }
           : message
       )));
+      if (dashboardRunToken !== null) {
+        // A composed plan makes the turn a dashboard: apply it from the
+        // persisted trace. Without one, surface why the architect stopped.
+        const sawPlan = receivedEvents.some((event) => event.type === "dashboard_plan");
+        const settledTurnId = liveTurnsRef.current.get(turnKey)?.turnId;
+        if (
+          sawPlan
+          && trackedConversationId && ulidPattern.test(trackedConversationId)
+          && settledTurnId && ulidPattern.test(settledTurnId)
+        ) {
+          applyDashboardBuildTurn(dashboardRunToken, {
+            conversationId: trackedConversationId,
+            turnId: settledTurnId,
+          });
+        } else {
+          const failure = [...receivedEvents]
+            .reverse()
+            .find((event) => event.type === "error") as { message?: string } | undefined;
+          failDashboardBuildTurn(
+            dashboardRunToken,
+            failure?.message ?? "The build finished without a composed dashboard.",
+          );
+        }
+      }
       void loadConversationSummaries();
     } catch (error) {
       debug.failed(error);
@@ -2237,6 +3705,7 @@ export default function DashPage() {
         : turnKey;
       const current = conversationCacheRef.current.get(cacheKey)?.messages ?? initialMessages;
       if (controller.signal.aborted) {
+        if (dashboardRunToken !== null) stopDashboardBuildTurn(dashboardRunToken);
         const stoppedEvent = buildStoppedTraceEvent(
           assistantId,
           "Stopped.",
@@ -2246,6 +3715,7 @@ export default function DashPage() {
           message.id === assistantId
             ? {
               ...message,
+              ...assistantPatches,
               isStreaming: false,
               events: receivedEvents.length > 0 ? [...receivedEvents, stoppedEvent] : [stoppedEvent],
             }
@@ -2253,7 +3723,9 @@ export default function DashPage() {
         )));
         return;
       }
-      const message = error instanceof Error ? error.message : "Albert could not complete this analysis.";
+      const message = describeChatFailure(error, { runtime: runRuntime, phase: "start" });
+      observerFailure = message;
+      if (dashboardRunToken !== null) failDashboardBuildTurn(dashboardRunToken, message);
       const errorEvent: TraceEvent = {
         id: `trace_error_${assistantId}`,
         sequence: receivedEvents.length + 1,
@@ -2265,11 +3737,36 @@ export default function DashPage() {
       };
       commitMessages(current.map((entry) => (
         entry.id === assistantId
-          ? { ...entry, isStreaming: false, events: [...receivedEvents, errorEvent] }
+          ? { ...entry, ...assistantPatches, isStreaming: false, events: [...receivedEvents, errorEvent] }
           : entry
       )));
     } finally {
-      if (trackedConversationId && computingToken) {
+      if (swarmFleetStarted) {
+        return;
+      }
+      if (options?.observer && !observerNotified) {
+        observerNotified = true;
+        const answer = [...receivedEvents]
+          .reverse()
+          .find((event): event is TraceAnswerEvent => event.type === "answer");
+        const clarification = [...receivedEvents]
+          .reverse()
+          .find((event): event is TraceClarificationEvent => event.type === "clarification");
+        options.observer.onDone(
+          controller.signal.aborted
+            ? { stopped: true }
+            : clarification && (!answer || answer.state === "Clarification")
+              ? { clarification }
+              : answer
+                ? { answer }
+                : { error: observerFailure ?? "The analysis ended without an answer." },
+        );
+      }
+      if (
+        trackedConversationId
+        && computingToken
+        && !(controller.signal.aborted && runRuntime === "codex")
+      ) {
         clearConversationComputing(trackedConversationId, computingToken);
       }
       if (liveTurnsRef.current.get(turnKey)?.controller === controller) {
@@ -2293,7 +3790,9 @@ export default function DashPage() {
           item.conversationId === trackedConversationId
             ? {
               ...item,
-              lastTurnStatus: controller.signal.aborted ? "cancelled" : "completed",
+              lastTurnStatus: controller.signal.aborted
+                ? (runRuntime === "codex" || runRuntime === "omni" ? "running" : "cancelled")
+                : "completed",
             }
             : item
         )));
@@ -2301,52 +3800,213 @@ export default function DashPage() {
     }
   };
 
-  const stopChatResponse = () => {
+  useEffect(() => {
+    const snap = swarmSnapshot;
+    if (!snap.parentConversationId || !snap.runId) return;
+    const cacheKey = snap.parentConversationId;
+    const cache = conversationCacheRef.current.get(cacheKey);
+    const live = liveTurnsRef.current.get(cacheKey);
+    if (!cache && !live) return;
+
+    // Synthesized events are rebuilt on every fleet publish, so each id keeps
+    // the timestamp from when it first appeared — a moving occurredAt would
+    // reset the trail's elapsed clock and reorder animations.
+    const stampCache = swarmEventTimesRef.current;
+    if (stampCache.runId !== snap.runId) {
+      stampCache.runId = snap.runId;
+      stampCache.times.clear();
+    }
+    const stamp = (id: string): string => {
+      const cached = stampCache.times.get(id);
+      if (cached) return cached;
+      const fresh = new Date().toISOString();
+      stampCache.times.set(id, fresh);
+      return fresh;
+    };
+
+    const planEvent: TraceEvent = {
+      id: `swarm_plan_${snap.runId}`,
+      sequence: 2,
+      type: "plan",
+      occurredAt: stamp(`swarm_plan_${snap.runId}`),
+      steps: swarmPlanSteps({
+        agents: snap.agents.map((agent) => ({
+          key: agent.key,
+          title: agent.title,
+          status: agent.phase,
+        })),
+        synthesising: snap.synthesising,
+        synthesised: Boolean(snap.answer),
+      }),
+    };
+    const ackEvent: TraceEvent = {
+      id: `swarm_ack_${snap.runId}`,
+      sequence: 1,
+      type: "narrative",
+      purpose: "acknowledgement",
+      occurredAt: stamp(`swarm_ack_${snap.runId}`),
+      text: snap.periodLabel && snap.periodLabel !== "As asked"
+        ? `I'll split this across ${snap.agents.length} specialists for ${snap.periodLabel}.`
+        : `I'll split this across ${snap.agents.length} specialists, then combine what they find.`,
+    };
+    const events: TraceEvent[] = [ackEvent, planEvent];
+
+    // Mirror the fleet into the parent thread as live commentary — a status
+    // line per working specialist plus a fleet pulse — so the main
+    // conversation shows what every specialist is doing without opening the
+    // slide-out. Milestone ids are stable; in-flight lines rewrite in place.
+    let sequence = 3;
+    if (!snap.answer && !snap.error) {
+      const commentary = swarmLiveCommentary({
+        runId: snap.runId,
+        agents: snap.agents,
+        synthesising: snap.synthesising,
+        startedAtMs: snap.startedAtMs,
+        nowMs: Date.now(),
+        nowIso: new Date().toISOString(),
+        checkpointText: snap.kind === "super-agent" ? snap.checkpointText : null,
+        startSequence: sequence,
+        stamp,
+      });
+      events.push(...commentary);
+      sequence += commentary.length;
+    }
+    if (snap.answer) {
+      const answerState: AnswerState = (
+        snap.answerState === "Verified"
+        || snap.answerState === "Derived"
+        || snap.answerState === "Qualified"
+        || snap.answerState === "Exploratory"
+        || snap.answerState === "Clarification"
+        || snap.answerState === "No data"
+        || snap.answerState === "Unavailable"
+      ) ? snap.answerState : "Derived";
+      events.push({
+        id: `swarm_answer_${snap.runId}`,
+        sequence: sequence += 1,
+        type: "answer",
+        status: answerState === "Unavailable" ? "warning" : "complete",
+        occurredAt: stamp(`swarm_answer_${snap.runId}`),
+        state: answerState,
+        text: snap.answer,
+        provenance: swarmEmptyProvenance("Australia/Melbourne"),
+        followUps: [...snap.followUps],
+        presentedResultIds: [],
+        claims: [],
+      });
+    } else if (snap.error) {
+      events.push({
+        id: `swarm_error_${snap.runId}`,
+        sequence: sequence += 1,
+        type: "error",
+        status: "error",
+        occurredAt: stamp(`swarm_error_${snap.runId}`),
+        message: snap.error,
+        recoverable: true,
+      });
+    }
+
+    const patch = (messages: ChatMessage[]): ChatMessage[] => messages.map((message) => {
+      if (message.role !== "assistant") return message;
+      if (snap.parentTurnId && message.turnId && message.turnId !== snap.parentTurnId) return message;
+      if (!snap.parentTurnId && !message.isStreaming && !message.turnId) return message;
+      return {
+        ...message,
+        isStreaming: !snap.answer && !snap.error && snap.active,
+        conversationId: snap.parentConversationId ?? message.conversationId,
+        turnId: snap.parentTurnId ?? message.turnId,
+        runtime: snap.runtime,
+        events,
+      };
+    });
+
+    if (cache) {
+      const next = { ...cache, messages: patch(cache.messages) };
+      conversationCacheRef.current.set(cacheKey, next);
+      if (
+        activeConversationIdRef.current === cacheKey
+        || viewingKeyRef.current === cacheKey
+      ) {
+        setChatMessages(next.messages);
+      }
+    } else if (
+      activeConversationIdRef.current === cacheKey
+      || viewingKeyRef.current === cacheKey
+    ) {
+      setChatMessages((current) => patch(current));
+    }
+
+    if (!snap.answer && !snap.error) return;
+    if (live && liveTurnsRef.current.get(cacheKey) === live) {
+      liveTurnsRef.current.delete(cacheKey);
+    }
+    if (computingTokensRef.current.has(cacheKey)) {
+      computingTokensRef.current.delete(cacheKey);
+      setComputingConversationIds(new Set(computingTokensRef.current.keys()));
+    }
+    if (
+      activeConversationIdRef.current === cacheKey
+      || viewingKeyRef.current === cacheKey
+    ) {
+      setIsChatResponding(false);
+    }
+    void loadConversationSummaries();
+  }, [loadConversationSummaries, swarmSnapshot]);
+
+  const stopChatResponse = useCallback(() => {
     const key = viewingKeyRef.current
       ?? (activeConversationId && ulidPattern.test(activeConversationId) ? activeConversationId : null);
+    const swarm = swarmRunSnapshot();
+    const swarmHere = Boolean(
+      swarm.active
+      && swarm.parentConversationId
+      && key
+      && swarm.parentConversationId === key,
+    );
+    if (swarmHere) stopSwarmFleet();
     if (!key) return;
     const live = liveTurnsRef.current.get(key);
-    if (!live || live.controller.signal.aborted) return;
-    live.controller.abort();
-    liveTurnsRef.current.delete(key);
+    if ((!live || live.controller.signal.aborted) && !swarmHere) return;
+    if (live && !live.controller.signal.aborted) {
+      live.controller.abort();
+      liveTurnsRef.current.delete(key);
+    } else if (live) {
+      liveTurnsRef.current.delete(key);
+    }
     setIsChatResponding(false);
+    const continuesInBackground = Boolean(live && (live.runtime === "codex" || live.runtime === "omni") && !swarmHere);
     setChatMessages((messages) => {
-      const next = finalizeStreamingMessages(messages, "Stopped.");
+      const next = finalizeStreamingMessages(
+        messages,
+        continuesInBackground
+          ? "Continuing in the background. Reopen this conversation to see the completed analysis."
+          : "Stopped.",
+      );
       conversationCacheRef.current.set(key, {
         messages: next,
         preferences: agentPreferencesRef.current,
         messageSequence: chatMessageSequenceRef.current,
+        runtime: live?.runtime ?? "codex",
+        specialistAgentId: live?.specialistAgentId ?? specialistAgentIdRef.current,
       });
       return next;
     });
     if (activeConversationId) {
-      if (computingTokensRef.current.has(activeConversationId)) {
+      if ((!continuesInBackground || swarmHere) && computingTokensRef.current.has(activeConversationId)) {
         computingTokensRef.current.delete(activeConversationId);
         setComputingConversationIds(new Set(computingTokensRef.current.keys()));
       }
       setConversationSummaries((current) => current.map((item) => (
         item.conversationId === activeConversationId && item.lastTurnStatus === "running"
-          ? { ...item, lastTurnStatus: "cancelled" }
+          ? { ...item, lastTurnStatus: continuesInBackground ? "running" : "cancelled" }
           : item
       )));
     }
-  };
-
-  useEffect(() => {
-    if (!isChatResponding) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (event.defaultPrevented) return;
-      event.preventDefault();
-      stopChatResponse();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isChatResponding]);
+  }, [activeConversationId]);
 
   const answerClarification = (answer: string, offeredTurnId?: string, optionId?: string) => {
     const text = answer.trim();
-    if (!text || isChatResponding) return;
+    if (!text || chatBusy) return;
     setChatClarification(null);
     setClarifyDraft("");
     void sendChatMessage(text, offeredTurnId && optionId ? { offeredTurnId, optionId } : undefined);
@@ -2360,7 +4020,7 @@ export default function DashPage() {
     setEditDraft(text);
   };
 
-  const cancelEditUserMessage = () => {
+  const cancelEditUserMessage = useCallback(() => {
     window.clearTimeout(editCloseTimerRef.current);
     const closingId = editingMessageId;
     // Restore the idle face immediately so collapse does not end with a
@@ -2376,7 +4036,7 @@ export default function DashPage() {
     editCloseTimerRef.current = window.setTimeout(() => {
       setEditClosingId(null);
     }, 300);
-  };
+  }, [editingMessageId, reduceMotion]);
 
   const resolveTurnIdForUserMessage = (messageIndex: number): string | undefined => {
     const following = chatMessages[messageIndex + 1];
@@ -2433,7 +4093,7 @@ export default function DashPage() {
     if (conversationId) {
       conversationCacheRef.current.delete(conversationId);
     }
-    setTakeawaysOpen(false);
+    setReasoningPanelOpen(false);
 
     void sendChatMessage(pending.text, undefined, {
       conversationId: conversationId ?? null,
@@ -2500,6 +4160,7 @@ export default function DashPage() {
       setEditResendBusy(false);
     }
   };
+  confirmEditedMessageResendRef.current = confirmEditedMessageResend;
 
   const resizeEditTextarea = useCallback(() => {
     const textarea = editTextareaRef.current;
@@ -2516,14 +4177,30 @@ export default function DashPage() {
 
   useEffect(() => {
     if (!editResendConfirm || editResendConfirmClosing) return;
+    const frame = window.requestAnimationFrame(() => {
+      editResendConfirmButtonRef.current?.focus();
+    });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
         closeEditResendConfirm();
+        return;
       }
+      if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.repeat) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target;
+      if (target instanceof HTMLButtonElement && target !== editResendConfirmButtonRef.current) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      void confirmEditedMessageResendRef.current();
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
   }, [closeEditResendConfirm, editResendConfirm, editResendConfirmClosing]);
 
   // Same open pattern as ThinkingTrail: panel starts at 0fr, then opens to 1fr.
@@ -2565,9 +4242,12 @@ export default function DashPage() {
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [editingMessageId, editPanelOpen, reduceMotion]);
+  }, [cancelEditUserMessage, editingMessageId]);
 
-  const startNewChat = () => {
+  const resetChat = (
+    runtime: Exclude<ChatRuntime, "fixture">,
+    nextSpecialistAgentId: SpecialistAgentId = "general",
+  ) => {
     snapshotViewedConversation();
     chatPinAnimationsRef.current.forEach((animation) => animation.stop());
     chatPinAnimationsRef.current = [];
@@ -2587,20 +4267,257 @@ export default function DashPage() {
       composerExpandTimerRef.current = undefined;
     }
     setActiveItem("Chat");
+    setChatSurface("chat");
     setChatMessages([]);
     setActiveConversationId(undefined);
     activeConversationIdRef.current = undefined;
+    setActiveChatRuntime(runtime);
+    activeChatRuntimeRef.current = runtime;
+    setSpecialistAgentId(nextSpecialistAgentId);
+    specialistAgentIdRef.current = nextSpecialistAgentId;
+    setAgentsOpen(false);
     viewingKeyRef.current = null;
     chatMessageSequenceRef.current = 0;
     setChatDraft("");
     setIsChatResponding(false);
     setComposerExpanded(false);
-    setTakeawaysOpen(false);
+    setReasoningPanelOpen(false);
+    setSwarmPanelOpen(false);
+    setDashboardPanelOpen(false);
+    setDashboardMode(false);
+    setDashboardModeDashboard(null);
+    // Swarm runs on Codex and Omni; Super agent stays Codex-only.
+    if (runtime !== "codex" && runtime !== "omni") {
+      setSwarmMode(false);
+      setSuperAgentMode(false);
+    } else if (runtime === "omni") {
+      setSuperAgentMode(false);
+    }
     setChatClarification(null);
     setClarifyDraft("");
     setEditingMessageId(null);
     setEditDraft("");
   };
+
+  // New Analysis leaves specialist mode and returns to Omni, while
+  // preserving an explicitly selected connector test runtime.
+  const startNewChat = () => {
+    setView2HistoryOpen(false);
+    if (activeChatRuntimeRef.current === "xero_mcp") {
+      resetChat("xero_mcp", "general");
+      return;
+    }
+    setAgentPreferences(DEFAULT_OMNI_PREFERENCES);
+    agentPreferencesRef.current = DEFAULT_OMNI_PREFERENCES;
+    setCodexSolPlannerEnabled(DEFAULT_CODEX_SOL_PLANNER);
+    codexSolPlannerEnabledRef.current = DEFAULT_CODEX_SOL_PLANNER;
+    setCodexProModeEnabled(DEFAULT_CODEX_PRO_MODE);
+    codexProModeEnabledRef.current = DEFAULT_CODEX_PRO_MODE;
+    resetChat("omni", "general");
+  };
+  const startCustomerChat = () => {
+    resetChat("v3", "customers");
+    window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+  };
+  const startCodexChat = () => {
+    setAgentPreferences(DEFAULT_AGENT_PREFERENCES);
+    agentPreferencesRef.current = DEFAULT_AGENT_PREFERENCES;
+    setCodexSolPlannerEnabled(DEFAULT_CODEX_SOL_PLANNER);
+    codexSolPlannerEnabledRef.current = DEFAULT_CODEX_SOL_PLANNER;
+    setCodexProModeEnabled(DEFAULT_CODEX_PRO_MODE);
+    codexProModeEnabledRef.current = DEFAULT_CODEX_PRO_MODE;
+    resetChat("codex", "general");
+    window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+  };
+  const startCompareChat = () => {
+    resetChat("compare", "general");
+  };
+  const startOmniChat = () => {
+    setAgentPreferences(DEFAULT_OMNI_PREFERENCES);
+    agentPreferencesRef.current = DEFAULT_OMNI_PREFERENCES;
+    resetChat("omni", "general");
+    window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+  };
+  /**
+   * Enter dashboard mode: chat on the left, the forming dashboard on the
+   * right. `dashboardId` names the dashboard being built (ADR 0134); without
+   * one the first send lands on the member's most recent dashboard.
+   */
+  const enterDashboardMode = (options?: Readonly<{ freshChat?: boolean; dashboardId?: string | null }>) => {
+    if (options?.freshChat || activeChatRuntimeRef.current !== "omni") {
+      startOmniChat();
+    } else {
+      setActiveItem("Chat");
+    }
+    setDashboardModeDashboard(options?.dashboardId ?? (options?.freshChat ? null : dashboardModeDashboardIdRef.current));
+    setSwarmMode(false);
+    setSuperAgentMode(false);
+    setDashboardMode(true);
+    setReasoningPanelOpen(false);
+    setSwarmPanelOpen(false);
+    setDashboardPanelOpen(true);
+    window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+  };
+  const leaveDashboardMode = () => {
+    setDashboardMode(false);
+    setDashboardModeDashboard(null);
+    setDashboardPanelOpen(false);
+  };
+  /** "New dashboard": a blank document, then dashboard mode on it. */
+  const createDashboardAndBuild = async () => {
+    if (creatingDashboard) return;
+    setCreatingDashboard(true);
+    try {
+      const response = await fetch("/api/dashboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const payload = await response.json().catch(() => null) as { dashboard?: { dashboardId?: string }; error?: string } | null;
+      const dashboardId = payload?.dashboard?.dashboardId;
+      if (!response.ok || typeof dashboardId !== "string") {
+        throw new Error(payload?.error ?? "The dashboard could not be created.");
+      }
+      setDashboardsReloadKey((key) => key + 1);
+      enterDashboardMode({ freshChat: true, dashboardId });
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setCreatingDashboard(false);
+    }
+  };
+  /**
+   * The Albert wand on one element (ADR 0134): rebuild that tile from a
+   * sentence. Runs as a dashboard-mode send scoped to the tile — in the
+   * conversation already building this dashboard when the mode is open on
+   * it, otherwise in a fresh one — so the working streams into the chat and
+   * the tile reworks in place.
+   */
+  const editDashboardElement = (dashboardId: string, tile: DashboardElementRef, instruction: string) => {
+    const sameDashboardOpen = dashboardModeEnabledRef.current
+      && dashboardModeDashboardIdRef.current === dashboardId
+      && activeItem === "Chat";
+    if (!sameDashboardOpen) {
+      enterDashboardMode({ freshChat: true, dashboardId });
+      void sendChatMessage(instruction, undefined, {
+        conversationId: null,
+        priorMessageCount: 0,
+        allowWhileResponding: true,
+        dashboardEdit: tile,
+      });
+      return;
+    }
+    void sendChatMessage(instruction, undefined, { allowWhileResponding: true, dashboardEdit: tile });
+  };
+  const handleSuperAgentChange = (enabled: boolean) => {
+    if (!enabled) {
+      setSuperAgentMode(false);
+      return;
+    }
+    if (activeChatRuntime !== "codex") startCodexChat();
+    setSwarmMode(false);
+    leaveDashboardMode();
+    setAgentPreferences(SUPER_AGENT_PREFERENCES);
+    agentPreferencesRef.current = SUPER_AGENT_PREFERENCES;
+    setCodexProModeEnabled(SUPER_AGENT_PRO_MODE);
+    codexProModeEnabledRef.current = SUPER_AGENT_PRO_MODE;
+    setCodexSolPlannerEnabled(SUPER_AGENT_SOL_PLANNER);
+    codexSolPlannerEnabledRef.current = SUPER_AGENT_SOL_PLANNER;
+    setSuperAgentMode(true);
+  };
+  const handleSwarmChange = (enabled: boolean) => {
+    if (!enabled) {
+      setSwarmMode(false);
+      return;
+    }
+    if (activeChatRuntime !== "codex" && activeChatRuntime !== "omni") startCodexChat();
+    setSuperAgentMode(false);
+    leaveDashboardMode();
+    setSwarmMode(true);
+  };
+  const runModeControlProps = {
+    superAgentEnabled,
+    onSuperAgentChange: handleSuperAgentChange,
+    swarmEnabled,
+    onSwarmChange: handleSwarmChange,
+  } as const;
+  /** The raw debugger lives in the composer's run settings, not the header. */
+  const developerControlProps = rawDebugAvailable
+    ? { rawDebugOpen, onRawDebugChange: setRawDebugOpen } as const
+    : {};
+  const startSalesDeepSwarm = () => {
+    if (swarmRunSnapshot().active) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("view") === "Agents") {
+      url.searchParams.delete("view");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+    setAgentPreferences(SALES_DEEP_PREFERENCES);
+    agentPreferencesRef.current = SALES_DEEP_PREFERENCES;
+    resetChat("codex", "general");
+    setSwarmMode(true);
+    setSuperAgentMode(false);
+    void sendChatMessage(SALES_DEEP_OWNER_QUESTION, undefined, {
+      conversationId: null,
+      priorMessageCount: 0,
+      allowWhileResponding: true,
+      preferencesOverride: SALES_DEEP_PREFERENCES,
+      swarmKind: "sales-deep",
+    });
+  };
+  const selectConversationRuntime = (tab: ConversationRuntimeTab) => {
+    if (tab === "compare") {
+      if (activeChatRuntimeRef.current !== "compare") startCompareChat();
+      return;
+    }
+    if (tab === "codex") {
+      if (activeChatRuntimeRef.current !== "codex") startCodexChat();
+      return;
+    }
+    if (tab === "omni") {
+      if (activeChatRuntimeRef.current !== "omni") startOmniChat();
+      return;
+    }
+    if (activeChatRuntimeRef.current === "codex" || activeChatRuntimeRef.current === "omni" || activeChatRuntimeRef.current === "compare") {
+      resetChat("v3", "general");
+      window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+    }
+  };
+  const startNewChatRef = useRef(startNewChat);
+  startNewChatRef.current = startNewChat;
+  const selectConversationRuntimeRef = useRef(selectConversationRuntime);
+  selectConversationRuntimeRef.current = selectConversationRuntime;
+
+  // Omni is the only harness the chat offers. `?runtime=albert|codex|compare`
+  // remains as an internal entry to the other runtimes for verification.
+  useEffect(() => {
+    const requested = new URL(window.location.href).searchParams.get("runtime");
+    if (requested !== "albert" && requested !== "codex" && requested !== "compare") return;
+    const task = window.setTimeout(() => selectConversationRuntimeRef.current(requested), 0);
+    return () => window.clearTimeout(task);
+  }, []);
+
+  /** A Discover card starts a fresh Omni analysis with the card's question. */
+  const askFromDiscover = (prompt: string) => {
+    startOmniChat();
+    setChatSurface("chat");
+    void sendChatMessage(prompt, undefined, {
+      conversationId: null,
+      priorMessageCount: 0,
+      allowWhileResponding: true,
+    });
+  };
+
+  useEffect(() => {
+    const openNewChat = (event: KeyboardEvent) => {
+      if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
+      if (event.code !== "KeyN" && event.key.toLowerCase() !== "n") return;
+      event.preventDefault();
+      startNewChatRef.current();
+    };
+    document.addEventListener("keydown", openNewChat);
+    return () => document.removeEventListener("keydown", openNewChat);
+  }, []);
 
   const updateConversationSidebarPrefs = (
     updater: (current: ConversationSidebarPrefs) => ConversationSidebarPrefs,
@@ -2662,6 +4579,55 @@ export default function DashPage() {
     router.refresh();
   };
 
+  const pinTableToDashboard = async (
+    conversationId: string,
+    turnId: string,
+    table: TraceTableEvent,
+  ): Promise<void> => {
+    const loadRevision = async () => {
+      const response = await fetch("/api/dashboard", { cache: "no-store" });
+      const payload = await response.json().catch(() => null) as {
+        dashboard?: { revision?: number };
+        error?: string;
+      } | null;
+      if (!response.ok || typeof payload?.dashboard?.revision !== "number") {
+        throw new Error(payload?.error ?? "Dashboard is unavailable.");
+      }
+      dashboardRevisionRef.current = payload.dashboard.revision;
+      return payload.dashboard.revision;
+    };
+    const submit = async (expectedRevision: number) => {
+      const response = await fetch("/api/dashboard/tiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId,
+          turnId,
+          tableEventId: table.id,
+          resultId: table.resultId,
+          expectedRevision,
+        }),
+      });
+      const payload = await response.json().catch(() => null) as {
+        dashboard?: { revision?: number };
+        error?: string;
+      } | null;
+      if (typeof payload?.dashboard?.revision === "number") {
+        dashboardRevisionRef.current = payload.dashboard.revision;
+      }
+      return { response, payload };
+    };
+
+    const revision = dashboardRevisionRef.current ?? await loadRevision();
+    let result = await submit(revision);
+    if (result.response.status === 409 && typeof result.payload?.dashboard?.revision === "number") {
+      result = await submit(result.payload.dashboard.revision);
+    }
+    if (!result.response.ok || typeof result.payload?.dashboard?.revision !== "number") {
+      throw new Error(result.payload?.error ?? "The table could not be added to Dashboard.");
+    }
+  };
+
   const renderChatTurns = () => {
     const turns: Array<{ user: ChatMessage | null; replies: ChatMessage[] }> = [];
     for (const message of chatMessages) {
@@ -2690,7 +4656,7 @@ export default function DashPage() {
             // Same single open flag as ThinkingTrail: drives radius + panel together.
             const editOpen = isEditing && editPanelOpen;
             const turnComputing = turn.replies.some((reply) => Boolean(reply.isStreaming));
-            const orbTheme = theme === "light"
+            const orbTheme = theme === "light" || theme === "beige" || theme === "sage"
               ? "light" as const
               : theme === "dark" || theme === "green"
                 ? "dark" as const
@@ -2737,14 +4703,10 @@ export default function DashPage() {
                       }}
                     />
                   ) : (
-                    <button
-                      className={styles.chatMessageUserFace}
-                      type="button"
-                      aria-label="Edit message"
-                      onClick={() => beginEditUserMessage(message.id, message.text)}
-                    >
-                      {message.text ? <p>{message.text}</p> : null}
-                      {turnComputing ? (
+                    <CollapsibleUserQuestion
+                      text={message.text}
+                      onEdit={() => beginEditUserMessage(message.id, message.text)}
+                      orb={turnComputing ? (
                         <span className={styles.chatMessageUserOrb} aria-hidden="true">
                           <ThinkingOrb
                             className={styles.conversationItemOrb}
@@ -2757,7 +4719,7 @@ export default function DashPage() {
                           />
                         </span>
                       ) : null}
-                    </button>
+                    />
                   )}
                   {/* Identical expand method to ThinkingTrail. */}
                   <div
@@ -2771,12 +4733,46 @@ export default function DashPage() {
                     <div className={traceStyles.expandInner}>
                       {showEditChrome ? (
                         <div className={styles.chatMessageEditTrailing}>
-                          <ModelRunControls
-                            value={agentPreferences}
-                            onChange={setAgentPreferences}
-                            popoverPlacement="below"
-                            popoverAlign="shell-start"
-                          />
+                          {activeChatRuntime === "codex" ? (
+                            <ModelRunControls
+                              value={agentPreferences}
+                              onChange={setAgentPreferences}
+                              allowedModelIds={CODEX_MODEL_IDS}
+                              allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
+                              solPlannerEnabled={codexSolPlannerEnabled}
+                              onSolPlannerChange={setCodexSolPlannerEnabled}
+                              proModeEnabled={codexProModeEnabled}
+                              onProModeChange={setCodexProModeEnabled}
+                              {...runModeControlProps}
+                              popoverPlacement="below"
+                              popoverAlign="shell-start"
+                            />
+                          ) : activeChatRuntime === "omni" ? (
+                            <ModelRunControls
+                              value={agentPreferences}
+                              onChange={setAgentPreferences}
+                              allowedModelIds={OMNI_MODEL_IDS}
+                              allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
+                              {...runModeControlProps}
+                              popoverPlacement="below"
+                              popoverAlign="shell-start"
+                            />
+                          ) : activeChatRuntime === "anthropic" ? (
+                            <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
+                          ) : activeChatRuntime === "cubecore" ? (
+                            <span className={styles.chatRuntimeIndicator}>Cubecore</span>
+                          ) : activeChatRuntime === "xero_mcp" ? (
+                            <span className={styles.chatRuntimeIndicator}>Xero MCP</span>
+                          ) : (
+                            <ModelRunControls
+                              value={agentPreferences}
+                              onChange={setAgentPreferences}
+                              allowedModelIds={V3_MODEL_IDS}
+                              {...runModeControlProps}
+                              popoverPlacement="below"
+                              popoverAlign="shell-start"
+                            />
+                          )}
                           <button
                             className={styles.chatMessageEditSend}
                             type="button"
@@ -2797,9 +4793,12 @@ export default function DashPage() {
           {turn.replies.map((message) => {
             const suppressEnter = Boolean(reduceMotion || message.suppressEnter);
             const messageKey = `${activeConversationId ?? "draft"}:${message.id}`;
+            const isOmniTrail = message.runtime === "omni" && !message.events?.some((event) => (
+              event.type === "plan" && event.id.startsWith("swarm_")
+            ));
             return (
               <motion.article
-                className={`${styles.chatMessage} ${styles.chatMessageAssistant}`}
+                className={`${styles.chatMessage} ${styles.chatMessageAssistant}${isOmniTrail ? ` ${styles.chatMessageOmni}` : ""}`}
                 data-message-id={message.id}
                 key={messageKey}
                 initial={suppressEnter ? false : { opacity: 0 }}
@@ -2812,12 +4811,26 @@ export default function DashPage() {
                 {message.events?.length || message.isStreaming ? (
                   message.trailVisible === false ? (
                     <div className={styles.chatTrailDeferred} aria-hidden="true" />
+                  ) : isOmniTrail ? (
+                    <OmniTrace
+                      events={message.events ?? []}
+                      streaming={message.isStreaming}
+                      dashboardMode={message.dashboardBuild === true || isDashboardBuildTurn(message.events ?? [])}
+                      onFollowUp={(prompt) => void sendChatMessage(prompt)}
+                      onAddToDashboard={message.conversationId && message.turnId
+                        ? (table) => pinTableToDashboard(message.conversationId!, message.turnId!, table)
+                        : undefined}
+                    />
                   ) : (
                     <InsightsStyleTrace
                       events={message.events ?? []}
                       streaming={message.isStreaming}
                       detailedMode={chatDetailedMode}
                       runtime={message.runtime}
+                      lineageReference={message.conversationId && message.turnId ? {
+                        conversationId: message.conversationId,
+                        turnId: message.turnId,
+                      } : undefined}
                       onFollowUp={(prompt) => void sendChatMessage(prompt)}
                       onAddToChat={(text) => {
                         setChatDraft((current) => {
@@ -2833,6 +4846,9 @@ export default function DashPage() {
                           resizeComposerTextarea();
                         });
                       }}
+                      onAddToDashboard={message.conversationId && message.turnId
+                        ? (table) => pinTableToDashboard(message.conversationId!, message.turnId!, table)
+                        : undefined}
                       onClarification={(label, optionId) => answerClarification(label, message.turnId, optionId)}
                     />
                   )
@@ -2847,21 +4863,285 @@ export default function DashPage() {
     });
   };
 
+  const selectView2Page = (item: ActiveItem) => {
+    setView2HistoryOpen(false);
+    setView2PagesOpen(false);
+    setAccountOpen(false);
+    setAgentsOpen(false);
+    setActiveItem(item);
+  };
+
   return (
     <main
-      className={`${styles.dash} ${collapsed ? styles.collapsed : ""}`}
+      className={`${styles.dash} ${isView2 ? styles.view2 : collapsed ? styles.collapsed : ""}`}
       data-theme={theme}
     >
-      <aside className={`${styles.sidebar} ${accountOpen ? styles.sidebarAccountMenuOpen : ""}`}>
+      {isView2 ? (
+        <header className={styles.view2Nav}>
+          <div className={styles.view2NavLeft}>
+            <div className={styles.view2BrandWrap} ref={accountAreaRef}>
+              <button
+                ref={accountTriggerRef}
+                className={styles.view2Brand}
+                type="button"
+                aria-label={`${accountOrganisation.name} account menu`}
+                aria-expanded={accountOpen}
+                aria-haspopup="dialog"
+                onClick={() => {
+                  setView2HistoryOpen(false);
+                  setAccountOpen((value) => !value);
+                }}
+              >
+                <Image
+                  className={styles.projectLogo}
+                  src="/logos/albert.png"
+                  alt=""
+                  width={20}
+                  height={20}
+                  unoptimized
+                />
+                <span className={styles.projectName}>
+                  <span className={styles.projectNameAlbert}>Albert</span>
+                  <span className={styles.projectNameProduct}>Analytics</span>
+                </span>
+              </button>
+              <div
+                className={`${styles.accountPopover} ${accountOpen ? styles.accountPopoverOpen : ""}`}
+                ref={accountPopoverRef}
+                role="dialog"
+                aria-label="Account menu"
+                aria-hidden={!accountOpen}
+                inert={!accountOpen}
+              >
+                <p className={styles.accountEmail}>{accountEmail || "Signed in"}</p>
+                {accountError ? <p className={styles.accountError} role="alert">{accountError}</p> : null}
+                <div className={styles.themeSwitcher} aria-label="Theme" role="group">
+                  {themeOptions.map((option) => (
+                    <button
+                      className={theme === option.value ? styles.themeActive : ""}
+                      key={option.value}
+                      type="button"
+                      aria-label={option.label}
+                      aria-pressed={theme === option.value}
+                      onClick={() => setThemePreference(option.value)}
+                    >
+                      <Icon name={option.icon} />
+                    </button>
+                  ))}
+                </div>
+
+                <div className={styles.accountDivider} />
+
+                <div className={styles.accountLinks}>
+                  <div className={styles.view2PagesMenu}>
+                    <button
+                      className={styles.view2PagesMenuTrigger}
+                      type="button"
+                      aria-expanded={view2PagesOpen}
+                      aria-controls="view2-pages-submenu"
+                      onClick={() => setView2PagesOpen((value) => !value)}
+                    >
+                      <Icon name="dashboard" />
+                      <span>Pages</span>
+                      <Icon className={styles.view2PagesMenuChevron} name="chevronDown" />
+                    </button>
+                    <AnimatePresence>
+                      {view2PagesOpen ? (
+                        <motion.div
+                          id="view2-pages-submenu"
+                          className={styles.view2PagesSubmenu}
+                          initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{
+                            duration: reduceMotion ? 0 : 0.4,
+                            ease: [0.04, 0.62, 0.23, 0.98],
+                          }}
+                        >
+                          <nav aria-label="Pages">
+                            {view2Pages.filter((page) => page.show).map((page) => (
+                              <button
+                                key={page.id}
+                                type="button"
+                                aria-current={activeItem === page.id ? "page" : undefined}
+                                onClick={() => selectView2Page(page.id)}
+                              >
+                                <Icon name={page.icon} />
+                                <span>{page.label}</span>
+                              </button>
+                            ))}
+                          </nav>
+                        </motion.div>
+                      ) : null}
+                    </AnimatePresence>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      router.push("/dash");
+                      setAccountOpen(false);
+                    }}
+                  ><Icon name="panel" /><span>Classic view</span></button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveItem("Connections");
+                      setAccountOpen(false);
+                    }}
+                  ><Icon name="connections" /><span>Connections</span></button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveItem("Organization");
+                      setAccountOpen(false);
+                    }}
+                  ><Icon name="organization" /><span>Organization settings</span></button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveItem("BusinessContext");
+                      setAccountOpen(false);
+                    }}
+                  ><Icon name="organization" /><span>About your business</span></button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveItem("SemanticMemory");
+                      setAccountOpen(false);
+                    }}
+                  ><Icon name="settings" /><span>Albert&apos;s memory</span></button>
+                  {isInternalOperator ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveItem("Admin");
+                        setAccountOpen(false);
+                      }}
+                    ><Icon name="logs" /><span>Admin</span></button>
+                  ) : null}
+                </div>
+
+                <div className={styles.accountDivider} />
+
+                <button
+                  className={styles.logoutButton}
+                  type="button"
+                  onClick={handleSignOut}
+                  disabled={isSigningOut}
+                >
+                  <Icon name="logout" />
+                  <span>{isSigningOut ? "Logging out…" : "Log out"}</span>
+                </button>
+              </div>
+            </div>
+
+            <span className={styles.view2NavSlash} aria-hidden="true">/</span>
+
+            <div className={styles.view2ConversationWrap} ref={view2HistoryRef}>
+              {activeItem === "Chat" ? (
+                <h1 id="dash-title" className="sr-only">{chatTitle}</h1>
+              ) : null}
+              <button
+                className={styles.view2Conversation}
+                type="button"
+                aria-expanded={view2HistoryOpen}
+                aria-haspopup="listbox"
+                aria-controls="view2-history"
+                onClick={() => {
+                  setAccountOpen(false);
+                  setView2HistoryOpen((value) => !value);
+                }}
+              >
+                <span className={styles.view2ConversationTitle}>{chatTitle}</span>
+                <Icon className={styles.view2ConversationChevron} name="chevronDown" />
+              </button>
+              <AnimatePresence>
+                {view2HistoryOpen ? (
+                  <motion.div
+                    id="view2-history"
+                    className={styles.view2History}
+                    role="listbox"
+                    aria-label="Conversations"
+                    initial={reduceMotion ? false : { opacity: 0, y: 8, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={reduceMotion ? undefined : { opacity: 0, y: 6, scale: 0.99 }}
+                    transition={{
+                      duration: reduceMotion ? 0 : 0.3,
+                      ease: [0.22, 1, 0.36, 1],
+                    }}
+                  >
+                    <label className={styles.view2HistorySearch}>
+                      <Icon name="search" />
+                      <input
+                        ref={searchInputRef}
+                        aria-label="Search conversations"
+                        aria-keyshortcuts="Meta+K Control+K"
+                        placeholder="Search"
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                      />
+                    </label>
+                    <div className={styles.view2HistoryList}>
+                      {filteredConversations.length === 0 ? (
+                        <p className={styles.view2HistoryEmpty}>
+                          {query.trim() ? "No matches" : "Your analyses will appear here after the first question."}
+                        </p>
+                      ) : filteredConversations.map((conversation) => {
+                        const isActive = conversation.conversationId === activeConversationId && activeItem === "Chat";
+                        return (
+                          <button
+                            className={styles.view2HistoryItem}
+                            key={conversation.conversationId}
+                            type="button"
+                            role="option"
+                            aria-selected={isActive}
+                            aria-current={isActive ? "true" : undefined}
+                            onClick={() => {
+                              setView2HistoryOpen(false);
+                              void openSavedConversation(conversation.conversationId);
+                            }}
+                          >
+                            <span className={styles.view2HistoryItemTitle}>
+                              {formatConversationTitle(conversation.title)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
+            </div>
+          </div>
+
+          <div className={styles.view2NavRight}>
+            <View2ConnectedTools
+              providers={connectionsData.providers}
+              onOpenConnections={() => selectView2Page("Connections")}
+            />
+            <button
+              className={styles.view2NewAnalysis}
+              type="button"
+              aria-label="New Analysis"
+              aria-keyshortcuts="Alt+N"
+              onClick={startNewChat}
+            >
+              <Icon name="plus" />
+              <span className={styles.view2NewAnalysisLabel}>New Analysis</span>
+            </button>
+          </div>
+        </header>
+      ) : (
+      <aside className={`${styles.sidebar} ${accountOpen ? styles.sidebarAccountMenuOpen : ""} ${agentsOpen ? styles.sidebarAgentsMenuOpen : ""}`}>
         <div className={styles.sidebarHeader}>
           <div className={styles.projectBrand}>
-            <img
+            <Image
               className={styles.projectLogo}
               src="/logos/albert.png"
               alt=""
               width={20}
               height={20}
-              decoding="async"
+              unoptimized
             />
             <span className={styles.projectName}>
               <span className={styles.projectNameAlbert}>Albert</span>
@@ -2920,13 +5200,13 @@ export default function DashPage() {
                 aria-hidden="true"
               >
                 <span className={styles.collapseIconSwapFace} data-icon="a">
-                  <img
+                  <Image
                     className={styles.collapseButtonLogo}
                     src="/logos/albert.png"
                     alt=""
                     width={20}
                     height={20}
-                    decoding="async"
+                    unoptimized
                   />
                 </span>
                 <span className={styles.collapseIconSwapFace} data-icon="b">
@@ -2944,11 +5224,161 @@ export default function DashPage() {
             className={styles.sidebarAction}
             type="button"
             aria-label="New Analysis"
+            aria-keyshortcuts="Alt+N"
             onClick={startNewChat}
           >
             <Icon name="plus" />
             <span className={styles.sidebarActionLabel}>New Analysis</span>
           </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="View 2"
+            onClick={() => router.push("/view2")}
+          >
+            <Icon name="monitor" />
+            <span className={styles.sidebarActionLabel}>View 2</span>
+          </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="Agents"
+            aria-current={activeItem === "Agents" ? "page" : undefined}
+            onClick={() => {
+              setAgentsOpen(false);
+              setActiveItem("Agents");
+            }}
+          >
+            <Icon name="agents" />
+            <span className={styles.sidebarActionLabel}>Agents</span>
+          </button>
+          {canUseCustomerAgent ? (
+            <div hidden className={styles.sidebarAgents} ref={agentsAreaRef}>
+              <button
+                ref={agentsTriggerRef}
+                className={`${styles.sidebarAction} ${styles.sidebarAgentsTrigger}`}
+                type="button"
+                aria-label="Agents"
+                aria-haspopup="menu"
+                aria-expanded={agentsOpen}
+                aria-controls="sidebar-agents-menu"
+                aria-current={isCustomerAgent && activeItem === "Chat" ? "page" : undefined}
+                onClick={() => {
+                  setAccountOpen(false);
+                  setAgentsOpen((current) => !current);
+                }}
+              >
+                <Icon name="agents" />
+                <span className={styles.sidebarActionLabel}>Agents</span>
+                <Icon className={styles.sidebarAgentsChevron} name="chevronDown" />
+              </button>
+              <div
+                ref={agentsPopoverRef}
+                id="sidebar-agents-menu"
+                className={`${styles.sidebarAgentsPopover} ${agentsOpen ? styles.sidebarAgentsPopoverOpen : ""}`}
+                role="menu"
+                aria-label="Specialist agents"
+                aria-hidden={!agentsOpen}
+                inert={!agentsOpen}
+              >
+                <p className={styles.sidebarAgentsHeading}>Specialists</p>
+                <button
+                  className={styles.sidebarAgentOption}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={isCustomerAgent}
+                  onClick={startCustomerChat}
+                >
+                  <span className={styles.sidebarAgentOptionIcon} aria-hidden="true">
+                    <Icon name="agents" />
+                  </span>
+                  <span className={styles.sidebarAgentOptionCopy}>
+                    <strong>{customerSpecialistAgent.ui.navigationLabel}</strong>
+                    <small>{customerSpecialistAgent.ui.description}</small>
+                  </span>
+                  <span className={styles.sidebarAgentOptionStatus} aria-hidden="true">
+                    {isCustomerAgent ? "✓" : ""}
+                  </span>
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="Proactive"
+            aria-current={activeItem === "Proactive" ? "page" : undefined}
+            onClick={() => setActiveItem("Proactive")}
+          >
+            <Icon name="radar" />
+            <span className={styles.sidebarActionLabel}>Proactive</span>
+          </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="Dashboard Master"
+            aria-current={activeItem === "DashboardMaster" ? "page" : undefined}
+            onClick={() => setActiveItem("DashboardMaster")}
+          >
+            <Icon name="target" />
+            <span className={styles.sidebarActionLabel}>Dashboard Master</span>
+          </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="Dashboards"
+            aria-current={activeItem === "Dashboard" ? "page" : undefined}
+            onClick={() => {
+              setDashboardViewId(null);
+              setActiveItem("Dashboard");
+            }}
+          >
+            <Icon name="dashboard" />
+            <span className={styles.sidebarActionLabel}>Dashboards</span>
+          </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="My Data"
+            aria-current={activeItem === "My Data" ? "page" : undefined}
+            onClick={() => setActiveItem("My Data")}
+          >
+            <Icon name="database" />
+            <span className={styles.sidebarActionLabel}>My Data</span>
+          </button>
+          <button
+            hidden
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="Test chart"
+            aria-current={activeItem === "Test chart" ? "page" : undefined}
+            onClick={() => setActiveItem("Test chart")}
+          >
+            <Icon name="chart" />
+            <span className={styles.sidebarActionLabel}>Test chart</span>
+          </button>
+          <button
+            className={styles.sidebarAction}
+            type="button"
+            aria-label="New test"
+            aria-current={activeItem === "New test" ? "page" : undefined}
+            onClick={() => setActiveItem("New test")}
+          >
+            <Icon name="chat" />
+            <span className={styles.sidebarActionLabel}>New test</span>
+          </button>
+          {canViewQueryLogs ? (
+            <button
+              className={styles.sidebarAction}
+              type="button"
+              aria-label="Logs"
+              aria-current={activeItem === "Logs" ? "page" : undefined}
+              onClick={() => setActiveItem("Logs")}
+            >
+              <Icon name="logs" />
+              <span className={styles.sidebarActionLabel}>Logs</span>
+            </button>
+          ) : null}
           <label className={`${styles.sidebarAction} ${styles.sidebarSearchAction} ${sidebarSearchOpen || query ? styles.sidebarSearchActionOpen : ""}`}>
             <Icon name="search" />
             <input
@@ -3103,7 +5533,7 @@ export default function DashPage() {
                                   speed={1.5}
                                   paused={Boolean(reduceMotion)}
                                   theme={
-                                    theme === "light"
+                                    theme === "light" || theme === "beige" || theme === "sage"
                                       ? "light"
                                       : theme === "dark" || theme === "green"
                                         ? "dark"
@@ -3186,7 +5616,8 @@ export default function DashPage() {
         </nav>
 
         <div className={styles.accountArea} ref={accountAreaRef}>
-          {sidebarSyncDomains.length > 0 && !sidebarSyncFullyComplete ? (
+          {/* Sidebar sync status card hidden for now. */}
+          {false && sidebarSyncDomains.length > 0 && !sidebarSyncFullyComplete ? (
             <div className={styles.sidebarSync}>
               <div className={styles.sidebarSyncTop}>
                 <span>
@@ -3257,6 +5688,13 @@ export default function DashPage() {
               <button
                 type="button"
                 onClick={() => {
+                  router.push("/view2");
+                  setAccountOpen(false);
+                }}
+              ><Icon name="monitor" /><span>View 2</span></button>
+              <button
+                type="button"
+                onClick={() => {
                   setActiveItem("Connections");
                   setAccountOpen(false);
                 }}
@@ -3268,12 +5706,20 @@ export default function DashPage() {
                   setAccountOpen(false);
                 }}
               ><Icon name="organization" /><span>Organization settings</span></button>
-              <a
-                href="/connector-specs.html"
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setAccountOpen(false)}
-              ><Icon name="spec" /><span>Connector specs</span></a>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveItem("BusinessContext");
+                  setAccountOpen(false);
+                }}
+              ><Icon name="organization" /><span>About your business</span></button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveItem("SemanticMemory");
+                  setAccountOpen(false);
+                }}
+              ><Icon name="settings" /><span>Albert&apos;s memory</span></button>
               {isInternalOperator ? (
                 <button
                   type="button"
@@ -3306,7 +5752,10 @@ export default function DashPage() {
               aria-label={`${accountOrganisation.name} account menu`}
               aria-expanded={accountOpen}
               aria-haspopup="dialog"
-              onClick={() => setAccountOpen((value) => !value)}
+              onClick={() => {
+                setAgentsOpen(false);
+                setAccountOpen((value) => !value);
+              }}
             >
               <span className={styles.accountAvatar}>{accountInitial}</span>
               <span className={styles.accountWorkspaceCopy}>
@@ -3329,73 +5778,186 @@ export default function DashPage() {
           </div>
         </div>
       </aside>
+      )}
 
-      <section className={styles.content} aria-labelledby="dash-title">
-        {activeItem !== "Chat" ? (
+      <section
+        className={`${styles.content} ${activeItem === "Chat" && dashboardPanelOpen ? styles.contentDashboardMode : ""}`}
+        aria-labelledby="dash-title"
+      >
+        {isView2 && activeItem !== "Chat" ? (
+          <h1 id="dash-title" className="sr-only">{pageHeading}</h1>
+        ) : null}
+        {!isView2 && activeItem !== "Chat" ? (
           <header className={`${styles.pageHeader} ${styles.pageHeaderSimple}`}>
             <div className={styles.pageHeaderTop}>
-              <h1 id="dash-title">{activeItem}</h1>
+              <h1 id="dash-title">{pageHeading}</h1>
             </div>
           </header>
         ) : null}
         {tenantDeletionReceipt ? (
           <TenantDeletionWorkspace initialReceipt={tenantDeletionReceipt} />
+        ) : activeItem === "Chat" && activeChatRuntime === "compare" ? (
+          <RuntimeComparisonWorkspace
+            organisationName={accountOrganisation.name}
+            onSelectRuntime={selectConversationRuntime}
+            onConversationsChanged={loadConversationSummaries}
+          />
         ) : activeItem === "Chat" ? (
-          <div className={`${styles.chatShell} ${takeawaysOpen ? styles.chatShellTakeawaysOpen : ""}`}>
-          <div className={styles.chatWorkspace}>
+          <div
+            ref={chatShellRef}
+            className={`${styles.chatShell} ${sidePanelOpen ? styles.chatShellTakeawaysOpen : ""} ${dashboardPanelOpen ? styles.chatShellDashboardOpen : ""} ${dashboardPanelOpen && dashboardPanelExpanded ? styles.chatShellDashboardExpanded : ""} ${swarmPanelResizing || dashboardPanelResizing ? styles.chatShellTakeawaysResizing : ""}`}
+            style={dashboardPanelOpen && dashboardPanelWidth !== null
+              ? { ["--takeaways-panel-width" as string]: `${dashboardPanelWidth}px` }
+              : swarmPanelOpen && !dashboardPanelOpen
+                ? { ["--takeaways-panel-width" as string]: `${swarmPanelWidth}px` }
+                : undefined}
+          >
+          <div
+            className={styles.chatWorkspace}
+            ref={chatWorkspaceRef}
+            data-chat-runtime={activeChatRuntime}
+            data-chat-surface={chatSurface}
+          >
             <header className={styles.chatTopBar}>
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.h1
-                  key={chatTitle}
-                  id="dash-title"
-                  className={styles.chatTopTitle}
-                  initial={reduceMotion ? false : { opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={reduceMotion ? undefined : { opacity: 0, y: -3 }}
-                  transition={{
-                    duration: reduceMotion ? 0 : 0.34,
-                    ease: [0.22, 1, 0.36, 1],
-                  }}
-                >
-                  {chatTitle}
-                </motion.h1>
-              </AnimatePresence>
+              <ChatSurfaceTabs
+                value={chatSurface}
+                onChange={setChatSurface}
+                panelIds={{
+                  discover: "chat-surface-panel-discover",
+                  scheduled: "chat-surface-panel-scheduled",
+                  alerts: "chat-surface-panel-alerts",
+                }}
+              />
+              <div className={styles.chatTopIdentity}>
+                {isCustomerAgent ? (
+                  <>
+                    <span className={styles.chatSpecialistContext}>
+                      {activeSpecialistAgent.ui.navigationLabel} · {accountOrganisation.name}
+                    </span>
+                    <span className={styles.chatSpecialistContextDivider} aria-hidden="true" />
+                  </>
+                ) : null}
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.h1
+                    key={`${activeChatRuntime}:${specialistAgentId}:${chatTitle}`}
+                    id={isView2 ? undefined : "dash-title"}
+                    className={styles.chatTopTitle}
+                    initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={reduceMotion ? undefined : { opacity: 0, y: -3 }}
+                    transition={{
+                      duration: reduceMotion ? 0 : 0.34,
+                      ease: [0.22, 1, 0.36, 1],
+                    }}
+                  >
+                    {chatTitle}
+                  </motion.h1>
+                </AnimatePresence>
+              </div>
               <div className={styles.chatTopActions}>
                 {chatMessages.length > 0 ? (
                   <button
-                    className={`${styles.chatDetailedMode} ${chatDetailedMode ? styles.chatDetailedModeActive : ""}`}
+                    className={`${styles.chatTakeawaysToggle} ${chatDetailedMode ? styles.chatTakeawaysToggleActive : ""}`}
                     type="button"
+                    aria-label="Detailed mode"
                     aria-pressed={chatDetailedMode}
+                    title={chatDetailedMode ? "Hide detailed mode" : "Show detailed mode"}
                     onClick={() => setChatDetailedMode((current) => !current)}
                   >
-                    Detailed mode
+                    <Icon name="list" />
                   </button>
                 ) : null}
-                {rawDebugAvailable ? (
+                {activeChatRuntime === "codex" && chatMessages.length > 0 ? (
                   <button
-                    className={`${styles.chatDetailedMode} ${rawDebugOpen ? styles.chatDetailedModeActive : ""}`}
+                    className={`${styles.chatTakeawaysToggle} ${styles.chatReasoningToggle} ${reasoningPanelOpen ? styles.chatTakeawaysToggleActive : ""}`}
                     type="button"
-                    aria-pressed={rawDebugOpen}
-                    title="Development inspector: request, response headers, SSE frames, and trace events"
-                    onClick={() => setRawDebugOpen((current) => !current)}
-                  >
-                    Raw debugger
-                  </button>
-                ) : null}
-                {!takeawaysOpen ? (
-                  <button
-                    className={styles.chatTakeawaysToggle}
-                    type="button"
-                    aria-label="Expand key insights"
-                    aria-pressed={false}
+                    aria-label={reasoningPanelOpen ? "Hide reasoning" : "Show reasoning"}
+                    aria-pressed={reasoningPanelOpen}
                     aria-controls="analysis-takeaways"
-                    onClick={() => setTakeawaysOpen(true)}
+                    title={reasoningPanelOpen ? "Hide reasoning" : "Show OpenAI reasoning summary"}
+                    onClick={() => {
+                      setReasoningPanelOpen((open) => {
+                        if (!open) {
+                          setSwarmPanelOpen(false);
+                          setDashboardPanelOpen(false);
+                        }
+                        return !open;
+                      });
+                    }}
                   >
-                    <Icon name="sidebarRight" />
+                    <Icon name="sparkles" />
+                    <span>Reasoning</span>
+                  </button>
+                ) : null}
+                {dashboardModeEnabled || dashboardTurnMessage ? (
+                  <button
+                    className={`${styles.chatTakeawaysToggle} ${dashboardPanelOpen ? styles.chatTakeawaysToggleActive : ""}`}
+                    type="button"
+                    aria-label={dashboardPanelOpen ? "Hide dashboard preview" : "Show dashboard preview"}
+                    aria-pressed={dashboardPanelOpen}
+                    title={dashboardPanelOpen ? "Hide dashboard preview" : "Show dashboard preview"}
+                    onClick={() => {
+                      setDashboardPanelOpen((open) => {
+                        if (!open) {
+                          setReasoningPanelOpen(false);
+                          setSwarmPanelOpen(false);
+                        }
+                        return !open;
+                      });
+                    }}
+                  >
+                    <Icon name="dashboard" />
+                  </button>
+                ) : null}
+                {swarmSnapshot.runId || swarmEnabled ? (
+                  <button
+                    className={`${styles.chatTakeawaysToggle} ${swarmPanelOpen ? styles.chatTakeawaysToggleActive : ""}`}
+                    type="button"
+                    aria-label={swarmSnapshot.kind === "super-agent" ? "Super agent progress" : "Swarm progress"}
+                    aria-pressed={swarmPanelOpen}
+                    title={swarmPanelOpen
+                      ? `Hide ${swarmSnapshot.kind === "super-agent" ? "Super agent" : "swarm"}`
+                      : `Show ${swarmSnapshot.kind === "super-agent" ? "Super agent" : "swarm"}`}
+                    onClick={() => {
+                      setSwarmPanelOpen((open) => {
+                        if (!open) {
+                          setReasoningPanelOpen(false);
+                          setDashboardPanelOpen(false);
+                        }
+                        return !open;
+                      });
+                    }}
+                  >
+                    <Icon name={swarmSnapshot.kind === "super-agent" ? "sparkles" : "agents"} />
                   </button>
                 ) : null}
               </div>
             </header>
+            {chatSurface === "alerts" ? (
+              <AlertsWorkspace
+                organisationName={accountOrganisation.name}
+                reduceMotion={Boolean(reduceMotion)}
+                panelId="chat-surface-panel-alerts"
+                labelledBy="chat-surface-tab-alerts"
+              />
+            ) : chatSurface === "scheduled" ? (
+              <ScheduledWorkspace
+                organisationName={accountOrganisation.name}
+                onOpenConversation={(conversationId) => void openSavedConversation(conversationId)}
+                reduceMotion={Boolean(reduceMotion)}
+                panelId="chat-surface-panel-scheduled"
+                labelledBy="chat-surface-tab-scheduled"
+              />
+            ) : chatSurface === "discover" ? (
+              <DiscoverWorkspace
+                organisationName={accountOrganisation.name}
+                onAsk={askFromDiscover}
+                onOpenConnections={() => setActiveItem("Connections")}
+                reduceMotion={Boolean(reduceMotion)}
+                panelId="chat-surface-panel-discover"
+                labelledBy="chat-surface-tab-discover"
+              />
+            ) : (<>
             {conversationSkelActive ? (
               <div
                 ref={conversationSkelHostRef}
@@ -3464,15 +6026,12 @@ export default function DashPage() {
 
             <motion.div
               className={`${styles.chatComposerStack} ${showHeroComposer ? styles.chatComposerStackHero : ""} ${chatComposerHero ? styles.chatComposerStackEmpty : ""} ${chatClarification ? styles.chatComposerStackConnected : ""}`}
-              style={{
-                overflow: "visible",
-              }}
             >
               <AnimatePresence initial={false}>
                 {chatComposerHero ? (
-                  <motion.h2
-                    key="chat-hero-title"
-                    className={styles.chatHeroTitle}
+                  <motion.div
+                    key={`chat-hero:${activeChatRuntime}:${specialistAgentId}`}
+                    className={styles.chatHeroIntro}
                     initial={reduceMotion ? false : { opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={reduceMotion ? undefined : { opacity: 0, y: -8 }}
@@ -3481,8 +6040,90 @@ export default function DashPage() {
                       ease: [0.22, 1, 0.36, 1],
                     }}
                   >
-                    Ask me anything
-                  </motion.h2>
+                    <h2 className={styles.chatHeroTitle}>
+                      {activeChatRuntime === "xero_mcp"
+                        ? "Ask Xero anything"
+                        : activeChatRuntime === "codex" || activeChatRuntime === "omni"
+                          ? "Ask about your business"
+                        : isCustomerAgent
+                          ? activeSpecialistAgent.ui.emptyStateTitle
+                          : "Ask me anything"}
+                    </h2>
+                    {activeChatRuntime === "codex" ? (
+                      <>
+                        <div className={styles.codexPromptMenu} ref={codexPromptMenuRef}>
+                          <button
+                            ref={codexPromptTriggerRef}
+                            className={styles.codexPromptMenuTrigger}
+                            type="button"
+                            aria-haspopup="menu"
+                            aria-expanded={codexPromptsOpen}
+                            aria-controls={codexPromptMenuId}
+                            onClick={() => setCodexPromptsOpen((current) => !current)}
+                          >
+                            <span>Suggested investigations</span>
+                            <Icon
+                              className={`${styles.codexPromptMenuChevron} ${codexPromptsOpen ? styles.codexPromptMenuChevronOpen : ""}`}
+                              name="chevronDown"
+                            />
+                          </button>
+                          <AnimatePresence>
+                            {codexPromptsOpen ? (
+                              <motion.div
+                                id={codexPromptMenuId}
+                                className={styles.codexPromptMenuPanel}
+                                role="menu"
+                                aria-label="Suggested investigations"
+                                initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+                                animate={{ height: "auto", opacity: 1 }}
+                                exit={reduceMotion ? undefined : { height: 0, opacity: 0 }}
+                                transition={{
+                                  duration: reduceMotion ? 0 : 0.4,
+                                  ease: [0.04, 0.62, 0.23, 0.98],
+                                }}
+                              >
+                                <div className={styles.codexPromptMenuList}>
+                                  {codexStarterPrompts.map((prompt) => (
+                                    <button
+                                      key={prompt}
+                                      className={styles.codexPromptMenuItem}
+                                      type="button"
+                                      role="menuitem"
+                                      data-codex-starter="true"
+                                      onClick={() => {
+                                        setCodexPromptsOpen(false);
+                                        void sendChatMessage(prompt);
+                                      }}
+                                    >
+                                      {prompt}
+                                    </button>
+                                  ))}
+                                </div>
+                              </motion.div>
+                            ) : null}
+                          </AnimatePresence>
+                        </div>
+                      </>
+                    ) : isCustomerAgent ? (
+                      <>
+                        <p className={styles.chatHeroBody}>{activeSpecialistAgent.ui.emptyStateBody}</p>
+                        <div className={styles.chatStarterPrompts} aria-label="Verified customer questions">
+                          {activeSpecialistAgent.starterPrompts.slice(0, 4).map((starter) => (
+                            <button
+                              key={starter.id}
+                              className={styles.chatStarterPrompt}
+                              type="button"
+                              data-certified-query={starter.certifiedQueryName}
+                              onClick={() => void sendChatMessage(starter.prompt)}
+                            >
+                              <span>{starter.prompt}</span>
+                              <small><span aria-hidden="true">✓</span> Verified</small>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                  </motion.div>
                 ) : null}
               </AnimatePresence>
               <AnimatePresence initial={false}>
@@ -3575,10 +6216,10 @@ export default function DashPage() {
               initial={false}
               animate={{
                 borderRadius: composerMultiline ? 20 : 999,
-                paddingTop: showHeroComposer ? 12 : 7,
-                paddingBottom: showHeroComposer ? 12 : 7,
-                paddingLeft: showHeroComposer ? 10 : 7,
-                paddingRight: showHeroComposer ? 10 : 7,
+                paddingTop: showHeroComposer ? 12 : 6,
+                paddingBottom: showHeroComposer ? 12 : 6,
+                paddingLeft: showHeroComposer ? 10 : 6,
+                paddingRight: showHeroComposer ? 10 : 6,
               }}
               transition={{
                 duration: reduceMotion ? 0 : 0.28,
@@ -3586,6 +6227,14 @@ export default function DashPage() {
               }}
               onSubmit={(event) => {
                 event.preventDefault();
+                if (voice.status === "connecting" || voice.status === "live") return;
+                if (dictation.status === "recording") {
+                  void dictation.stopAndSend(chatDraft, setChatDraft, (text) => {
+                    void sendChatMessage(text);
+                  });
+                  return;
+                }
+                if (dictation.status === "transcribing") return;
                 void sendChatMessage();
               }}
             >
@@ -3598,42 +6247,244 @@ export default function DashPage() {
                 <Icon name="plus" />
               </button>
               <div className={styles.chatComposerInputRow}>
-                <textarea
-                  ref={chatTextareaRef}
-                  aria-label="Ask me anything"
-                  placeholder={chatMessages.length > 0 ? "Send follow-up" : (chatComposerHero ? "Type a message…" : "Search or ask anything")}
-                  rows={1}
-                  value={chatDraft}
-                  onFocus={() => {
-                    if (chatMessages.length === 0) {
-                      setComposerExpanded(true);
+                {voice.status === "connecting" || voice.status === "live" ? (
+                  <div className={styles.voiceInputRow}>
+                    <DictationWaveform
+                      volume={voice.volume}
+                      processing={voice.status === "connecting" || voice.activity === "thinking"}
+                      label={voice.status === "connecting" ? "Connecting voice" : "Voice conversation"}
+                    />
+                    <span className={styles.voiceStatusText} aria-live="polite">
+                      {voice.status === "connecting"
+                        ? "Connecting…"
+                        : voice.activity === "thinking"
+                          ? (voice.statusLine || "Working on it…")
+                          : voice.activity === "responding"
+                            ? "Speaking"
+                            : "Listening"}
+                    </span>
+                  </div>
+                ) : dictation.status === "recording" || dictation.status === "transcribing" ? (
+                  <DictationWaveform
+                    volume={dictation.volume}
+                    processing={dictation.status === "transcribing"}
+                    label={dictation.status === "transcribing" ? "Finishing dictation" : "Listening"}
+                  />
+                ) : (
+                  <textarea
+                    ref={chatTextareaRef}
+                    aria-label={
+                      dashboardModeEnabled
+                        ? "Describe the dashboard you want"
+                        : superAgentEnabled
+                        ? "Ask a question for the 45-minute Super agent"
+                        : swarmEnabled
+                        ? "Ask a harder question for Swarm"
+                        : activeChatRuntime === "xero_mcp"
+                        ? "Ask Xero anything"
+                        : activeChatRuntime === "codex"
+                          ? "Ask Codex about your business"
+                        : activeChatRuntime === "omni"
+                          ? "Ask Omni about your business"
+                        : isCustomerAgent
+                          ? "Ask the Customer Agent"
+                          : "Ask me anything"
                     }
-                  }}
-                  onChange={(event) => {
-                    setChatDraft(event.target.value);
-                    window.requestAnimationFrame(() => resizeComposerTextarea());
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void sendChatMessage();
+                    placeholder={
+                      dashboardModeEnabled
+                        ? chatMessages.length > 0
+                          ? "Ask for changes…"
+                          : "Describe your dashboard…"
+                      : superAgentEnabled
+                        ? chatMessages.length > 0
+                          ? "Ask another deep follow-up. Super agent will loop through the evidence…"
+                          : "Ask a big question. Super agent will investigate for up to 45 minutes…"
+                      : swarmEnabled
+                        ? chatMessages.length > 0
+                          ? "Ask a harder follow-up. Swarm will split the work…"
+                          : "Ask a bigger question. Swarm will split the work across specialists…"
+                      : activeChatRuntime === "codex"
+                        ? chatMessages.length > 0
+                          ? "Ask Codex a follow-up…"
+                          : "Ask Codex anything about your connected data…"
+                      : activeChatRuntime === "omni"
+                        ? chatMessages.length > 0
+                          ? "Ask a follow-up…"
+                          : "Ask anything about your connected data…"
+                      : isCustomerAgent
+                        ? chatMessages.length > 0
+                          ? "Ask a follow-up about your customers…"
+                          : `${activeSpecialistAgent.ui.composerPlaceholder}…`
+                        : chatMessages.length > 0
+                          ? "Send follow-up"
+                        : activeChatRuntime === "xero_mcp"
+                          ? "Ask anything about Xero…"
+                          : "Ask anything about your business…"
                     }
-                  }}
-                />
+                    rows={1}
+                    value={chatDraft}
+                    onFocus={() => {
+                      if (chatMessages.length === 0) {
+                        setComposerExpanded(true);
+                      }
+                    }}
+                    onChange={(event) => {
+                      if (dictation.error) dictation.clearError();
+                      setChatDraft(event.target.value);
+                      window.requestAnimationFrame(() => resizeComposerTextarea());
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void sendChatMessage();
+                      }
+                    }}
+                  />
+                )}
               </div>
               <div className={styles.chatComposerTrailing}>
-                <ModelRunControls
-                  value={agentPreferences}
-                  onChange={setAgentPreferences}
-                />
-                <button
-                  className={styles.composerIconButton}
-                  type="button"
-                  aria-label="Dictate"
-                >
-                  <Icon name="microphone" />
-                </button>
-                {isChatResponding ? (
+                {(voice.status === "connecting" || voice.status === "live") ? (
+                  <button
+                    className={`${styles.composerIconButton} ${styles.composerIconButtonActive} ${styles.voiceButtonLive}`}
+                    type="button"
+                    aria-label="End voice conversation"
+                    title="End voice conversation"
+                    onClick={() => voice.stop()}
+                  >
+                    <Icon name="voice" />
+                  </button>
+                ) : null}
+                {canManageConnections && voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" ? (
+                  <button
+                    className={`${styles.swarmToggle} ${styles.dashboardToggle} ${dashboardModeEnabled ? styles.dashboardToggleActive : ""}`}
+                    type="button"
+                    aria-pressed={dashboardModeEnabled}
+                    aria-label="Dashboard mode"
+                    title="Describe a dashboard and watch Albert design, prove and place every tile live"
+                    onClick={() => {
+                      if (dashboardModeEnabled) {
+                        leaveDashboardMode();
+                        return;
+                      }
+                      enterDashboardMode();
+                    }}
+                  >
+                    <Icon name="dashboard" />
+                    <span className={styles.swarmToggleLabel}>Dashboard</span>
+                  </button>
+                ) : null}
+                {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" && (
+                  activeChatRuntime === "codex" ? (
+                    <ModelRunControls
+                      value={agentPreferences}
+                      onChange={setAgentPreferences}
+                      allowedModelIds={CODEX_MODEL_IDS}
+                      allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
+                      solPlannerEnabled={codexSolPlannerEnabled}
+                      onSolPlannerChange={setCodexSolPlannerEnabled}
+                      proModeEnabled={codexProModeEnabled}
+                      onProModeChange={setCodexProModeEnabled}
+                      {...runModeControlProps}
+                      {...developerControlProps}
+                    />
+                  ) : activeChatRuntime === "omni" ? (
+                    <ModelRunControls
+                      value={agentPreferences}
+                      onChange={setAgentPreferences}
+                      allowedModelIds={OMNI_MODEL_IDS}
+                      allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
+                      {...runModeControlProps}
+                      {...developerControlProps}
+                    />
+                  ) : activeChatRuntime === "anthropic" ? (
+                    <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
+                  ) : activeChatRuntime === "cubecore" ? (
+                    <span className={styles.chatRuntimeIndicator}>Cubecore</span>
+                  ) : activeChatRuntime === "xero_mcp" ? (
+                    <span className={styles.chatRuntimeIndicator}>Xero MCP</span>
+                  ) : (
+                    <ModelRunControls
+                      value={agentPreferences}
+                      onChange={setAgentPreferences}
+                      allowedModelIds={V3_MODEL_IDS}
+                      {...runModeControlProps}
+                      {...developerControlProps}
+                    />
+                  )
+                )}
+                {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" ? (
+                  <button
+                    className={styles.composerIconButton}
+                    type="button"
+                    aria-label="Talk to Albert"
+                    title="Talk to Albert"
+                    onClick={() => {
+                      if (chatMessages.length === 0) setComposerExpanded(true);
+                      if (dictation.error) dictation.clearError();
+                      voice.clearError();
+                      void voice.start();
+                    }}
+                  >
+                    <Icon name="voice" />
+                  </button>
+                ) : null}
+                {voice.status === "connecting" || voice.status === "live" ? null : dictation.status === "idle" ? (
+                  <button
+                    className={styles.composerIconButton}
+                    type="button"
+                    aria-label="Dictate"
+                    onClick={() => {
+                      if (chatMessages.length === 0) setComposerExpanded(true);
+                      void dictation.start();
+                    }}
+                  >
+                    <Icon name="microphone" />
+                  </button>
+                ) : (
+                  <button
+                    className={`${styles.composerIconButton} ${styles.composerIconButtonActive}`}
+                    type="button"
+                    aria-label="Stop dictation"
+                    disabled={dictation.status === "transcribing"}
+                    onClick={() => {
+                      void dictation.stop(chatDraft, (next) => {
+                        setChatDraft(next);
+                        window.requestAnimationFrame(() => resizeComposerTextarea());
+                      });
+                    }}
+                  >
+                    <Icon name="stop" />
+                  </button>
+                )}
+                {voice.status === "connecting" || voice.status === "live" ? null : dictation.status === "recording" || dictation.status === "transcribing" ? (
+                  <motion.button
+                    className={styles.chatSendButton}
+                    type="button"
+                    layout={!reduceMotion ? "position" : false}
+                    transition={{
+                      layout: {
+                        duration: reduceMotion ? 0 : 0.42,
+                        ease: [0.22, 1, 0.36, 1],
+                      },
+                    }}
+                    aria-label="Stop and send"
+                    disabled={dictation.status === "transcribing"}
+                    onClick={() => {
+                      void dictation.stopAndSend(
+                        chatDraft,
+                        (next) => {
+                          setChatDraft(next);
+                          window.requestAnimationFrame(() => resizeComposerTextarea());
+                        },
+                        (text) => {
+                          void sendChatMessage(text);
+                        },
+                      );
+                    }}
+                  >
+                    <Icon name="arrowUp" />
+                  </motion.button>
+                ) : chatBusy ? (
                   <motion.button
                     className={`${styles.chatSendButton} ${styles.chatStopButton}`}
                     type="button"
@@ -3668,6 +6519,21 @@ export default function DashPage() {
                 )}
               </div>
             </motion.form>
+            {dictation.error ? (
+              <p className={styles.dictationError} role="alert">
+                {dictation.error}
+              </p>
+            ) : voice.error ? (
+              <p className={styles.dictationError} role="alert">
+                {voice.error}
+              </p>
+            ) : null}
+            {showRecommendedHome ? (
+              <RecommendedAnalysis
+                onAsk={(question) => void sendChatMessage(question)}
+                reduceMotion={Boolean(reduceMotion)}
+              />
+            ) : null}
             </motion.div>
 
             <motion.div
@@ -3682,32 +6548,200 @@ export default function DashPage() {
                 ease: [0.22, 1, 0.36, 1],
               }}
             />
+            </>)}
           </div>
 
+          {dashboardPanelOpen ? (
+            <div
+              className={styles.dashboardSplitHandle}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the dashboard panel. Drag, or use the arrow keys."
+              aria-valuenow={dashboardPanelWidth ?? undefined}
+              tabIndex={0}
+              data-active={dashboardPanelResizing ? "true" : undefined}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                dashboardSplitDragRef.current = {
+                  pointerId: event.pointerId,
+                  startX: event.clientX,
+                  startWidth: currentDashboardPanelWidth(),
+                };
+                setDashboardPanelResizing(true);
+              }}
+              onPointerMove={(event) => {
+                const drag = dashboardSplitDragRef.current;
+                if (!drag || drag.pointerId !== event.pointerId) return;
+                // The panel sits on the right: dragging left widens it.
+                applyDashboardPanelWidth(drag.startWidth + (drag.startX - event.clientX));
+              }}
+              onPointerUp={(event) => {
+                const drag = dashboardSplitDragRef.current;
+                if (!drag || drag.pointerId !== event.pointerId) return;
+                dashboardSplitDragRef.current = null;
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                }
+                // Let the final width commit before transitions come back, or
+                // the last few pixels of the drag animate after release.
+                window.requestAnimationFrame(() => setDashboardPanelResizing(false));
+              }}
+              onPointerCancel={() => {
+                dashboardSplitDragRef.current = null;
+                window.requestAnimationFrame(() => setDashboardPanelResizing(false));
+              }}
+              onKeyDown={(event) => {
+                const step = event.shiftKey ? 40 : 16;
+                if (event.key === "ArrowLeft") {
+                  event.preventDefault();
+                  applyDashboardPanelWidth(currentDashboardPanelWidth() + step);
+                } else if (event.key === "ArrowRight") {
+                  event.preventDefault();
+                  applyDashboardPanelWidth(currentDashboardPanelWidth() - step);
+                } else if (event.key === "Home") {
+                  event.preventDefault();
+                  applyDashboardPanelWidth(Number.MAX_SAFE_INTEGER);
+                } else if (event.key === "End") {
+                  event.preventDefault();
+                  applyDashboardPanelWidth(DASHBOARD_PANEL_MIN_WIDTH);
+                }
+              }}
+              onDoubleClick={() => setDashboardPanelWidth(null)}
+              title="Drag to resize · double-click to reset"
+            />
+          ) : null}
           <aside
             id="analysis-takeaways"
-            className={`${styles.takeawaysPanel} ${takeawaysOpen ? styles.takeawaysPanelOpen : ""}`}
-            aria-label="Key insights"
-            aria-hidden={!takeawaysOpen}
-            inert={!takeawaysOpen || undefined}
+            className={`${styles.takeawaysPanel} ${sidePanelOpen ? styles.takeawaysPanelOpen : ""} ${dashboardPanelOpen ? styles.dashboardPanel : ""}`}
+            aria-label={dashboardPanelOpen
+              ? "Dashboard preview"
+              : swarmPanelOpen
+              ? (swarmSnapshot.kind === "super-agent" ? "Super agent" : "Swarm")
+              : "Reasoning"}
+            aria-hidden={!sidePanelOpen}
+            inert={!sidePanelOpen || undefined}
           >
-            <div className={styles.takeawaysPanelInner}>
-              <div className={styles.takeawaysHeader}>
-                <h2>Key Insights</h2>
-                <button
-                  className={styles.takeawaysClose}
-                  type="button"
-                  aria-label="Collapse key insights"
-                  onClick={() => setTakeawaysOpen(false)}
-                >
-                  <Icon name="chevron" />
-                </button>
+            {dashboardPanelOpen ? (
+              <DashboardBuildPanel
+                expanded={dashboardPanelExpanded}
+                onToggleExpanded={() => setDashboardPanelExpanded(value => !value)}
+                dashboardId={dashboardModeDashboardId ?? dashboardTurnMessage?.dashboardId ?? null}
+                events={dashboardTurnMessage?.events ?? []}
+                streaming={Boolean(dashboardTurnMessage?.isStreaming)}
+                buildTurn={dashboardTurnMessage?.dashboardBuild === true}
+                onClose={() => setDashboardPanelOpen(false)}
+                onOpenSource={(conversationId) => void openSavedConversation(conversationId)}
+                onEditWithAlbert={(tile, instruction) => {
+                  const targetId = dashboardModeDashboardId ?? dashboardTurnMessage?.dashboardId ?? null;
+                  if (targetId) editDashboardElement(targetId, tile, instruction);
+                }}
+              />
+            ) : swarmPanelOpen ? (
+              <SwarmPanel
+                onClose={() => setSwarmPanelOpen(false)}
+                width={swarmPanelWidth}
+                onWidthChange={setSwarmPanelWidth}
+                onResizeActiveChange={setSwarmPanelResizing}
+                onWidenPastDefault={() => setCollapsed(true)}
+              />
+            ) : reasoningPanelOpen ? (
+              <div className={styles.takeawaysPanelInner}>
+                <div className={styles.takeawaysHeader}>
+                  <h2>Reasoning</h2>
+                  <button
+                    className={styles.takeawaysClose}
+                    type="button"
+                    aria-label="Collapse reasoning"
+                    onClick={() => setReasoningPanelOpen(false)}
+                  >
+                    <Icon name="chevron" />
+                  </button>
+                </div>
+                <div className={`${styles.takeawaysBody} ${styles.reasoningPanelBody}`}>
+                  <div className={styles.reasoningPanelIntro}>
+                    <span
+                      className={`${styles.reasoningPanelStatusDot} ${reasoningTurns.some((turn) => turn.streaming) ? styles.reasoningPanelStatusDotLive : ""}`}
+                      aria-hidden="true"
+                    />
+                    <p>
+                      OpenAI’s live reasoning summary. Private chain-of-thought stays hidden.
+                    </p>
+                  </div>
+                  {reasoningTurns.length > 0 ? (
+                    <div className={styles.reasoningTurnList}>
+                      {reasoningTurns.map((turn, index) => (
+                        <article className={styles.reasoningTurn} key={turn.id}>
+                          <div className={styles.reasoningTurnHeader}>
+                            <span>{turn.streaming ? "Live" : `Turn ${index + 1}`}</span>
+                            {turn.streaming ? <span className={styles.reasoningStreamingLabel}>Streaming</span> : null}
+                          </div>
+                          {turn.question ? <h3>{turn.question}</h3> : null}
+                          {turn.summary ? (
+                            <p aria-live={turn.streaming ? "polite" : undefined}>{turn.summary}</p>
+                          ) : (
+                            <p className={styles.reasoningWaiting} role="status">
+                              Waiting for OpenAI’s first reasoning summary…
+                            </p>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className={styles.takeawaysEmptyState}>
+                      <strong>No reasoning summary yet</strong>
+                      <p>Send a Codex question and its reasoning summary will stream here as OpenAI provides it.</p>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className={styles.takeawaysBody} />
-            </div>
+            ) : null}
           </aside>
 
           </div>
+        ) : activeItem === "Agents" ? (
+          <AgentsWorkspace
+            onStartSalesSwarm={startSalesDeepSwarm}
+            salesSwarmBusy={swarmSnapshot.active}
+          />
+        ) : activeItem === "Proactive" ? (
+          <ProactiveWorkspace
+            onOpenConversation={(conversationId) => void openSavedConversation(conversationId)}
+            onProactiveConversationIds={(ids) => setProactiveConversationIds(new Set(ids))}
+          />
+        ) : activeItem === "DashboardMaster" ? (
+          <DashboardMasterWorkspace
+            onDashboardConversationIds={(ids) => setDashboardMasterConversationIds(new Set(ids))}
+          />
+        ) : activeItem === "Dashboard" ? (
+          dashboardViewId ? (
+            <DashboardWorkspace
+              key={dashboardViewId}
+              dashboardId={dashboardViewId}
+              onBack={() => setDashboardViewId(null)}
+              onOpenSource={(conversationId) => void openSavedConversation(conversationId)}
+              onStartBuild={() => enterDashboardMode({ freshChat: true, dashboardId: dashboardViewId })}
+              onEditWithAlbert={(tile, instruction) => editDashboardElement(dashboardViewId, tile, instruction)}
+            />
+          ) : (
+            <DashboardsWorkspace
+              reloadKey={dashboardsReloadKey}
+              creating={creatingDashboard}
+              onOpen={(dashboardId) => setDashboardViewId(dashboardId)}
+              onCreate={() => void createDashboardAndBuild()}
+            />
+          )
+        ) : activeItem === "My Data" ? (
+          <MyDataWorkspace />
+        ) : activeItem === "Test chart" ? (
+          <TestChartWorkspace
+            appearance={theme === "dark" || theme === "green" ? "dark" : theme === "system" ? "system" : "light"}
+          />
+        ) : activeItem === "New test" ? (
+          <NewTestWorkspace />
+        ) : activeItem === "Logs" && canViewQueryLogs ? (
+          <QueryLogsWorkspace onOpenConversation={(conversationId) => void openSavedConversation(conversationId)} />
         ) : activeItem === "Connections" ? (
           <ConnectionsWorkspace
             data={connectionsData}
@@ -3717,10 +6751,15 @@ export default function DashPage() {
             onConnect={connectProvider}
             onSelectOAuthAccount={selectOAuthAccount}
             onDisconnect={disconnectConnection}
+            onIngestionStarted={() => void loadConnections({ silent: true })}
             onRetry={() => void loadConnections()}
           />
         ) : activeItem === "Admin" && isInternalOperator ? (
           <AdminWorkspace />
+        ) : activeItem === "BusinessContext" ? (
+          <BusinessContextWorkspace />
+        ) : activeItem === "SemanticMemory" ? (
+          <SemanticMemoryWorkspace />
         ) : activeItem === "Organization" ? (
           <OrganizationWorkspace
             onOrganisationChanged={() => window.location.reload()}
@@ -3839,23 +6878,10 @@ export default function DashPage() {
             aria-labelledby="edit-resend-title"
             aria-describedby="edit-resend-copy"
           >
-            <button
-              className={styles.popupClose}
-              type="button"
-              aria-label="Close"
-              onClick={closeEditResendConfirm}
-              disabled={editResendBusy}
-            >
-              <Icon name="close" />
-            </button>
-            <p className={styles.popupEyebrow}>Rerun from here</p>
-            <h2 id="edit-resend-title">Replace later answers?</h2>
+            <h2 id="edit-resend-title">Rerun this question?</h2>
             <p id="edit-resend-copy">
-              Rerunning this question keeps the same chat, but every message after this point will be removed.
+              Later messages in this chat will be removed.
             </p>
-            <div className={styles.rewindConfirmNotice} role="note">
-              Earlier messages stay. Anything after this question is cleared before Albert answers again.
-            </div>
             <div className={styles.popupActions}>
               <button
                 className={styles.popupSecondaryAction}
@@ -3866,12 +6892,13 @@ export default function DashPage() {
                 Cancel
               </button>
               <button
+                ref={editResendConfirmButtonRef}
                 className={styles.popupPrimaryAction}
                 type="button"
                 onClick={() => void confirmEditedMessageResend()}
                 disabled={editResendBusy}
               >
-                {editResendBusy ? "Rerunning…" : "Rerun question"}
+                {editResendBusy ? "Rerunning…" : "Rerun"}
               </button>
             </div>
           </div>

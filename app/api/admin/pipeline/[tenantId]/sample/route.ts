@@ -4,23 +4,11 @@ import { assertSameOriginMutation, readBoundedJsonBody } from "@/services/contro
 import { ControlPlaneError } from "@/services/control-plane/src/web-repository";
 
 const tenantSchema = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u);
-const inputSchema = z.discriminatedUnion("stage", [
-  z.object({
-    stage: z.literal("staging"),
-    schemaName: z.enum(["source_lightspeed", "source_xero", "source_deputy"]),
-    tableName: z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/u),
-  }).strict(),
-  z.object({
-    stage: z.literal("canonical"),
-    schemaName: z.literal("core"),
-    tableName: z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/u),
-  }).strict(),
-  z.object({
-    stage: z.literal("marts"),
-    schemaName: z.literal("mart"),
-    tableName: z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/u),
-  }).strict(),
-]);
+const inputSchema = z.object({
+  stage: z.literal("staging"),
+  schemaName: z.enum(["source_lightspeed", "source_xero", "source_deputy"]),
+  tableName: z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/u),
+}).strict();
 
 export async function POST(
   request: Request,

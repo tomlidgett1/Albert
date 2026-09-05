@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../../", import.meta.url);
@@ -9,9 +9,10 @@ async function source(path: string): Promise<string> {
 }
 
 test("sync and webhook control identities are NOLOGIN and explicitly assumed", async () => {
-  const [bootstrap, migration, deputy, xero, attestation, postgres, sync, webhook] = await Promise.all([
+  const [bootstrap, migration, finalServiceRoleDeny, deputy, xero, attestation, postgres, sync, webhook] = await Promise.all([
     source("infra/bootstrap/control_plane_role.sql"),
     source("infra/migrations/control-plane/0007_runtime_service_isolation.sql"),
+    source("infra/migrations/control-plane/0105_m0_service_role_final_deny.sql"),
     source("infra/migrations/control-plane/0009_deputy_webhook_security.sql"),
     source("infra/migrations/control-plane/0010_xero_webhook_inbox.sql"),
     source("infra/migrations/control-plane/0037_m7_verified_webhook_attestation_boundary.sql"),
@@ -44,6 +45,42 @@ test("sync and webhook control identities are NOLOGIN and explicitly assumed", a
   assert.match(migration, /REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA control_plane FROM service_role/i);
   assert.match(migration, /REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA control_plane FROM PUBLIC,\s*service_role/i);
   assert.match(migration, /REVOKE USAGE ON SCHEMA control_plane FROM service_role/i);
+  assert.match(
+    finalServiceRoleDeny,
+    /REVOKE EXECUTE ON FUNCTION[\s\S]*enqueue_due_incremental_syncs\(timestamptz\)[\s\S]*renew_albert_turn_lease\(text,integer\)[\s\S]*is_known_connector\(text\)[\s\S]*FROM service_role/i,
+  );
+  assert.doesNotMatch(
+    finalServiceRoleDeny,
+    /ALL (?:TABLES|SEQUENCES|FUNCTIONS) IN SCHEMA control_plane/u,
+  );
+});
+
+test("every post-isolation service_role grant is explicitly retired", async () => {
+  const directory = new URL("infra/migrations/control-plane/", root);
+  const files = (await readdir(directory))
+    .filter((name) => /^\d{4}_[a-z0-9_]+\.sql$/u.test(name) && name >= "0007_")
+    .sort((left, right) => left.localeCompare(right));
+  const grants: string[] = [];
+  for (const file of files) {
+    const sql = await readFile(new URL(file, directory), "utf8");
+    for (const statement of sql.split(";")) {
+      if (/^\s*GRANT\b/iu.test(statement) && /\bservice_role\b/iu.test(statement))
+        grants.push(`${file}:${statement.replace(/\s+/gu, " ").trim()}`);
+    }
+  }
+  assert.deepEqual(
+    grants.map((grant) => grant.slice(0, 4)),
+    ["0073", "0084", "0086"],
+  );
+  const finalDeny = await source(
+    "infra/migrations/control-plane/0105_m0_service_role_final_deny.sql",
+  );
+  for (const routine of [
+    "enqueue_due_incremental_syncs(timestamptz)",
+    "renew_albert_turn_lease(text,integer)",
+    "is_known_connector(text)",
+  ])
+    assert.match(finalDeny, new RegExp(routine.replace(/[()]/gu, "\\$&"), "u"));
 });
 
 test("public webhook identity cannot read encrypted credentials or user analytics", async () => {
@@ -136,6 +173,8 @@ test("runtime login provisioner reconciles one NOINHERIT group per credential", 
   assert.match(provisioner, /REVOKE \$\{identifier\(membership\.role_name\)\} FROM \$\{login\}/);
   assert.match(provisioner, /GRANT \$\{group\} TO \$\{login\}/);
   assert.match(provisioner, /Required group \$\{group\} must not inherit or hold membership in another role/);
+  assert.match(provisioner, /group === "albert_migration_owner"[\s\S]*new Set\(\["fivetran_user"\]\)/u);
+  assert.match(provisioner, /parent\.admin_option \|\| !allowedParents\.has\(parent\.role_name\)/u);
   assert.match(provisioner, /does not have exactly one non-admin group membership/);
   assert.match(provisioner, /rolcanlogin,rolinherit,rolsuper/);
   assert.match(provisioner, /membership\.admin_option/);
@@ -145,9 +184,11 @@ test("runtime login provisioner reconciles one NOINHERIT group per credential", 
 
   const memberships = [...provisioner.matchAll(/group: "([a-z_]+)"/g)].map((match) => match[1]);
   assert.deepEqual(memberships.sort(), [
+    "albert_anthropic_control",
     "albert_control_migration_owner",
     "albert_deletion_control",
     "albert_migration_owner",
+    "albert_omni_control",
     "albert_operator_diagnostic_control",
     "albert_semantic_control",
     "albert_sync_control",
@@ -160,4 +201,36 @@ test("runtime login provisioner reconciles one NOINHERIT group per credential", 
     "semantic_ro",
     "transform_rw",
   ].sort());
+});
+
+test("the final control-plane deny covers current and future private functions", async () => {
+  const migration = await source(
+    "infra/migrations/control-plane/0172_m0_final_private_control_default_deny.sql",
+  );
+  assert.match(migration, /REVOKE USAGE ON SCHEMA control_plane FROM service_role/u);
+  assert.doesNotMatch(migration, /REVOKE USAGE ON SCHEMA control_plane FROM [^;]*authenticated/u);
+  assert.match(
+    migration,
+    /procedure\.proowner = \(SELECT oid FROM pg_catalog\.pg_roles WHERE rolname = current_user\)[\s\S]*REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC,anon,service_role/u,
+  );
+  assert.doesNotMatch(migration, /REVOKE EXECUTE[^;']*authenticated/u);
+  assert.match(
+    migration,
+    /ALTER DEFAULT PRIVILEGES FOR ROLE albert_control_migration_owner[\s\S]*REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC/u,
+  );
+  assert.match(migration, /NOTIFY pgrst, 'reload schema'/u);
+});
+
+test("the final analytical deny covers Fivetran and capability implementations", async () => {
+  const migration = await source(
+    "infra/migrations/analytical/0179_m0_final_private_function_default_deny.sql",
+  );
+  assert.match(
+    migration,
+    /REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA[\s\S]*ingestion,quality,semantic_internal,deletion_internal,capability_internal[\s\S]*FROM PUBLIC/u,
+  );
+  assert.equal(
+    (migration.match(/ALTER DEFAULT PRIVILEGES FOR ROLE albert_migration_owner/gu) ?? []).length,
+    5,
+  );
 });

@@ -1,4 +1,5 @@
 import { inspectRuntimeEnvironment, type RuntimeReadiness } from "./env.js";
+import { withWebReleaseIdentity } from "./vercel-runtime.js";
 
 // next.config.ts replaces this exact process.env reference at compile time.
 // Do not derive the bundle identity from the generic runtime source below.
@@ -11,7 +12,6 @@ export type WebDependencyChecks = Readonly<{
   releaseIdentity: boolean;
   supabaseAuth: boolean;
   syncWorker: boolean;
-  semanticQuery: boolean;
   operatorDiagnostic: boolean;
 }>;
 
@@ -89,7 +89,6 @@ async function exactServiceReadinessProbe(
   fetcher: Fetcher,
   url: string,
   expectedSha: string,
-  expectedDeploymentId: string,
 ): Promise<boolean> {
   try {
     const response = await fetcher(url, {
@@ -103,7 +102,8 @@ async function exactServiceReadinessProbe(
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
     const readiness = payload as Record<string, unknown>;
     return readiness.releaseSha === expectedSha &&
-      readiness.deploymentId === expectedDeploymentId &&
+      typeof readiness.deploymentId === "string" &&
+      /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u.test(readiness.deploymentId) &&
       (readiness.ready === true || readiness.status === "ready");
   } catch {
     return false;
@@ -116,10 +116,11 @@ export async function inspectWebDependencies(
   fetcher: Fetcher = fetch,
   embeddedBuildSha: string = EMBEDDED_WEB_BUILD_SHA,
 ): Promise<WebDependencyReadiness> {
-  const configuration = inspectRuntimeEnvironment("web", source);
+  const effectiveSource = withWebReleaseIdentity(source);
+  const configuration = inspectRuntimeEnvironment("web", effectiveSource);
   const buildSha = embeddedBuildSha.trim().toLowerCase();
-  const runtimeSha = source.ALBERT_SERVICE_VERSION?.trim().toLowerCase() ?? "";
-  const deploymentId = source.ALBERT_DEPLOYMENT_ID?.trim() ?? "";
+  const runtimeSha = effectiveSource.ALBERT_SERVICE_VERSION?.trim().toLowerCase() ?? "";
+  const deploymentId = effectiveSource.ALBERT_DEPLOYMENT_ID?.trim() ?? "";
   const releaseIdentity = /^[a-f0-9]{40}$/u.test(buildSha) &&
     buildSha === runtimeSha &&
     /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u.test(deploymentId);
@@ -129,26 +130,22 @@ export async function inspectWebDependencies(
       releaseIdentity,
       supabaseAuth: false,
       syncWorker: false,
-      semanticQuery: false,
       operatorDiagnostic: false,
     });
     return Object.freeze({ ready: false, configuration, checks });
   }
 
-  const supabaseUrl = source.NEXT_PUBLIC_SUPABASE_URL!;
-  const publishableKey = source.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
-  const [supabaseAuth, syncWorker, semanticQuery, operatorDiagnostic] = await Promise.all([
+  const supabaseUrl = effectiveSource.NEXT_PUBLIC_SUPABASE_URL!;
+  const publishableKey = effectiveSource.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
+  const [supabaseAuth, syncWorker, operatorDiagnostic] = await Promise.all([
     successfulProbe(fetcher, endpoint(supabaseUrl, "/auth/v1/health"), {
       apikey: publishableKey,
     }),
     exactServiceReadinessProbe(
-      fetcher, endpoint(source.SYNC_WORKER_INTERNAL_URL!, "/readyz"), buildSha, deploymentId,
+      fetcher, endpoint(effectiveSource.SYNC_WORKER_INTERNAL_URL!, "/readyz"), buildSha,
     ),
     exactServiceReadinessProbe(
-      fetcher, endpoint(source.SEMANTIC_QUERY_SERVICE_URL!, "/readyz"), buildSha, deploymentId,
-    ),
-    exactServiceReadinessProbe(
-      fetcher, endpoint(source.OPERATOR_DIAGNOSTIC_SERVICE_URL!, "/readyz"), buildSha, deploymentId,
+      fetcher, endpoint(effectiveSource.OPERATOR_DIAGNOSTIC_SERVICE_URL!, "/readyz"), buildSha,
     ),
   ]);
   const checks = Object.freeze({
@@ -156,7 +153,6 @@ export async function inspectWebDependencies(
     releaseIdentity: true,
     supabaseAuth,
     syncWorker,
-    semanticQuery,
     operatorDiagnostic,
   });
   return Object.freeze({

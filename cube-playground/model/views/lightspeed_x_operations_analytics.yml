@@ -1,0 +1,371 @@
+views:
+  - name: lightspeed_x_purchasing_analytics
+    title: Lightspeed X-Series purchasing analytics
+    description: >
+      Stock-workflow headers and product lines: supplier purchase orders, outlet
+      transfers, supplier returns, stocktakes, ordered/received/outstanding units,
+      estimated order cost and receipt lead time.
+    meta:
+      ai_context: >
+        Consignment type determines meaning: SUPPLIER is a stock/purchase order,
+        OUTLET a transfer, RETURN a supplier return, STOCKTAKE a stocktake. SENT
+        is notification state and does not itself create stock movement.
+        Header and line prefixes have different grains. Line ordered_cost uses
+        count * unit cost and is operational stock-order value, not accounting
+        supplier spend/amount paid. Use Xero for bills, payments and amounts owed.
+    cubes:
+      - join_path: lightspeed_x_consignments
+        includes:
+          - tenant_id
+          - consignment_name
+          - consignment_type
+          - consignment_status
+          - reference
+          - supplier_invoice
+          - currency_code
+          - consignment_date
+          - due_at
+          - received_at
+          - created_at
+          - updated_at
+          - deleted_at
+          - receipt_lead_time_days
+          - total_count_gain
+          - total_count_loss
+          - total_cost_gain
+          - total_cost_loss
+          - consignments
+          - supplier_orders
+          - outlet_transfers
+          - supplier_returns
+          - stocktakes
+          - open_consignments
+          - received_consignments
+          - average_receipt_lead_time_days
+          - stocktake_units_gained
+          - stocktake_units_lost
+          - stocktake_cost_gain
+          - stocktake_cost_loss
+      - join_path: lightspeed_x_consignments.lightspeed_x_outlets
+        prefix: true
+        includes: [outlet_name, outlet_timezone, city, state, country_code]
+      - join_path: lightspeed_x_consignments.lightspeed_x_suppliers
+        prefix: true
+        includes: [supplier_name, source]
+      - join_path: lightspeed_x_consignment_products
+        includes:
+          - product_sku
+          - line_status
+          - is_included
+          - unit_cost
+          - name: ordered_quantity
+            alias: line_ordered_units
+          - name: received_quantity
+            alias: line_received_units
+          - name: outstanding_quantity
+            alias: line_outstanding_units
+          - name: created_at
+            alias: line_created_at
+          - name: updated_at
+            alias: line_updated_at
+          - consignment_lines
+          - ordered_units
+          - received_units
+          - outstanding_units
+          - ordered_cost
+          - received_cost
+      - join_path: lightspeed_x_consignment_products.lightspeed_x_consignments
+        prefix: true
+        includes: [consignment_name, consignment_type, consignment_status, consignment_date, due_at, received_at, reference]
+      - join_path: lightspeed_x_consignment_products.lightspeed_x_consignments.lightspeed_x_suppliers
+        includes:
+          - name: supplier_name
+            alias: line_supplier_name
+      - join_path: lightspeed_x_consignment_products.lightspeed_x_consignments.lightspeed_x_outlets
+        includes:
+          - name: outlet_name
+            alias: line_outlet_name
+      - join_path: lightspeed_x_consignment_products.lightspeed_x_products
+        prefix: true
+        includes: [product_name, variant_name, sku]
+    folders:
+      - { name: Workflow headers, includes: [consignment_name, consignment_type, consignment_status, consignment_date, due_at, received_at, supplier_orders, outlet_transfers, supplier_returns, stocktakes, open_consignments, received_consignments, average_receipt_lead_time_days, lightspeed_x_suppliers_supplier_name, lightspeed_x_outlets_outlet_name] }
+      - { name: Order lines, includes: [lightspeed_x_consignments_consignment_name, lightspeed_x_products_product_name, lightspeed_x_products_sku, product_sku, line_status, line_ordered_units, line_received_units, line_outstanding_units, ordered_units, received_units, outstanding_units, ordered_cost, received_cost, consignment_lines] }
+      - { name: Stocktake variance, includes: [stocktake_units_gained, stocktake_units_lost, stocktake_cost_gain, stocktake_cost_loss] }
+
+  - name: lightspeed_x_fulfillment_analytics
+    title: Lightspeed X-Series fulfillment analytics
+    description: >
+      Current fulfillment headers and line progress by sale, outlet, type and
+      state. Header and line prefixes are independent grains.
+    meta:
+      ai_context: >
+        OPEN, STARTED, PICKED, PACKED and FULFILLED are current snapshot states.
+        required/picked/packed/fulfilled/remaining units are line snapshot totals.
+        observed cycle time is created_at to last updated_at, not exact delivery
+        time; exact state-transition analysis requires fulfillment history via
+        source explorer. SHIPPED/PICKED_UP can appear on legacy detail objects.
+    cubes:
+      - join_path: lightspeed_x_fulfillments
+        includes:
+          - tenant_id
+          - fulfillment_type
+          - fulfillment_state
+          - assigned_user_count
+          - created_at
+          - updated_at
+          - observed_cycle_hours
+          - fulfillments
+          - open_fulfillments
+          - fulfilled_fulfillments
+          - dispatch_fulfillments
+          - pickup_fulfillments
+          - service_fulfillments
+          - average_observed_cycle_hours
+      - join_path: lightspeed_x_fulfillments.lightspeed_x_outlets
+        prefix: true
+        includes: [outlet_name, outlet_timezone, city, state, country_code]
+      - join_path: lightspeed_x_fulfillment_lines
+        includes:
+          - name: fulfillment_state
+            alias: line_fulfillment_state
+          - required_quantity
+          - picked_quantity
+          - packed_quantity
+          - fulfilled_quantity
+          - remaining_quantity
+          - name: created_at
+            alias: line_fulfillment_created_at
+          - name: updated_at
+            alias: line_fulfillment_updated_at
+          - fulfillment_lines
+          - required_units
+          - picked_units
+          - packed_units
+          - fulfilled_units
+          - remaining_units
+      - join_path: lightspeed_x_fulfillment_lines.lightspeed_x_fulfillments
+        prefix: true
+        includes: [fulfillment_type, fulfillment_state, created_at, updated_at]
+      - join_path: lightspeed_x_fulfillment_lines.lightspeed_x_products
+        prefix: true
+        includes: [product_name, variant_name, sku]
+    folders:
+      - { name: Fulfillment headers, includes: [fulfillment_type, fulfillment_state, created_at, updated_at, fulfillments, open_fulfillments, fulfilled_fulfillments, dispatch_fulfillments, pickup_fulfillments, service_fulfillments, average_observed_cycle_hours, lightspeed_x_outlets_outlet_name] }
+      - { name: Fulfillment lines, includes: [line_fulfillment_state, lightspeed_x_products_product_name, lightspeed_x_products_sku, required_quantity, picked_quantity, packed_quantity, fulfilled_quantity, remaining_quantity, required_units, picked_units, packed_units, fulfilled_units, remaining_units, fulfillment_lines] }
+
+  - name: lightspeed_x_services_analytics
+    title: Lightspeed X-Series services analytics
+    description: >
+      Service-order scheduling/status, service lines and customer-owned service
+      items. Service order, line and item prefixes are independent grains.
+    meta:
+      ai_context: >
+        The Services module is optional, so zero rows can mean it is not enabled.
+        Each service order creates a corresponding sale; service totals and line
+        reference values must never be added to sales revenue. Custom status is
+        authoritative for work state. A passed scheduled date is not automatically
+        overdue without status semantics. Serial numbers/condition notes are not public.
+    cubes:
+      - join_path: lightspeed_x_services
+        includes:
+          - tenant_id
+          - service_status
+          - service_status_name
+          - service_status_key
+          - location
+          - currency_code
+          - scheduled_for
+          - scheduled_minutes
+          - subtotal
+          - total_amount
+          - total_tax
+          - total_promotion
+          - created_at
+          - updated_at
+          - scheduled_date_has_passed
+          - service_orders
+          - scheduled_service_minutes
+          - scheduled_dates_passed
+          - service_order_total_reference
+          - average_scheduled_minutes
+      - join_path: lightspeed_x_services.lightspeed_x_users
+        prefix: true
+        includes: [display_name, account_type]
+      - join_path: lightspeed_x_service_lines
+        includes:
+          - sku
+          - line_state
+          - fulfillment_type
+          - quantity
+          - unit_price
+          - unit_discount
+          - service_lines
+          - service_line_units
+          - service_line_reference_value
+      - join_path: lightspeed_x_service_lines.lightspeed_x_services
+        prefix: true
+        includes: [service_status, service_status_name, scheduled_for, location]
+      - join_path: lightspeed_x_service_lines.lightspeed_x_products
+        prefix: true
+        includes: [product_name, variant_name, sku]
+      - join_path: lightspeed_x_service_items
+        includes:
+          - item_name
+          - service_location
+          - name: created_at
+            alias: service_item_created_at
+          - name: updated_at
+            alias: service_item_updated_at
+          - service_items
+      - join_path: lightspeed_x_service_items.lightspeed_x_customers
+        prefix: true
+        includes: [display_name, company_name]
+    folders:
+      - { name: Service orders, includes: [service_status, service_status_name, location, scheduled_for, scheduled_minutes, scheduled_date_has_passed, service_orders, scheduled_service_minutes, scheduled_dates_passed, average_scheduled_minutes, lightspeed_x_users_display_name] }
+      - { name: Service lines, includes: [lightspeed_x_services_service_status_name, lightspeed_x_products_product_name, lightspeed_x_products_sku, line_state, fulfillment_type, quantity, unit_price, unit_discount, service_lines, service_line_units] }
+      - { name: Customer-owned items, includes: [item_name, service_location, service_items, lightspeed_x_customers_display_name, lightspeed_x_customers_company_name] }
+
+  - name: lightspeed_x_store_operations_analytics
+    title: Lightspeed X-Series store operations analytics
+    description: >
+      Retailer configuration, outlets, registers, users and till-login shifts.
+      Retailer, outlet, register, user and shift prefixes are independent grains.
+    meta:
+      ai_context: >
+        Use for store setup, open registers, enabled users/MFA and till-login
+        hours. Shift hours are POS operational login time, not roster, payroll,
+        award interpretation or fully loaded labour cost. Direct emails, usernames
+        and store/user contact details are not public.
+    cubes:
+      - join_path: lightspeed_x_retailer
+        includes:
+          - retailer_name
+          - account_status
+          - account_type
+          - country_code
+          - culture
+          - currency_code
+          - currency_symbol
+          - retailer_timezone
+          - tax_exclusive
+          - gift_cards_enabled
+          - gift_cards_never_enabled
+          - loyalty_enabled
+          - loyalty_ratio
+          - store_credit_enabled
+          - automatic_sku_enabled
+          - created_at
+          - activated_at
+          - retailer_accounts
+      - join_path: lightspeed_x_outlets
+        includes:
+          - outlet_name
+          - name: currency_code
+            alias: outlet_currency
+          - display_prices
+          - outlet_timezone
+          - city
+          - suburb
+          - state
+          - postcode
+          - name: country_code
+            alias: outlet_country
+          - latitude
+          - longitude
+          - name: is_active
+            alias: outlet_active
+          - outlets
+          - active_outlets
+      - join_path: lightspeed_x_registers
+        includes:
+          - register_name
+          - is_open
+          - invoice_prefix
+          - invoice_suffix
+          - invoice_sequence
+          - print_receipt
+          - email_receipt
+          - ask_for_user_on_sale
+          - opened_at
+          - closed_at
+          - name: is_active
+            alias: register_active
+          - registers
+          - active_registers
+          - open_registers
+      - join_path: lightspeed_x_registers.lightspeed_x_outlets
+        prefix: true
+        includes: [outlet_name, outlet_timezone]
+      - join_path: lightspeed_x_users
+        includes:
+          - display_name
+          - name: account_type
+            alias: user_account_type
+          - enabled
+          - is_primary_user
+          - mfa_enabled
+          - restricted_outlet_count
+          - daily_sales_target
+          - weekly_sales_target
+          - monthly_sales_target
+          - name: created_at
+            alias: user_created_at
+          - name: last_seen_at
+            alias: user_last_seen_at
+          - users
+          - enabled_users
+          - mfa_enabled_users
+      - join_path: lightspeed_x_shifts
+        includes:
+          - time_in
+          - time_out
+          - is_open_shift
+          - shift_hours
+          - shifts
+          - completed_shifts
+          - open_shifts
+          - name: worked_hours
+            alias: total_worked_hours
+          - average_shift_hours
+      - join_path: lightspeed_x_shifts.lightspeed_x_users
+        prefix: true
+        includes: [display_name, account_type]
+    folders:
+      - { name: Retailer, includes: [retailer_name, account_status, account_type, country_code, currency_code, retailer_timezone, tax_exclusive, gift_cards_enabled, loyalty_enabled, store_credit_enabled] }
+      - { name: Outlets, includes: [outlet_name, outlet_currency, display_prices, outlet_timezone, city, suburb, state, postcode, outlet_active, outlets, active_outlets] }
+      - { name: Registers, includes: [register_name, lightspeed_x_outlets_outlet_name, is_open, register_active, opened_at, closed_at, registers, active_registers, open_registers] }
+      - { name: Users, includes: [display_name, user_account_type, enabled, is_primary_user, mfa_enabled, restricted_outlet_count, daily_sales_target, weekly_sales_target, monthly_sales_target, user_last_seen_at, users, enabled_users, mfa_enabled_users] }
+      - { name: Till-login shifts, includes: [lightspeed_x_users_display_name, time_in, time_out, is_open_shift, shift_hours, shifts, completed_shifts, open_shifts, total_worked_hours, average_shift_hours] }
+
+  - name: lightspeed_x_audit_analytics
+    title: Lightspeed X-Series audit analytics
+    description: >
+      Governed audit activity counts by entity type, action, user and time.
+      Changed data, prior values, IP addresses and user agents are excluded.
+    meta:
+      ai_context: >
+        Use for who changed what type of entity and when. This public view exposes
+        counts and safe classifications, not changed values or network identifiers.
+        Security-event payloads and uncommon audit fields remain in the exhaustive
+        explorer for explicit authorised investigation.
+    cubes:
+      - join_path: lightspeed_x_audit_log_events
+        includes:
+          - tenant_id
+          - entity_type
+          - action
+          - occurred_at
+          - persisted_at
+          - audit_events
+          - insert_events
+          - update_events
+          - delete_events
+          - affected_entities
+          - acting_users
+      - join_path: lightspeed_x_audit_log_events.lightspeed_x_users
+        prefix: true
+        includes: [display_name, account_type]
+    folders:
+      - { name: Activity, includes: [entity_type, action, occurred_at, persisted_at, audit_events, insert_events, update_events, delete_events, affected_entities, acting_users] }
+      - { name: Actor, includes: [lightspeed_x_users_display_name, lightspeed_x_users_account_type] }

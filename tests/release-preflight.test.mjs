@@ -48,8 +48,11 @@ const validRelease = Object.freeze({
   OPENAI_BASE_URL: "https://au.api.openai.com/v1",
   NEXT_PUBLIC_SUPABASE_URL: `https://${projectRef}.supabase.co`,
   ALBERT_PUBLIC_ORIGIN: "https://albert.example",
+  ANTHROPIC_ANALYTICS_SERVICE_URL: "https://anthropic.albert.example",
   SEMANTIC_QUERY_SERVICE_URL: "https://semantic.albert.example",
+  CUBE_API_URL: "https://cube.albert.example",
   OPERATOR_DIAGNOSTIC_SERVICE_URL: "https://diagnostic.albert.example",
+  CODEX_RUNTIME_SERVICE_URL: "https://codex.albert.example",
   SYNC_WORKER_INTERNAL_URL: "https://sync.albert.example",
   WEBHOOK_GATEWAY_PUBLIC_URL: "https://webhooks.albert.example",
   CONTROL_PLANE_MIGRATION_URL:
@@ -57,11 +60,14 @@ const validRelease = Object.freeze({
   ANALYTICAL_MIGRATION_URL:
     "postgresql://albert_analytical_deployer:secret@analytics.example/postgres?sslmode=require",
   FLY_SEMANTIC_APP: "albert-semantic-prod",
+  FLY_CUBE_APP: "albert-cube-prod",
+  FLY_ANTHROPIC_APP: "albert-anthropic-prod",
   FLY_SYNC_APP: "albert-sync-prod",
   FLY_TRANSFORM_APP: "albert-transform-prod",
   FLY_WEBHOOK_APP: "albert-webhook-prod",
   FLY_DELETION_APP: "albert-deletion-prod",
   FLY_OPERATOR_DIAGNOSTIC_APP: "albert-diagnostic-prod",
+  FLY_CODEX_RUNTIME_APP: "albert-codex-runtime-prod",
   FLY_SYNC_AUTOSCALER_APP: "albert-sync-autoscaler-prod",
   FLY_TRANSFORM_AUTOSCALER_APP: "albert-transform-autoscaler-prod",
   FLY_ORGANIZATION_SLUG: "albert-production",
@@ -386,5 +392,37 @@ test("Fly secret inventory is exact per runtime and rejects undeclared privilege
       { Name: "UNDECLARED_SECRET" },
     ]),
     /undeclared secret names/,
+  );
+  const cube = contract.runtimes.cube;
+  const cubeInventory = cube.requiredSecretNames.map((Name) => ({
+    Name,
+    Digest: "not-a-secret-value",
+  }));
+  assert.deepEqual(
+    validateRuntimeSecretNames(contract, "cube", cubeInventory),
+    { runtimeName: "cube", count: cubeInventory.length },
+  );
+  assert.throws(
+    () => validateRuntimeSecretNames(contract, "cube", [
+      ...cubeInventory,
+      { Name: "ANALYTICAL_MIGRATION_URL", Digest: "forbidden" },
+    ]),
+    /prohibited secret names/,
+  );
+  const codex = contract.runtimes["codex-runtime"];
+  const codexInventory = codex.requiredSecretNames.map((Name) => ({
+    Name,
+    Digest: "not-a-secret-value",
+  }));
+  assert.deepEqual(
+    validateRuntimeSecretNames(contract, "codex-runtime", codexInventory),
+    { runtimeName: "codex-runtime", count: codexInventory.length },
+  );
+  assert.throws(
+    () => validateRuntimeSecretNames(contract, "codex-runtime", [
+      ...codexInventory,
+      { Name: "CUBEJS_API_SECRET", Digest: "forbidden" },
+    ]),
+    /prohibited secret names/,
   );
 });

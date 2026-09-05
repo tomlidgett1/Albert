@@ -35,20 +35,29 @@ export async function startOperatorDiagnosticNodeServer(options: Readonly<{
       if (request.method === "GET" && request.url === "/livez") {
         return sendJson(response, closing ? 503 : 200, { status: closing ? "stopping" : "ok" });
       }
-      if (request.method === "GET" && request.url === "/readyz") {
-        const [controlReady, analyticalReady] = closing
-          ? [false, false]
-          : await Promise.all([options.controlStore.ready(), options.readStore.ready()]);
-        const ready = !closing && controlReady && analyticalReady;
-        return sendJson(response, ready ? 200 : 503, {
-          status: ready ? "ready" : "not_ready",
-          runtime: "operator-diagnostic",
-          releaseSha: options.releaseSha ?? null,
-          deploymentId: options.deploymentId ?? null,
-        });
+      if (request.method === "GET" && (request.url === "/readyz" || request.url?.startsWith("/readyz?"))) {
+        try {
+          const [controlReady, analyticalReady] = closing
+            ? [false, false]
+            : await Promise.all([options.controlStore.ready(), options.readStore.ready()]);
+          const ready = !closing && controlReady && analyticalReady;
+          return sendJson(response, ready ? 200 : 503, {
+            status: ready ? "ready" : "not_ready",
+            runtime: "operator-diagnostic",
+            releaseSha: options.releaseSha ?? null,
+            deploymentId: options.deploymentId ?? null,
+          });
+        } catch {
+          return sendJson(response, 503, {
+            status: "not_ready",
+            runtime: "operator-diagnostic",
+            releaseSha: options.releaseSha ?? null,
+            deploymentId: options.deploymentId ?? null,
+          });
+        }
       }
       if (closing) return sendJson(response, 503, { error: { code: "SHUTTING_DOWN", message: "Diagnostic service is stopping." } });
-      const body = await readBody(request, 1_024);
+      const body = await readBody(request, 4_096);
       const origin = `http://${request.headers.host ?? `${host}:${port}`}`;
       const headers = new Headers();
       for (const [name, value] of Object.entries(request.headers)) {
@@ -75,7 +84,7 @@ export async function startOperatorDiagnosticNodeServer(options: Readonly<{
     }
   });
   server.headersTimeout = 10_000;
-  server.requestTimeout = 10_000;
+  server.requestTimeout = 60_000;
   server.keepAliveTimeout = 5_000;
   server.maxRequestsPerSocket = 100;
   server.maxHeadersCount = 64;

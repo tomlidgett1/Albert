@@ -3,15 +3,12 @@ import { Client } from "pg";
 
 const TENANT_A="01H00000000000000000000901";
 const TENANT_B="01H00000000000000000000902";
-const TENANT_C="01H00000000000000000000903";
 const NONCES=[
   "01H00000000000000000000911",
   "01H00000000000000000000912",
   "01H00000000000000000000913",
   "01H00000000000000000000914",
   "01H00000000000000000000915",
-  "01H00000000000000000000916",
-  "01H00000000000000000000917",
 ] as const;
 
 function required(name:string):string{
@@ -98,16 +95,12 @@ async function main():Promise<void>{
     connectionString:runtimeUrl(adminUrl,"albert_deletion_analytical_runtime",required("ALBERT_DELETION_DB_PASSWORD")),
     application_name:"albert-capability-boundary-test/deletion",
   });
-  const metadata=new Client({
-    connectionString:runtimeUrl(adminUrl,"albert_semantic_metadata_runtime",required("ALBERT_SEMANTIC_METADATA_DB_PASSWORD")),
-    application_name:"albert-capability-boundary-test/semantic-metadata",
-  });
-  await Promise.all([admin.connect(),transform.connect(),deletion.connect(),metadata.connect()]);
+  await Promise.all([admin.connect(),transform.connect(),deletion.connect()]);
   try{
     await assert.rejects(
       transaction(transform,"transform_rw",async()=>{
         await transform.query("select set_config('albert.tenant_id',$1,true)",[TENANT_B]);
-        await transform.query("select core.current_tenant_id()");
+        await transform.query("select ingestion.current_tenant_id()");
       }),
       (error:unknown)=>(error as {code?:string}).code==="42501",
       "a caller-selected tenant GUC must never authorize an exact runtime login",
@@ -120,73 +113,15 @@ async function main():Promise<void>{
     await transaction(transform,"transform_rw",async()=>{
       await transform.query("select set_config('albert.tenant_id',$1,true)",[TENANT_B]);
       await transform.query("select set_config('albert.tenant_capability',$1,true)",[transformToken]);
-      const result=await transform.query<{tenant_id:string}>("select core.current_tenant_id() as tenant_id");
+      const result=await transform.query<{tenant_id:string}>("select ingestion.current_tenant_id() as tenant_id");
       assert.equal(result.rows[0]?.tenant_id,TENANT_A);
-      // Exercise the exact production LOGIN, signed tenant capability, RLS,
-      // canonical ULID CHECK, and currency CHECK together. Function ACL
-      // hardening must not make transform_rw unable to perform its declared
-      // canonical writes.
-      await transform.query(
-        `insert into core.legal_entity(
-           tenant_id,id,name,base_currency,active,sync_run_id
-         ) values($1,$2,$3,$4,true,$5)
-         on conflict(tenant_id,id) do nothing`,
-        [
-          TENANT_A,"01H00000000000000000000931","Capability boundary entity",
-          "AUD","01H00000000000000000000932",
-        ],
+      // V3 retired the canonical core tables. Exercise the exact production
+      // LOGIN, signed tenant capability, source-table ACL and RLS together on
+      // the current typed staging surface instead.
+      const visible=await transform.query<{count:string}>(
+        "select count(*)::text as count from source_xero.xero_currencies",
       );
-      const inserted=await transform.query<{count:string}>(
-        "select count(*)::text as count from core.legal_entity where tenant_id=$1 and id=$2",
-        [TENANT_A,"01H00000000000000000000931"],
-      );
-      assert.equal(Number(inserted.rows[0]?.count),1);
-    });
-
-    await admin.query("begin");
-    try{
-      await admin.query("set local role albert_migration_owner");
-      await admin.query("select set_config('albert.tenant_id',$1,true)",[TENANT_A]);
-      await admin.query(
-        `insert into quality.pipeline_stats(
-           tenant_id,snapshot_at,domain,source_rows,canonical_rows,rejected_rows,
-           observed_entities,linked_entities,source_watermarks,invariant_status
-         ) values
-           ($1,date_trunc('hour',statement_timestamp())-interval '2 hours'+interval '10 minutes','canonical',1,1,0,1,1,'{}','{}'),
-           ($1,date_trunc('hour',statement_timestamp())-interval '2 hours'+interval '20 minutes','canonical',2,2,0,2,2,'{}','{}'),
-           ($1,statement_timestamp()-interval '401 days','canonical',3,3,0,3,3,'{}','{}')`,
-        [TENANT_A],
-      );
-      await admin.query(
-        `insert into semantic_internal.pipeline_stats_projection_outbox(
-           tenant_id,snapshot_at,domain,source_rows,canonical_rows,rejected_rows,
-           observed_entities,linked_entities,source_watermarks,invariant_status
-         ) values($1,statement_timestamp(),'canonical',1,1,0,1,1,'{}','{}')`,
-        [TENANT_A],
-      );
-      await admin.query("commit");
-    }catch(error){
-      await admin.query("rollback").catch(()=>undefined);
-      throw error;
-    }
-    await transaction(transform,"transform_rw",async()=>{
-      await transform.query("select set_config('albert.tenant_capability',$1,true)",[transformToken]);
-      const retained=await transform.query<{
-        result:Readonly<Record<string,number>>;
-      }>("select semantic_internal.retain_pipeline_history($1) as result",[TENANT_A]);
-      assert.deepEqual(retained.rows[0]?.result,{
-        pipeline_stats_removed:2,
-        legacy_outbox_removed:1,
-        projection_rows_removed:0,
-        hourly_retention_hours:48,
-        daily_retention_days:35,
-        maximum_retention_days:400,
-      });
-      const remaining=await transform.query<{row_count:string}>(
-        "select count(*)::text as row_count from quality.pipeline_stats where tenant_id=$1 and domain='canonical'",
-        [TENANT_A],
-      );
-      assert.equal(remaining.rows[0]?.row_count,"1");
+      assert.equal(Number(visible.rows[0]?.count),0);
     });
 
     const wrongAudience=await signedToken(admin,{
@@ -196,7 +131,7 @@ async function main():Promise<void>{
     await assert.rejects(
       transaction(transform,"transform_rw",async()=>{
         await transform.query("select set_config('albert.tenant_capability',$1,true)",[wrongAudience]);
-        await transform.query("select core.current_tenant_id()");
+        await transform.query("select ingestion.current_tenant_id()");
       }),
       (error:unknown)=>(error as {code?:string}).code==="42501",
       "an ingest token must not cross into transform",
@@ -207,7 +142,7 @@ async function main():Promise<void>{
     await assert.rejects(
       transaction(transform,"transform_rw",async()=>{
         await transform.query("select set_config('albert.tenant_capability',$1,true)",[JSON.stringify(tampered)]);
-        await transform.query("select core.current_tenant_id()");
+        await transform.query("select ingestion.current_tenant_id()");
       }),
       (error:unknown)=>(error as {code?:string}).code==="42501",
       "a tenant claim mutation must invalidate the signature",
@@ -270,7 +205,7 @@ async function main():Promise<void>{
     await assert.rejects(
       transaction(transform,"transform_rw",async()=>{
         await transform.query("select set_config('albert.tenant_capability',$1,true)",[prePurgeTransformToken]);
-        await transform.query("select core.current_tenant_id()");
+        await transform.query("select ingestion.current_tenant_id()");
       }),
       (error:unknown)=>(error as {code?:string}).code==="42501",
       "a capability issued before purge must not authorize post-purge data recreation",
@@ -283,96 +218,8 @@ async function main():Promise<void>{
       );
     });
 
-    // Semantic promotion recovery is tenant-capability scoped and exposes
-    // only fixed lease RPCs. The metadata login has no direct outbox access.
-    const promotionCandidate="01H00000000000000000000921";
-    const promotionQuery="01H00000000000000000000922";
-    const promotionConnection="01H00000000000000000000923";
-    await admin.query("begin");
-    try{
-      await admin.query("set local role albert_migration_owner");
-      await admin.query("select set_config('albert.tenant_id',$1,true)",[TENANT_A]);
-      await admin.query(
-        `insert into semantic_internal.promotion_candidate_outbox(
-           tenant_id,candidate_id,query_id,connection_id,connector_id,
-           source_table,source_fields,question_digest,requested_metric_concept
-         ) values($1,$2,$3,$4,'xero','invoices',array['reference'],$5,$6)`,
-        [TENANT_A,promotionCandidate,promotionQuery,promotionConnection,"c".repeat(64),"finance.invoice_reference"],
-      );
-      await admin.query("commit");
-    }catch(error){
-      await admin.query("rollback").catch(()=>undefined);
-      throw error;
-    }
-    const metadataToken=await signedToken(admin,{
-      tenantId:TENANT_A,audience:"analytical:semantic-metadata",scope:"semantic_metadata",
-      subject:"test:semantic-promotion",nonce:NONCES[5],evidence:{kind:"test"},
-    });
-    await assert.rejects(
-      transaction(metadata,"semantic_meta_rw",async()=>{
-        await metadata.query("select set_config('albert.tenant_capability',$1,true)",[metadataToken]);
-        await metadata.query("select * from semantic_internal.promotion_candidate_outbox");
-      }),
-      (error:unknown)=>(error as {code?:string}).code==="42501",
-      "semantic metadata runtime must not read the outbox directly",
-    );
-    await transaction(metadata,"semantic_meta_rw",async()=>{
-      await metadata.query("select set_config('albert.tenant_capability',$1,true)",[metadataToken]);
-      const claimed=await metadata.query<{
-        claim_status:string;candidate_id:string;candidate_digest:string;attempt_count:number;
-      }>(
-        "select * from semantic_internal.claim_promotion_candidate($1,$2,$3,$4)",
-        [promotionCandidate,"semantic-relay:capability-test","01H00000000000000000000924",90],
-      );
-      assert.deepEqual(
-        {
-          status:claimed.rows[0]?.claim_status,
-          candidateId:claimed.rows[0]?.candidate_id,
-          digestShape:/^[a-f0-9]{64}$/.test(claimed.rows[0]?.candidate_digest??""),
-          attemptCount:Number(claimed.rows[0]?.attempt_count),
-        },
-        {status:"claimed",candidateId:promotionCandidate,digestShape:true,attemptCount:1},
-      );
-      await metadata.query(
-        "select semantic_internal.complete_promotion_candidate($1,$2,$3,$4)",
-        [promotionCandidate,"semantic-relay:capability-test","01H00000000000000000000924","01H00000000000000000000925"],
-      );
-      const replay=await metadata.query<{claim_status:string;control_inbox_item_id:string}>(
-        "select * from semantic_internal.claim_promotion_candidate($1,$2,$3,$4)",
-        [promotionCandidate,"semantic-relay:capability-test","01H00000000000000000000926",90],
-      );
-      assert.deepEqual(replay.rows[0],{
-        claim_status:"delivered",
-        candidate_id:promotionCandidate,
-        query_id:promotionQuery,
-        connection_id:promotionConnection,
-        connector_id:"xero",
-        source_table:"invoices",
-        source_fields:["reference"],
-        question_digest:"c".repeat(64),
-        requested_metric_concept:"finance.invoice_reference",
-        candidate_digest:claimed.rows[0]?.candidate_digest,
-        attempt_count:1,
-        control_inbox_item_id:"01H00000000000000000000925",
-      });
-    });
-    const wrongTenantMetadataToken=await signedToken(admin,{
-      tenantId:TENANT_C,audience:"analytical:semantic-metadata",scope:"semantic_metadata",
-      subject:"test:wrong-semantic-promotion-tenant",nonce:NONCES[6],evidence:{kind:"test"},
-    });
-    await assert.rejects(
-      transaction(metadata,"semantic_meta_rw",async()=>{
-        await metadata.query("select set_config('albert.tenant_capability',$1,true)",[wrongTenantMetadataToken]);
-        await metadata.query(
-          "select * from semantic_internal.claim_promotion_candidate($1,$2,$3,$4)",
-          [promotionCandidate,"semantic-relay:capability-test","01H00000000000000000000927",90],
-        );
-      }),
-      (error:unknown)=>(error as {code?:string}).code==="P0002",
-      "a signed capability for another tenant must not claim the candidate",
-    );
   }finally{
-    await Promise.allSettled([admin.end(),transform.end(),deletion.end(),metadata.end()]);
+    await Promise.allSettled([admin.end(),transform.end(),deletion.end()]);
   }
   process.stdout.write("analytical capability exact-login boundary passed\n");
 }

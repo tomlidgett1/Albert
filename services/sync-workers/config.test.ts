@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { WorkerCredentialVault } from "../../packages/connector-sdk/src/index.js";
+import {
+  ProductionConnectorFactory,
+  ProductionConnectorRegistry,
+} from "./src/connector-factory.js";
 import { loadSyncWorkerConfig } from "./src/config.js";
 
 const legacyAnonKey = "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.signature";
@@ -20,6 +25,8 @@ const valid: NodeJS.ProcessEnv = {
   TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64url"),
   TOKEN_ENCRYPTION_KEY_ID: "v1",
   ALBERT_OAUTH_WORKER_SIGNING_SECRET: "s".repeat(48),
+  ALBERT_SHOPIFYQL_SIGNING_SECRET: "q".repeat(48),
+  ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET: "a".repeat(48),
   ALBERT_PUBLIC_ORIGIN: "https://albert.example",
   LIGHTSPEED_CLIENT_ID: "lightspeed-client",
   LIGHTSPEED_CLIENT_SECRET: "lightspeed-secret",
@@ -52,12 +59,213 @@ test("sync worker config fails closed when the OAuth-specific HMAC secret is abs
   assert.throws(() => loadSyncWorkerConfig(source), /ALBERT_OAUTH_WORKER_SIGNING_SECRET/);
 });
 
+test("sync worker requires a dedicated ShopifyQL HMAC boundary", () => {
+  const missing = { ...valid };
+  delete missing.ALBERT_SHOPIFYQL_SIGNING_SECRET;
+  assert.throws(() => loadSyncWorkerConfig(missing), /ALBERT_SHOPIFYQL_SIGNING_SECRET/u);
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...valid,
+      ALBERT_SHOPIFYQL_SIGNING_SECRET: valid.ALBERT_OAUTH_WORKER_SIGNING_SECRET,
+    }),
+    /must be distinct/u,
+  );
+});
+
+test("sync worker requires an independently keyed Shopify Admin read boundary", () => {
+  const missing = { ...valid };
+  delete missing.ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET;
+  assert.throws(() => loadSyncWorkerConfig(missing), /ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET/u);
+  for (const reused of [
+    valid.ALBERT_OAUTH_WORKER_SIGNING_SECRET,
+    valid.ALBERT_SHOPIFYQL_SIGNING_SECRET,
+  ]) {
+    assert.throws(
+      () => loadSyncWorkerConfig({ ...valid, ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET: reused }),
+      /must be distinct/u,
+    );
+  }
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...valid,
+      ALBERT_SEMANTIC_SIGNING_SECRET: "m".repeat(48),
+      ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET: "m".repeat(48),
+    }),
+    /must be distinct/u,
+  );
+});
+
 test("sync worker neither requires nor loads the Xero webhook signing key", () => {
   const config = loadSyncWorkerConfig({
     ...valid,
     XERO_WEBHOOK_SIGNING_KEY: "must-remain-gateway-only",
   });
   assert.equal(Object.hasOwn(config, "xeroWebhookSigningKey"), false);
+});
+
+test("Deputy OAuth is optional as one atomic provider while Lightspeed and Xero remain required", () => {
+  const withoutDeputy = { ...valid };
+  delete withoutDeputy.DEPUTY_CLIENT_ID;
+  delete withoutDeputy.DEPUTY_CLIENT_SECRET;
+  const config = loadSyncWorkerConfig(withoutDeputy);
+  assert.equal(config.deputyClientId, "");
+  assert.equal(config.deputyClientSecret, "");
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...withoutDeputy, DEPUTY_CLIENT_ID: "partial" }),
+    /must be configured together/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...withoutDeputy, LIGHTSPEED_CLIENT_ID: "" }),
+    /LIGHTSPEED_CLIENT_ID/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...withoutDeputy, XERO_CLIENT_ID: "" }),
+    /XERO_CLIENT_ID/u,
+  );
+
+  const factory = new ProductionConnectorFactory(config);
+  const vault = {} as WorkerCredentialVault;
+  assert.equal(factory.isConfigured("deputy"), false);
+  assert.throws(
+    () => factory.create("deputy", vault),
+    /oauth_provider_not_configured:deputy/u,
+  );
+  const registry = new ProductionConnectorRegistry(factory, vault);
+  assert.equal(registry.get("lightspeed-r").id, "lightspeed-r");
+  assert.equal(registry.get("xero").id, "xero");
+  assert.throws(
+    () => registry.get("deputy"),
+    /connector_not_configured:deputy/u,
+  );
+});
+
+test("Stripe Connect is optional as one atomic provider while Lightspeed and Xero remain required", () => {
+  const withoutStripe = { ...valid };
+  delete withoutStripe.STRIPE_CLIENT_ID;
+  delete withoutStripe.STRIPE_SECRET_KEY;
+  const config = loadSyncWorkerConfig(withoutStripe);
+  assert.equal(config.stripeClientId, "");
+  assert.equal(config.stripeSecretKey, "");
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...withoutStripe, STRIPE_CLIENT_ID: "ca_partial" }),
+    /must be configured together/u,
+  );
+
+  const factory = new ProductionConnectorFactory(config);
+  const vault = {} as WorkerCredentialVault;
+  assert.equal(factory.isConfigured("stripe"), false);
+  assert.throws(
+    () => factory.create("stripe", vault),
+    /oauth_provider_not_configured:stripe/u,
+  );
+  const configuredFactory = new ProductionConnectorFactory(loadSyncWorkerConfig(valid));
+  assert.equal(configuredFactory.isConfigured("stripe"), true);
+  assert.equal(
+    new ProductionConnectorRegistry(configuredFactory, vault).get("stripe").id,
+    "stripe",
+  );
+});
+
+test("Square credentials are required in production, atomic in development, and available to sync dispatch", () => {
+  const vault = {} as WorkerCredentialVault;
+  const configured = loadSyncWorkerConfig(valid);
+  const configuredFactory = new ProductionConnectorFactory(configured);
+  assert.equal(configuredFactory.isConfigured("square"), true);
+  assert.equal(
+    new ProductionConnectorRegistry(configuredFactory, vault).get("square").id,
+    "square",
+  );
+
+  const withoutSquare = { ...valid };
+  delete withoutSquare.SQUARE_CLIENT_ID;
+  delete withoutSquare.SQUARE_CLIENT_SECRET;
+  assert.throws(
+    () => loadSyncWorkerConfig(withoutSquare),
+    /SQUARE_CLIENT_ID and SQUARE_CLIENT_SECRET are required in production/u,
+  );
+
+  const developmentWithoutSquare = { ...withoutSquare, NODE_ENV: "development" as const };
+  const optionalFactory = new ProductionConnectorFactory(
+    loadSyncWorkerConfig(developmentWithoutSquare),
+  );
+  assert.equal(optionalFactory.isConfigured("square"), false);
+  assert.throws(
+    () => optionalFactory.create("square", vault),
+    /oauth_provider_not_configured:square/u,
+  );
+  assert.throws(
+    () => new ProductionConnectorRegistry(optionalFactory, vault).get("square"),
+    /connector_not_configured:square/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...developmentWithoutSquare,
+      SQUARE_CLIENT_ID: "partial",
+    }),
+    /SQUARE_CLIENT_ID and SQUARE_CLIENT_SECRET must be configured together/u,
+  );
+});
+
+test("Lightspeed X credentials are atomic, product-gated, and available to production sync dispatch", () => {
+  const vault = {} as WorkerCredentialVault;
+  const withLightspeedX = {
+    ...valid,
+    ALBERT_LIGHTSPEED_X_PRODUCT: "x-series",
+    LIGHTSPEED_X_CLIENT_ID: "lightspeed-x-client",
+    LIGHTSPEED_X_CLIENT_SECRET: "lightspeed-x-secret",
+  };
+  const configured = loadSyncWorkerConfig(withLightspeedX);
+  const configuredFactory = new ProductionConnectorFactory(configured);
+  assert.equal(configuredFactory.isConfigured("lightspeed-x"), true);
+  assert.equal(
+    new ProductionConnectorRegistry(configuredFactory, vault).get("lightspeed-x").id,
+    "lightspeed-x",
+  );
+
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...valid,
+      ALBERT_LIGHTSPEED_X_PRODUCT: "x-series",
+      LIGHTSPEED_X_CLIENT_ID: "partial",
+    }),
+    /LIGHTSPEED_X_CLIENT_ID and LIGHTSPEED_X_CLIENT_SECRET must be configured together/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...withLightspeedX,
+      ALBERT_LIGHTSPEED_X_PRODUCT: "r-series",
+    }),
+    /ALBERT_LIGHTSPEED_X_PRODUCT must explicitly confirm x-series/u,
+  );
+});
+
+test("Momence credentials are atomic and configured Momence is available to production sync dispatch", () => {
+  const vault = {} as WorkerCredentialVault;
+  const configured = loadSyncWorkerConfig(valid);
+  const configuredFactory = new ProductionConnectorFactory(configured);
+  assert.equal(configuredFactory.isConfigured("momence"), true);
+  assert.equal(
+    new ProductionConnectorRegistry(configuredFactory, vault).get("momence").id,
+    "momence",
+  );
+
+  const withoutMomence = { ...valid };
+  delete withoutMomence.MOMENCE_CLIENT_ID;
+  delete withoutMomence.MOMENCE_CLIENT_SECRET;
+  const optionalFactory = new ProductionConnectorFactory(loadSyncWorkerConfig(withoutMomence));
+  assert.equal(optionalFactory.isConfigured("momence"), false);
+  assert.throws(
+    () => optionalFactory.create("momence", vault),
+    /oauth_provider_not_configured:momence/u,
+  );
+  assert.throws(
+    () => new ProductionConnectorRegistry(optionalFactory, vault).get("momence"),
+    /connector_not_configured:momence/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...withoutMomence, MOMENCE_CLIENT_ID: "partial" }),
+    /MOMENCE_CLIENT_ID and MOMENCE_CLIENT_SECRET must be configured together/u,
+  );
 });
 
 test("initial-backfill suppression is opt-in, per connector, and fails closed on typos", () => {
@@ -83,6 +291,8 @@ test("initial-backfill suppression is opt-in, per connector, and fails closed on
 test("sync worker config accepts only exact HTTPS OAuth callbacks in production", () => {
   const config = loadSyncWorkerConfig(valid);
   assert.ok(config.oauthRedirectUris.has("https://albert.example/api/oauth/xero/callback"));
+  assert.ok(config.oauthRedirectUris.has("https://albert.example/api/oauth/fivetran-xero/callback"));
+  assert.equal(config.fivetran, undefined);
   assert.equal(config.xeroDailyRequestLimit, 1000);
   assert.equal(config.workerConcurrency, 8);
   assert.equal(config.queueSlaSeconds, 300);
@@ -160,4 +370,40 @@ test("sync worker loads a bounded, canonical token KEK overlap keyring", () => {
     }),
     /too many keys/,
   );
+});
+
+test("Fivetran Xero config is optional, complete, and uses a Fivetran-legal schema", () => {
+  assert.equal(loadSyncWorkerConfig(valid).fivetran, undefined);
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...valid, FIVETRAN_API_KEY: "key" }),
+    /FIVETRAN_API_KEY, FIVETRAN_API_SECRET, and FIVETRAN_GROUP_ID must be configured together/u,
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({
+      ...valid,
+      FIVETRAN_API_KEY: "key",
+      FIVETRAN_API_SECRET: "secret",
+      FIVETRAN_GROUP_ID: "group",
+      FIVETRAN_XERO_SCHEMA: "5XERO",
+    }),
+    /FIVETRAN_XERO_SCHEMA must be a Fivetran-legal destination schema name/u,
+  );
+  const configured = loadSyncWorkerConfig({
+    ...valid,
+    FIVETRAN_API_KEY: "key",
+    FIVETRAN_API_SECRET: "secret",
+    FIVETRAN_GROUP_ID: "group",
+  });
+  assert.equal(configured.fivetran?.destinationSchema, "xero");
+  assert.equal(configured.fivetran?.groupId, "group");
+  assert.equal(configured.fivetran?.sdkProjectDir, "connectors/xero-fivetran-sdk");
+  assert.equal(configured.fivetran?.tokenBrokerOrigin, undefined);
+  const onFly = loadSyncWorkerConfig({
+    ...valid,
+    FIVETRAN_API_KEY: "key",
+    FIVETRAN_API_SECRET: "secret",
+    FIVETRAN_GROUP_ID: "group",
+    FLY_APP_NAME: "albert-sync-worker-dogfood",
+  });
+  assert.equal(onFly.fivetran?.tokenBrokerOrigin, "https://albert-sync-worker-dogfood.fly.dev");
 });

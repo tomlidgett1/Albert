@@ -639,19 +639,27 @@ function allowedFieldsFor(streamId: string): ReadonlySet<string> | null {
 function validateRecord(
   streamId: string,
   record: ReturnType<typeof projectPage>[number],
-): ReturnType<typeof projectPage>[number] {
+): StageableRecord {
   const allowed = allowedFieldsFor(streamId);
-  if (!allowed) return record;
   const payloadFields =
     record.payload && typeof record.payload === "object"
       ? (record.payload as Record<string, unknown>)
       : {};
+  const base: StageableRecord = {
+    sourceObjectType: record.sourceObjectType,
+    sourceRecordId: record.sourceRecordId,
+    ...(record.sourceUpdatedAt ? { sourceUpdatedAt: record.sourceUpdatedAt } : {}),
+    payload: payloadFields,
+    payloadHash: record.payloadHash,
+    ...(record.normalized ? { normalized: { schemaVersion: record.normalized.schemaVersion, fields: { ...record.normalized.fields } } } : {}),
+  };
+  if (!allowed) return base;
   const approved = Object.fromEntries(
     Object.entries(payloadFields).filter(([field]) => allowed.has(field)),
   );
   return {
-    ...record,
-    normalized: { schemaVersion: lightspeedRManifest.version, fields: approved },
+    ...base,
+    normalized: { schemaVersion: lightspeedRManifest.packVersion, fields: approved },
   };
 }
 
@@ -786,7 +794,7 @@ async function walkGroup(
       }
 
       const projected = projectPage(group, page, hashPayload);
-      const byStream = new Map<string, typeof projected>();
+      const byStream = new Map<string, StageableRecord[]>();
       for (const raw of projected) {
         const streamId = raw.sourceObjectType;
         projectedByTable[streamId] = (projectedByTable[streamId] ?? 0) + 1;

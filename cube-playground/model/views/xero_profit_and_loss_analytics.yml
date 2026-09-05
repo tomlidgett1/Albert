@@ -1,0 +1,162 @@
+views:
+  - name: xero_profit_and_loss_analytics
+    title: Profit and Loss (Xero)
+    description: >
+      Authoritative monthly accrual Profit and Loss from Xero's own
+      standard-layout report, landed by Fivetran. Safe headline income, cost of
+      sales, gross profit, operating expense, wage, superannuation, Net Profit
+      and margin measures in the organisation's base currency.
+    meta:
+      ai_context: >
+        Use FIRST for P&L, income statement, whole-business profit/loss, income,
+        cost of sales, gross profit, expenses, wages in profit and margins.
+        Net Profit is Xero's reported total and ALREADY deducts wages, super,
+        depreciation, interest and tax expenses; never subtract payroll again.
+        MONTHLY GRAIN: one row per calendar month. Always query period_start
+        with month granularity (or no time dimension) over calendar-month
+        ranges - the 1st to the last day of the months wanted; never rolling
+        windows such as "last 30 days" or "last 12 weeks", which return 0-2
+        rows. "Last quarter" = three whole months, "this financial year" = 1
+        July to today, "this month vs the same month last year" =
+        compareDateRange with two explicit whole months. The current month is
+        month-to-date (is_current_partial_period) - disclose it; about 25
+        months are retained. BASIS: every figure is ACCRUAL basis in base
+        currency (income when invoiced, expenses when billed). Xero also
+        renders a cash-basis P&L but it is not exposed here: if asked for
+        cash-basis profit say these figures are accrual and offer cash in /
+        out from xero_finance_analytics. WAGES: "what did I spend on wages /
+        staff" = wage_expenses + employer_super_expenses here (the posted P&L
+        cost, the accounting answer). Deputy workforce_analytics wage_cost is
+        the operational roster estimate (costed shifts only, no on-costs) and
+        xero_payroll_analytics pay_run_* is what payroll paid per cycle -
+        always name the basis and never mix or add them. Use
+        xero_profit_and_loss_account_analytics for named account rankings and
+        month-on-month changes. Do not use xero_finance_analytics pnl_*
+        members for a statement.
+    cubes:
+      - join_path: xero_organisation
+        includes:
+          - tenant_id
+      - join_path: xero_profit_and_loss_periods
+        includes:
+          - basis
+          - period_start
+          - period_end
+          - report_updated_at
+          - synced_at
+          - is_current_partial_period
+          - reconciles_to_xero
+          - report_periods
+          - sales_revenue
+          - other_income
+          - total_income
+          - cost_of_sales
+          - gross_profit
+          - operating_expenses
+          - total_expenses
+          - wage_expenses
+          - direct_wage_expenses
+          - operating_wage_expenses
+          - employer_super_expenses
+          - net_profit
+          - net_profit_before_mapped_wages
+          - gross_margin_pct
+          - net_profit_margin_pct
+          - net_profit_variance
+          - gross_profit_variance
+          - complete_periods
+          - reconciled_periods
+      - join_path: xero_profit_and_loss_periods.xero_organisation
+        includes:
+          - name: base_currency
+            alias: currency
+    folders:
+      - name: Statement period
+        includes: [period_start, period_end, basis, currency, report_updated_at, synced_at, is_current_partial_period]
+      - name: Income and gross profit
+        includes: [sales_revenue, other_income, total_income, cost_of_sales, gross_profit, gross_margin_pct]
+      - name: Expenses and wages
+        includes: [operating_expenses, total_expenses, wage_expenses, direct_wage_expenses, operating_wage_expenses, employer_super_expenses]
+      - name: Net profit
+        includes: [net_profit, net_profit_margin_pct, net_profit_before_mapped_wages]
+      - name: Quality
+        includes: [reconciles_to_xero, net_profit_variance, gross_profit_variance, report_periods]
+
+  - name: xero_profit_and_loss_account_analytics
+    title: Profit and Loss accounts (Xero)
+    description: >
+      Authoritative leaf account rows from Xero's monthly accrual Profit and
+      Loss report. Use for expense/revenue rankings and wage-account drill-down;
+      report subtotal and formula rows are excluded to prevent double counting.
+    meta:
+      ai_context: >
+        Use for biggest expenses, income/expense accounts, rent, fees, interest,
+        wages or super by month, and "which expenses went up / down". Group
+        statement_amount by account_name, account_type, profit_category or
+        section. This view is ACCOUNT BREAKDOWN only: never calculate Net Profit
+        by summing it; headline Net/Gross Profit and margins live in
+        xero_profit_and_loss_analytics. MONTHLY GRAIN: one row per account per
+        calendar month; query period_start with month granularity over
+        calendar-month ranges (never "last 30 days" / "last N weeks" rolling
+        windows, which return almost nothing); "this month vs the same month
+        last year" = compareDateRange with two explicit whole months.
+        MONTH-ON-MONTH in one query: prior_month_amount is the same account's
+        previous calendar month and change_vs_prior_month the change - filter
+        period_start to a single month, group by account_name and order by
+        change_vs_prior_month (positive = went up); compare complete months
+        because the current month is partial. Wage flags come from official
+        Xero report codes (is_wage_expense, is_super_expense), not names. All
+        amounts are ACCRUAL basis in base currency.
+    cubes:
+      - join_path: xero_organisation
+        includes:
+          - tenant_id
+      - join_path: xero_profit_and_loss_account_lines
+        includes:
+          - period_start
+          - period_end
+          - report_updated_at
+          - synced_at
+          - section
+          - account_code
+          - account_name
+          - account_type
+          - account_class
+          - account_status
+          - reporting_code
+          - reporting_code_name
+          - profit_category
+          - is_wage_expense
+          - is_direct_wage_expense
+          - is_super_expense
+          - account_lines
+          - statement_amount
+          - sales_revenue
+          - other_income
+          - cost_of_sales
+          - operating_expenses
+          - wage_expenses
+          - employer_super_expenses
+          - name: prior_month_amount
+            meta:
+              ai_context: >
+                Same account, previous calendar month (0 = no row that month,
+                null = earliest month landed). Pair with one period_start month.
+          - name: change_vs_prior_month
+            meta:
+              ai_context: >
+                statement_amount minus prior_month_amount; order by it for
+                "which expenses went up most" within one month.
+      - join_path: xero_profit_and_loss_account_lines.xero_organisation
+        includes:
+          - name: base_currency
+            alias: currency
+    folders:
+      - name: Account
+        includes: [account_code, account_name, account_type, account_class, account_status, reporting_code, reporting_code_name, profit_category]
+      - name: Period
+        includes: [period_start, period_end, currency, report_updated_at, synced_at]
+      - name: Amounts
+        includes: [statement_amount, prior_month_amount, change_vs_prior_month, sales_revenue, other_income, cost_of_sales, operating_expenses, wage_expenses, employer_super_expenses, account_lines]
+      - name: Employment mapping
+        includes: [is_wage_expense, is_direct_wage_expense, is_super_expense]

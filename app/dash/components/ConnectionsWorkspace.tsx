@@ -11,6 +11,23 @@ import {
 } from "react";
 import Image from "next/image";
 import styles from "../dash.module.css";
+import {
+  activeSyncStates,
+  clampProgress,
+  connectionCardStatus,
+  connectionShowsSyncProgress,
+  connectionSyncSummary,
+  readinessStateLabels,
+} from "./connection-sync";
+
+export {
+  connectionCardStatus,
+  connectionIngestionIsPending,
+  connectionShowsSyncProgress,
+  connectionSyncSummary,
+  readinessStateLabels,
+  workspaceSyncIsActive,
+} from "./connection-sync";
 
 export const CONNECTION_VIEWS = ["apps"] as const;
 export type ConnectionViewId = (typeof CONNECTION_VIEWS)[number];
@@ -38,6 +55,7 @@ export type AuthHealthState = (typeof AUTH_HEALTH_STATES)[number];
 
 export type ConnectionProviderId =
   | "lightspeed"
+  | "lightspeed-x"
   | "xero"
   | "deputy"
   | "shopify"
@@ -55,11 +73,72 @@ export type ConnectionProviderId =
   | "tyro"
   | "klaviyo"
   | "woocommerce"
-  | "servicem8";
+  | "servicem8"
+  | "fivetran-xero"
+  | "fivetran-lightspeed"
+  | "fivetran-deputy"
+  | "fivetran-stripe";
 export type MatchDecision = "proposed" | "accepted" | "rejected";
 export type ConnectableProviderId =
-  | "lightspeed" | "xero" | "deputy" | "square"
-  | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
+  | "lightspeed" | "lightspeed-x" | "xero" | "deputy" | "square"
+  | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads"
+  | "fivetran-xero" | "fivetran-lightspeed" | "fivetran-deputy" | "fivetran-stripe";
+
+/**
+ * Providers whose ingestion Fivetran runs. `handoff` describes the hosted
+ * Connect Card the user is sent to (null when Albert authorises without a
+ * card, as it does for Deputy).
+ */
+export type FivetranHandoffCopy = Readonly<{
+  steps: ReadonlyArray<readonly [string, string, string]>;
+  note: string;
+}>;
+export const FIVETRAN_PROVIDERS: Readonly<Record<
+  "fivetran-xero" | "fivetran-lightspeed" | "fivetran-deputy" | "fivetran-stripe",
+  Readonly<{ sourceName: string; dataNoun: string; handoff: FivetranHandoffCopy | null }>
+>> = Object.freeze({
+  // Xero: Albert takes the grant itself (single Xero consent) and hands it to
+  // Albert's Fivetran SDK connector — no hosted card, so no hand-off dialog.
+  "fivetran-xero": Object.freeze({
+    sourceName: "Xero",
+    dataNoun: "accounting data",
+    handoff: null,
+  }),
+  // Lightspeed R-Series: same shape as Xero — Albert's own Lightspeed consent,
+  // then Albert's Fivetran SDK connector lands every ls_* table. No card.
+  "fivetran-lightspeed": Object.freeze({
+    sourceName: "Lightspeed",
+    dataNoun: "sales and inventory data",
+    handoff: null,
+  }),
+  "fivetran-deputy": Object.freeze({
+    sourceName: "Deputy",
+    dataNoun: "rosters, timesheets, and leave",
+    handoff: null,
+  }),
+  "fivetran-stripe": Object.freeze({
+    sourceName: "Stripe",
+    dataNoun: "charges, invoices, subscriptions, and payouts",
+    handoff: null,
+  }),
+} as const);
+export type FivetranProviderId = keyof typeof FIVETRAN_PROVIDERS;
+export function isFivetranProviderId(value: string): value is FivetranProviderId {
+  return Object.prototype.hasOwnProperty.call(FIVETRAN_PROVIDERS, value);
+}
+
+/** Native ingest cards superseded by Fivetran. Hidden unless a live connection remains. */
+export const SUPERSEDED_NATIVE_PROVIDER_IDS = new Set<ConnectionProviderId>([
+  "lightspeed",
+  "xero",
+  "deputy",
+  "stripe",
+]);
+export function isVisibleConnectionProvider(
+  provider: Pick<ConnectionProviderData, "id" | "connections">,
+): boolean {
+  return !SUPERSEDED_NATIVE_PROVIDER_IDS.has(provider.id) || provider.connections.length > 0;
+}
 
 export interface ConnectionAuthHealth {
   state: AuthHealthState;
@@ -83,6 +162,8 @@ export interface DomainReadiness {
 
 export interface ConnectionAccountData {
   connectionId: string;
+  ingestionState?: "inactive" | "awaiting_manual_start" | "queued" | "running" | "active";
+  manualIngestionStartRequired?: boolean;
   auth: ConnectionAuthHealth;
   domains: readonly DomainReadiness[];
 }
@@ -181,30 +262,17 @@ export interface ConnectionsWorkspaceProps {
   onManage?: (connectionId: string) => void;
   onSelectOAuthAccount?: (oauthSessionId: string, externalAccountId: string) => void;
   onDisconnect?: (connectionId: string) => void;
+  onIngestionStarted?: () => void;
   onRetry?: () => void;
 }
 
-export const readinessStateLabels: Record<ReadinessState, string> = {
-  not_started: "Not started",
-  syncing: "Syncing",
-  transforming: "Transforming",
-  validating: "Validating",
-  ready_partial: "Ready partial",
-  ready_complete: "Ready complete",
-  degraded: "Degraded",
-  blocked: "Blocked",
-};
+type ManualSyncState =
+  | { status: "idle" }
+  | { status: "requesting" }
+  | { status: "accepted"; syncRunId: string }
+  | { status: "declined"; message: string };
 
 export const COMING_SOON_PROVIDERS: readonly ConnectionProviderData[] = Object.freeze([
-  Object.freeze({
-    id: "shopify" as const,
-    name: "Shopify",
-    description: "Online storefronts, orders, and ecommerce activity.",
-    logo: "/logos/shopify.svg",
-    connectDetail: "Shopify support is coming soon.",
-    comingSoon: true,
-    connections: Object.freeze([]),
-  }),
   Object.freeze({
     id: "employment_hero" as const,
     name: "Employment Hero",
@@ -224,47 +292,11 @@ export const COMING_SOON_PROVIDERS: readonly ConnectionProviderData[] = Object.f
     connections: Object.freeze([]),
   }),
   Object.freeze({
-    id: "square" as const,
-    name: "Square",
-    description: "In-person payments, orders, and catalogue activity.",
-    logo: "/logos/square.svg",
-    connectDetail: "Square support is coming soon.",
-    comingSoon: true,
-    connections: Object.freeze([]),
-  }),
-  Object.freeze({
     id: "myob" as const,
     name: "MYOB",
     description: "Accounting, invoices, and Australian business books.",
     logo: "/logos/myob.svg",
     connectDetail: "MYOB support is coming soon.",
-    comingSoon: true,
-    connections: Object.freeze([]),
-  }),
-  Object.freeze({
-    id: "momence" as const,
-    name: "Momence",
-    description: "Yoga studio bookings, memberships, and class schedules.",
-    logo: "/logos/momence.svg",
-    connectDetail: "Momence support is coming soon.",
-    comingSoon: true,
-    connections: Object.freeze([]),
-  }),
-  Object.freeze({
-    id: "google_ads" as const,
-    name: "Google Ads",
-    description: "Search and shopping campaign spend, clicks, and conversions.",
-    logo: "/logos/google-ads.svg",
-    connectDetail: "Google Ads support is coming soon.",
-    comingSoon: true,
-    connections: Object.freeze([]),
-  }),
-  Object.freeze({
-    id: "meta_ads" as const,
-    name: "Meta Ads",
-    description: "Facebook and Instagram campaign spend and performance.",
-    logo: "/logos/meta.svg",
-    connectDetail: "Meta Ads support is coming soon.",
     comingSoon: true,
     connections: Object.freeze([]),
   }),
@@ -352,27 +384,59 @@ export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze
   }),
   providers: Object.freeze([
     Object.freeze({
-      id: "lightspeed" as const,
-      name: "Lightspeed",
-      description: "Sales, inventory, customers, and store activity.",
-      logo: "/logos/lightspeed.png",
-      connectDetail: "Connect a Lightspeed Retail R-Series account.",
-      connections: Object.freeze([]),
-    }),
-    Object.freeze({
-      id: "xero" as const,
-      name: "Xero",
-      description: "Accounting, invoices, journals, and bank activity.",
+      id: "fivetran-xero" as const,
+      name: "Xero (Fivetran)",
+      description: "Full Xero ingest through Fivetran, into a tenant-isolated native schema.",
       logo: "/logos/xero.svg",
-      connectDetail: "Connect a Xero organisation.",
+      connectDetail: "Approve Xero once. Albert hands the grant to Fivetran and the full sync — accounting, payroll, reports — starts in the background.",
       connections: Object.freeze([]),
     }),
     Object.freeze({
-      id: "deputy" as const,
-      name: "Deputy",
-      description: "Rosters, timesheets, leave, and workforce activity.",
+      id: "fivetran-lightspeed" as const,
+      name: "Lightspeed (Fivetran)",
+      description: "Full Lightspeed Retail R-Series ingest through Fivetran, into a tenant-isolated native schema.",
+      logo: "/logos/lightspeed.png",
+      connectDetail: "Approve Lightspeed through Fivetran. Albert then starts the Fivetran sync into a tenant-isolated native schema.",
+      connections: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: "fivetran-deputy" as const,
+      name: "Deputy (Fivetran)",
+      description: "Full Deputy ingest through Fivetran, into a tenant-isolated native schema.",
       logo: "/logos/deputy.png",
-      connectDetail: "Connect a Deputy installation.",
+      connectDetail: "Approve Deputy. Albert hands the grant to Fivetran and the sync starts in the background.",
+      connections: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: "fivetran-stripe" as const,
+      name: "Stripe (Fivetran)",
+      description: "Full Stripe ingest through Fivetran's official schema, into a tenant-isolated native schema.",
+      logo: "/logos/stripe.svg",
+      connectDetail: "Approve Stripe. Albert hands the grant to Fivetran and the official Stripe ERD syncs in the background.",
+      connections: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: "square" as const,
+      name: "Square",
+      description: "Sales, payments, catalogue, customers, inventory, and team activity.",
+      logo: "/logos/square.svg",
+      connectDetail: "Connect a Square merchant account, then choose when ingestion starts.",
+      connections: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: "shopify" as const,
+      name: "Shopify",
+      description: "Orders, products, customers, inventory, fulfilment, and payments.",
+      logo: "/logos/shopify.svg",
+      connectDetail: "Connect a myshopify.com store, then choose when ingestion starts.",
+      connections: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: "momence" as const,
+      name: "Momence",
+      description: "Classes, bookings, memberships, customers, instructors, locations, and payments.",
+      logo: "/logos/momence.svg",
+      connectDetail: "Connect a Momence studio, then choose when ingestion starts.",
       connections: Object.freeze([]),
     }),
     ...COMING_SOON_PROVIDERS,
@@ -382,48 +446,6 @@ export const emptyConnectionsWorkspace: ConnectionsWorkspaceData = Object.freeze
   identityMatches: Object.freeze([]),
   oauthSelections: Object.freeze([]),
 });
-
-const activeSyncStates = new Set<ReadinessState>([
-  "syncing",
-  "transforming",
-  "validating",
-]);
-
-export function connectionSyncSummary(domains: readonly DomainReadiness[]) {
-  if (domains.length === 0) {
-    return { progress: undefined as number | undefined, state: "syncing" as ReadinessState };
-  }
-
-  const progressValues = domains.map((domain) => {
-    if (typeof domain.progress === "number") return clampProgress(domain.progress);
-    if (domain.state === "ready_complete") return 100;
-    if (domain.state === "not_started") return 0;
-    return undefined;
-  });
-  const known = progressValues.filter((value): value is number => typeof value === "number");
-  const progress = known.length
-    ? Math.round(known.reduce((total, value) => total + value, 0) / known.length)
-    : undefined;
-
-  const priority: readonly ReadinessState[] = [
-    "blocked",
-    "degraded",
-    "syncing",
-    "transforming",
-    "validating",
-    "ready_partial",
-    "not_started",
-    "ready_complete",
-  ];
-  const state = priority.find((candidate) => domains.some((domain) => domain.state === candidate))
-    ?? "syncing";
-
-  return { progress, state };
-}
-
-function clampProgress(value: number) {
-  return Math.min(100, Math.max(0, Math.round(value)));
-}
 
 function ProgressBar({
   value,
@@ -441,7 +463,7 @@ function ProgressBar({
   const progressStyle = determinate
     ? ({ "--connections-progress": `${safeValue}%` } as CSSProperties)
     : undefined;
-  const animating = !determinate || activeSyncStates.has(state) || (safeValue ?? 100) < 100;
+  const animating = activeSyncStates.has(state) || state === "ready_partial";
 
   return (
     <div
@@ -468,36 +490,47 @@ function ProgressBar({
 export function ConnectionSyncProgress({
   accountLabel,
   domains,
+  ingestionState,
   popupPlacement = "below",
   layout = "card",
 }: {
   accountLabel: string;
   domains: readonly DomainReadiness[];
+  ingestionState?: ConnectionAccountData["ingestionState"];
   popupPlacement?: "above" | "below";
   layout?: "card" | "sidebar";
 }) {
   const summary = connectionSyncSummary(domains);
-  const fullyComplete =
-    domains.length > 0
-    && !workspaceSyncIsActive(domains)
-    && summary.state === "ready_complete"
-    && (typeof summary.progress !== "number" || summary.progress >= 100);
-
-  if (fullyComplete) return null;
+  if (!connectionShowsSyncProgress(domains, ingestionState)) return null;
+  // Fully synced: swap the bar for a quiet last-synced stamp (card layout only;
+  // the sidebar keeps its compact bar). Latest domain watermark, if any.
+  const latestWatermark = domains.reduce<string | null>((latest, domain) => {
+    const at = domain.watermark?.at;
+    if (!at || !Number.isFinite(Date.parse(at))) return latest;
+    return !latest || Date.parse(at) > Date.parse(latest) ? at : latest;
+  }, null);
+  const complete = layout === "card" && summary.state === "ready_complete";
+  const completeStamp = relativeTimeLabel(latestWatermark);
 
   return (
     <div
       className={layout === "sidebar" ? styles.sidebarSyncProgress : styles.connectionsCardSync}
       data-popup-placement={popupPlacement}
     >
-      <div className={layout === "sidebar" ? styles.sidebarSyncBar : styles.connectionsCardSyncBar}>
-        <ProgressBar
-          value={summary.progress}
-          state={summary.state}
-          size="fat"
-          label={`${accountLabel} sync progress`}
-        />
-      </div>
+      {complete ? (
+        <span className={styles.fivetranSyncedStamp} role="status">
+          {completeStamp ? `Synced ${completeStamp}` : "Up to date"}
+        </span>
+      ) : (
+        <div className={layout === "sidebar" ? styles.sidebarSyncBar : styles.connectionsCardSyncBar}>
+          <ProgressBar
+            value={summary.progress}
+            state={summary.state}
+            size="fat"
+            label={`${accountLabel} sync progress`}
+          />
+        </div>
+      )}
 
       <div className={styles.connectionsCardSyncPopup} role="tooltip">
         {domains.length === 0 ? (
@@ -548,6 +581,262 @@ export function ConnectionSyncProgress({
   );
 }
 
+/* ------------------------------------------------------------------------ */
+/* Fivetran-managed connections: live readout from Fivetran + the destination */
+/* ------------------------------------------------------------------------ */
+
+export type FivetranSyncPhase =
+  | "historical"
+  | "incremental"
+  | "up_to_date"
+  | "scheduled"
+  | "paused"
+  | "failed"
+  | "broken";
+
+export type FivetranSyncStatusData = Readonly<{
+  connectionId: string;
+  phase: FivetranSyncPhase;
+  progress?: number;
+  paused: boolean;
+  succeededAt: string | null;
+  failedAt: string | null;
+  warnings: readonly string[];
+  schemaLoaded: boolean;
+  enabledTables: number;
+  landedTables: number;
+  totalRows: number;
+  tables: ReadonlyArray<Readonly<{ table: string; rows: number }>>;
+  checkedAt: string;
+}>;
+
+export const fivetranPhaseCopy: Readonly<Record<FivetranSyncPhase, { label: string; state: ReadinessState }>> =
+  Object.freeze({
+    historical: { label: "Loading history", state: "syncing" },
+    incremental: { label: "Syncing changes", state: "syncing" },
+    up_to_date: { label: "Up to date", state: "ready_complete" },
+    scheduled: { label: "Waiting for first sync", state: "not_started" },
+    paused: { label: "Paused", state: "not_started" },
+    failed: { label: "Last sync failed", state: "degraded" },
+    broken: { label: "Needs re-authorisation", state: "blocked" },
+  });
+
+const compactNumber = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+const fullNumber = new Intl.NumberFormat("en");
+
+export function formatFivetranTableName(table: string): string {
+  return table.replace(/_/g, " ");
+}
+
+export function relativeTimeLabel(iso: string | null, now = Date.now()): string | null {
+  if (!iso) return null;
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return null;
+  const seconds = Math.max(0, Math.round((now - then) / 1000));
+  if (seconds < 45) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  return `${days} d ago`;
+}
+
+/**
+ * Poll cadence tracks how fast the truth changes: every 15 s while Fivetran
+ * is loading or syncing, every 2 min once it is idle, and never while the tab
+ * is hidden. Three consecutive failures stop the poll so a broken worker does
+ * not become a request storm; the last good readout stays on screen.
+ */
+/**
+ * How often a tile asks the worker for Fivetran status. Every poll costs two
+ * Fivetran API calls against the account's 500/hour limit, so only an ACTIVE
+ * sync (historical load or incremental run) polls quickly; an idle
+ * "scheduled" connection changes nothing until its next run and is read every
+ * five minutes. Three tiles at 15 s each saturated the Fivetran API on
+ * 2026-08-19 and blocked schedule changes.
+ */
+function fivetranPollDelay(phase: FivetranSyncPhase | null): number {
+  if (phase === "historical" || phase === "incremental") return 15_000;
+  if (phase === null) return 30_000;
+  return 300_000;
+}
+
+export function FivetranSyncProgress({
+  connectionId,
+  accountLabel,
+  sourceName = "the source",
+}: {
+  connectionId: string;
+  accountLabel: string;
+  sourceName?: string;
+}) {
+  const [status, setStatus] = useState<FivetranSyncStatusData | null>(null);
+  const [failures, setFailures] = useState(0);
+  const [tick, setTick] = useState(0);
+  const phase = status?.phase ?? null;
+  const gaveUp = failures >= 3;
+
+  useEffect(() => {
+    if (gaveUp) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const load = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        timer = window.setTimeout(() => void load(), 30_000);
+        return;
+      }
+      try {
+        const response = await fetch(
+          `/api/connections/fivetran-status?connectionId=${encodeURIComponent(connectionId)}`,
+          { headers: { accept: "application/json" }, cache: "no-store" },
+        );
+        if (!response.ok) throw new Error(String(response.status));
+        const payload = (await response.json()) as FivetranSyncStatusData;
+        if (cancelled) return;
+        setStatus(payload);
+        setFailures(0);
+        timer = window.setTimeout(() => void load(), fivetranPollDelay(payload.phase));
+      } catch {
+        if (cancelled) return;
+        setFailures((count) => count + 1);
+        timer = window.setTimeout(() => void load(), 30_000);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+    // `tick` deliberately NOT a dependency: it only re-renders the relative
+    // time label. Including it restarted this effect (and fetched status)
+    // every 30 s regardless of fivetranPollDelay.
+  }, [connectionId, gaveUp]);
+
+  // Re-render every 30 s so "4 min ago" keeps moving between polls.
+  useEffect(() => {
+    const interval = window.setInterval(() => setTick((value) => value + 1), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  void tick;
+
+  const copy = phase ? fivetranPhaseCopy[phase] : { label: "Checking…", state: "syncing" as ReadinessState };
+  const determinate = typeof status?.progress === "number";
+  const lastSuccess = relativeTimeLabel(status?.succeededAt ?? null);
+  const visibleTables = status?.tables.filter((table) => table.rows > 0).slice(0, 7) ?? [];
+  const hiddenLanded = Math.max(0, (status?.landedTables ?? 0) - visibleTables.length);
+
+  return (
+    <div
+      className={styles.connectionsCardSync}
+      data-popup-placement="below"
+      data-fivetran-phase={phase ?? "loading"}
+      data-testid="fivetran-sync-progress"
+      tabIndex={0}
+      aria-label={`${accountLabel} sync status: ${copy.label}`}
+    >
+      {phase === "up_to_date" ? (
+        // Fully synced: the bar has nothing left to say. A quiet timestamp
+        // reads as "done"; the hover popup keeps the detail.
+        <span className={styles.fivetranSyncedStamp} role="status">
+          {lastSuccess ? `Synced ${lastSuccess}` : "Up to date"}
+        </span>
+      ) : (
+        <div className={styles.connectionsCardSyncBar}>
+          <ProgressBar
+            value={determinate ? status?.progress : undefined}
+            state={copy.state}
+            size="fat"
+            label={`${accountLabel} sync progress`}
+          />
+        </div>
+      )}
+
+      <div className={styles.connectionsCardSyncPopup} role="tooltip">
+        <div className={styles.fivetranSyncHeader}>
+          <span className={styles.fivetranSyncPhase} data-state={copy.state}>
+            <i aria-hidden="true" />
+            {copy.label}
+          </span>
+          <small>
+            {phase === "historical"
+              ? `First full load of your ${sourceName} history`
+              : lastSuccess
+                ? `Last synced ${lastSuccess}`
+                : phase === "scheduled"
+                  ? "Fivetran will start shortly"
+                  : phase === "broken"
+                    ? "Choose Manage → Reconnect"
+                    : ""}
+          </small>
+        </div>
+
+        {status ? (
+          <>
+            <div className={styles.fivetranSyncStats}>
+              <div>
+                <strong>{fullNumber.format(status.landedTables)}</strong>
+                <span>
+                  {status.enabledTables > 0 && status.phase === "historical"
+                    ? `of ${fullNumber.format(status.enabledTables)} tables`
+                    : status.landedTables === 1 ? "table" : "tables"}
+                </span>
+              </div>
+              <div>
+                <strong title={fullNumber.format(status.totalRows)}>≈{compactNumber.format(status.totalRows)}</strong>
+                <span>rows landed</span>
+              </div>
+              {status.phase === "historical" && determinate ? (
+                <div>
+                  <strong>{clampProgress(status.progress!)}%</strong>
+                  <span>of tables reached</span>
+                </div>
+              ) : null}
+            </div>
+
+            {visibleTables.length > 0 ? (
+              <ul className={styles.fivetranSyncTables}>
+                {visibleTables.map((table) => (
+                  <li key={table.table}>
+                    <span>{formatFivetranTableName(table.table)}</span>
+                    <em>{compactNumber.format(table.rows)}</em>
+                  </li>
+                ))}
+                {hiddenLanded > 0 ? (
+                  <li data-more="true">
+                    <span>+{hiddenLanded} more {hiddenLanded === 1 ? "table" : "tables"}</span>
+                    <em />
+                  </li>
+                ) : null}
+              </ul>
+            ) : (
+              <p className={styles.connectionsCardSyncEmpty}>
+                {status.phase === "historical" || status.phase === "scheduled"
+                  ? "Tables appear here as Fivetran lands them."
+                  : status.phase === "broken"
+                    ? `Fivetran can no longer reach ${sourceName}. Reconnect to resume.`
+                    : "Nothing has landed yet."}
+              </p>
+            )}
+
+            {status.warnings.length > 0 ? (
+              <ul className={styles.fivetranSyncWarnings}>
+                {status.warnings.slice(0, 3).map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            ) : null}
+          </>
+        ) : (
+          <p className={styles.connectionsCardSyncEmpty}>
+            {gaveUp ? "Sync status is unavailable right now." : "Checking with Fivetran…"}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function collectWorkspaceSyncDomains(
   providers: readonly ConnectionProviderData[],
 ): readonly DomainReadiness[] {
@@ -568,16 +857,6 @@ export function collectWorkspaceSyncDomains(
         label: `${accountLabel} · ${domain.label}`,
       }));
     }),
-  );
-}
-
-export function workspaceSyncIsActive(domains: readonly DomainReadiness[]): boolean {
-  return domains.some(
-    (domain) =>
-      activeSyncStates.has(domain.state) ||
-      domain.state === "ready_partial" ||
-      domain.state === "not_started" ||
-      (typeof domain.progress === "number" && domain.progress < 100),
   );
 }
 
@@ -666,7 +945,7 @@ export default function ConnectionsWorkspace(props: ConnectionsWorkspaceProps) {
   const stateKey = [
     ...data.providers.flatMap((provider) =>
       provider.connections.map((connection) =>
-        `c:${connection.connectionId}:${connection.auth.state}`
+        `c:${connection.connectionId}:${connection.auth.state}:${connection.ingestionState ?? "active"}`
       )
     ),
     ...data.blockingQuestions.map((question) =>
@@ -688,6 +967,7 @@ function ConnectionsWorkspaceStateful({
   onManage,
   onSelectOAuthAccount,
   onDisconnect,
+  onIngestionStarted,
   onRetry,
 }: ConnectionsWorkspaceProps) {
   const componentId = useId().replaceAll(":", "");
@@ -697,16 +977,35 @@ function ConnectionsWorkspaceStateful({
   const [shopifyShopDomain, setShopifyShopDomain] = useState("");
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   /**
+   * Fivetran's Xero connector is authorised inside Fivetran's hosted Connect
+   * Card, which Albert cannot trim below "Authorize → choose organisation →
+   * Save & Test". Name those steps before the hand-off so the page that
+   * follows reads as expected rather than as somewhere the user got lost.
+   */
+  const [fivetranHandoff, setFivetranHandoff] = useState<FivetranProviderId | null>(null);
+  const fivetranHandoffContinueRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!fivetranHandoff) return;
+    fivetranHandoffContinueRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFivetranHandoff(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [fivetranHandoff]);
+  const startConnect = useCallback((providerId: ConnectionProviderId, shopDomain?: string) => {
+    if (isFivetranProviderId(providerId) && FIVETRAN_PROVIDERS[providerId].handoff) {
+      setFivetranHandoff(providerId);
+      return;
+    }
+    onConnect?.(providerId, shopDomain);
+  }, [onConnect]);
+  /**
    * Manual sync state. The button reports only what the request ledger actually
    * accepted: a decline (already running, reconnect needed) is surfaced as such
    * rather than shown as a success the backend never enqueued.
    */
-  const [syncState, setSyncState] = useState<
-    | { status: "idle" }
-    | { status: "requesting" }
-    | { status: "accepted"; syncRunId: string }
-    | { status: "declined"; message: string }
-  >({ status: "idle" });
+  const [syncStates, setSyncStates] = useState<Readonly<Record<string, ManualSyncState>>>({});
   const manageDialogRef = useRef<HTMLElement>(null);
   const managePreviousFocusRef = useRef<HTMLElement | null>(null);
   const disconnectCancelRef = useRef<HTMLButtonElement>(null);
@@ -718,15 +1017,30 @@ function ConnectionsWorkspaceStateful({
     }
     return undefined;
   }, [data.providers, managedConnectionId]);
+  const managedSyncState = managedConnectionId
+    ? syncStates[managedConnectionId] ?? { status: "idle" as const }
+    : { status: "idle" as const };
 
-  const requestManualSync = useCallback(async (connectionId: string) => {
-    setSyncState({ status: "requesting" });
+  const requestManualSync = useCallback(async (
+    connectionId: string,
+    initialStart = false,
+    providerId?: ConnectionProviderId,
+  ) => {
+    setSyncStates((current) => ({
+      ...current,
+      [connectionId]: { status: "requesting" },
+    }));
     try {
-      const response = await fetch("/api/connections/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ connectionId }),
-      });
+      const response = await fetch(
+        initialStart && providerId !== "shopify"
+          ? "/api/connections/start-ingestion"
+          : "/api/connections/sync",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ connectionId }),
+        },
+      );
       const payload = (await response.json().catch(() => ({}))) as {
         accepted?: boolean;
         syncRunId?: string;
@@ -734,20 +1048,29 @@ function ConnectionsWorkspaceStateful({
         error?: string;
       };
       if (response.ok && payload.accepted && payload.syncRunId) {
-        setSyncState({ status: "accepted", syncRunId: payload.syncRunId });
+        setSyncStates((current) => ({
+          ...current,
+          [connectionId]: { status: "accepted", syncRunId: payload.syncRunId! },
+        }));
+        onIngestionStarted?.();
         return;
       }
-      setSyncState({
-        status: "declined",
-        message: payload.message ?? payload.error ?? "Could not start the sync.",
-      });
+      setSyncStates((current) => ({
+        ...current,
+        [connectionId]: {
+          status: "declined",
+          message: payload.message ?? payload.error ?? (
+            initialStart ? "Could not start ingestion." : "Could not start the sync."
+          ),
+        },
+      }));
     } catch {
-      setSyncState({ status: "declined", message: "Could not reach the server." });
+      setSyncStates((current) => ({
+        ...current,
+        [connectionId]: { status: "declined", message: "Could not reach the server." },
+      }));
     }
-  }, []);
-
-  // A newly opened connection must not inherit the previous one's sync result.
-  useEffect(() => { setSyncState({ status: "idle" }); }, [managedConnectionId]);
+  }, [onIngestionStarted]);
 
   const mutationsEnabled = canManage && status.kind === "ready";
   const disabledActionTitle = !canManage
@@ -800,8 +1123,9 @@ function ConnectionsWorkspaceStateful({
     return () => window.cancelAnimationFrame(focusFrame);
   }, [confirmDisconnect, managedConnectionId]);
 
-  const connectedProviders = data.providers.filter((provider) => provider.connections.length > 0);
-  const notConnectedProviders = data.providers.filter((provider) => provider.connections.length === 0);
+  const catalogProviders = data.providers.filter(isVisibleConnectionProvider);
+  const connectedProviders = catalogProviders.filter((provider) => provider.connections.length > 0);
+  const notConnectedProviders = catalogProviders.filter((provider) => provider.connections.length === 0);
 
   const renderProviderGroup = (provider: ConnectionProviderData) => {
     const comingSoon = Boolean(provider.comingSoon);
@@ -828,7 +1152,11 @@ function ConnectionsWorkspaceStateful({
                   <ProviderLogo provider={provider} />
                   <div className={styles.connectionsProviderCopy}>
                     <div className={styles.connectionsProviderTitleRow}>
-                      <h3>{provider.name}</h3>
+                      <h3>
+                        {isFivetranProviderId(provider.id)
+                          ? FIVETRAN_PROVIDERS[provider.id].sourceName
+                          : provider.name}
+                      </h3>
                       <span
                         className={styles.connectionsAuthStatus}
                         data-auth-state={comingSoon ? "coming_soon" : "not_connected"}
@@ -881,7 +1209,7 @@ function ConnectionsWorkspaceStateful({
                     }
                     onClick={() => {
                       if (comingSoon) return;
-                      onConnect?.(
+                      startConnect(
                         provider.id,
                         provider.id === "shopify" ? shopifyShopDomain : undefined,
                       );
@@ -900,46 +1228,111 @@ function ConnectionsWorkspaceStateful({
             provider.connections.map((connection) => {
               const authorizing = connection.auth.state === "authorizing";
               const accountLabel = connection.auth.accountName || provider.name;
+              const connectionSyncState = syncStates[connection.connectionId] ?? { status: "idle" as const };
+              const showManualStart = connection.manualIngestionStartRequired === true;
+              const showSyncProgress = connectionShowsSyncProgress(
+                connection.domains,
+                connection.ingestionState,
+              );
+              const cardStatus = connectionCardStatus(connection);
+              const showProblemStatus =
+                cardStatus.authState === "reauth_required" || cardStatus.authState === "error";
+              const cardName = isFivetranProviderId(provider.id)
+                ? FIVETRAN_PROVIDERS[provider.id].sourceName
+                : provider.name;
+              const syncSlot = isFivetranProviderId(provider.id) && !authorizing ? (
+                <FivetranSyncProgress
+                  connectionId={connection.connectionId}
+                  accountLabel={accountLabel}
+                  sourceName={FIVETRAN_PROVIDERS[provider.id].sourceName}
+                />
+              ) : connection.ingestionState === "awaiting_manual_start" ? (
+                <span className={styles.fivetranSyncedStamp} role="status">
+                  Not imported yet
+                </span>
+              ) : (
+                <ConnectionSyncProgress
+                  accountLabel={accountLabel}
+                  domains={connection.domains}
+                  ingestionState={connection.ingestionState}
+                />
+              );
               return (
                 <article
                   className={styles.connectionsProviderRow}
                   key={connection.connectionId}
                   role="listitem"
                   data-connection-id={connection.connectionId}
-                  data-has-sync={connection.domains.length > 0 || authorizing || undefined}
+                  data-ingestion-state={connection.ingestionState}
+                  data-has-sync={showSyncProgress || undefined}
                 >
                   <div className={styles.connectionsProviderMain}>
                     <div className={styles.connectionsProviderIdentity}>
                       <ProviderLogo provider={provider} />
                       <div className={styles.connectionsProviderCopy}>
                         <div className={styles.connectionsProviderTitleRow}>
-                          <h3>{provider.name}</h3>
-                          <span
-                            className={styles.connectionsAuthStatus}
-                            data-auth-state={connection.auth.state}
-                          >
-                            <i aria-hidden="true" />
-                            {connection.auth.label}
-                          </span>
+                          <h3>{cardName}</h3>
+                          {showProblemStatus ? (
+                            <span
+                              className={styles.connectionsAuthStatus}
+                              data-auth-state={cardStatus.authState}
+                            >
+                              <i aria-hidden="true" />
+                              {cardStatus.label}
+                            </span>
+                          ) : syncSlot}
                         </div>
                       </div>
                     </div>
-                    <ConnectionSyncProgress
-                      accountLabel={accountLabel}
-                      domains={connection.domains}
-                    />
                     <div className={styles.connectionsProviderActions}>
+                      {showManualStart ? (
+                        <>
+                          <button
+                            className={`${styles.connectionsProviderActionPrimary} ${styles.connectionsStartIngestionAction}`}
+                            type="button"
+                            disabled={
+                              !mutationsEnabled
+                              || connectionSyncState.status === "requesting"
+                              || connectionSyncState.status === "accepted"
+                            }
+                            aria-busy={connectionSyncState.status === "requesting"}
+                            title={disabledActionTitle ?? `Start ingestion for ${accountLabel}.`}
+                            onClick={() => void requestManualSync(
+                              connection.connectionId,
+                              true,
+                              provider.id,
+                            )}
+                          >
+                            {connectionSyncState.status === "requesting"
+                              ? "Starting…"
+                              : connectionSyncState.status === "accepted"
+                                ? "Ingestion queued"
+                                : "Start ingestion"}
+                          </button>
+                          {connectionSyncState.status === "declined" ? (
+                            <small className={styles.connectionsProviderActionFeedback} role="alert">
+                              {connectionSyncState.message}
+                            </small>
+                          ) : null}
+                        </>
+                      ) : null}
                       <button
                         className={styles.connectionsProviderActionSecondary}
                         type="button"
-                        aria-busy={authorizing}
+                        aria-busy={authorizing && !isFivetranProviderId(provider.id)}
                         disabled={
-                          authorizing ||
+                          (authorizing && !isFivetranProviderId(provider.id)) ||
                           !mutationsEnabled ||
-                          (!onManage && !onConnect && !onDisconnect)
+                          (isFivetranProviderId(provider.id) && authorizing
+                            ? !onConnect
+                            : !onManage && !onConnect && !onDisconnect)
                         }
                         title={disabledActionTitle}
                         onClick={() => {
+                          if (isFivetranProviderId(provider.id) && authorizing) {
+                            onConnect?.(provider.id);
+                            return;
+                          }
                           if (onManage) onManage(connection.connectionId);
                           else {
                             setManagedConnectionId(connection.connectionId);
@@ -947,7 +1340,9 @@ function ConnectionsWorkspaceStateful({
                           }
                         }}
                       >
-                        {authorizing ? "Authorizing…" : "Manage"}
+                        {authorizing
+                          ? isFivetranProviderId(provider.id) ? "Try again" : "Authorizing…"
+                          : "Manage"}
                       </button>
                     </div>
                   </div>
@@ -965,7 +1360,6 @@ function ConnectionsWorkspaceStateful({
       <div className={styles.connectionsDataHeader}>
         <div>
           <h2 id={`${componentId}-title`}>Connections</h2>
-          <p>The systems behind every answer.</p>
         </div>
       </div>
 
@@ -1065,6 +1459,78 @@ function ConnectionsWorkspaceStateful({
           ) : null}
       </div>
 
+      {fivetranHandoff && FIVETRAN_PROVIDERS[fivetranHandoff].handoff ? (() => {
+        const handoffProvider = fivetranHandoff;
+        const copy = FIVETRAN_PROVIDERS[handoffProvider];
+        const handoff = copy.handoff!;
+        const providerData = data.providers.find((provider) => provider.id === handoffProvider)
+          ?? emptyConnectionsWorkspace.providers.find((provider) => provider.id === handoffProvider)!;
+        return (
+          <div
+            className={styles.connectionsManageBackdrop}
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setFivetranHandoff(null);
+            }}
+          >
+            <section
+              className={styles.connectionsManageDialog}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={`${componentId}-fivetran-handoff-title`}
+              data-testid={`${handoffProvider}-handoff`}
+            >
+              <button
+                className={styles.connectionsManageClose}
+                type="button"
+                aria-label="Close"
+                onClick={() => setFivetranHandoff(null)}
+              >
+                ×
+              </button>
+              <div className={styles.connectionsProviderIdentity}>
+                <ProviderLogo provider={providerData} />
+                <div className={styles.connectionsProviderCopy}>
+                  <div className={styles.connectionsProviderTitleRow}>
+                    <h3 id={`${componentId}-fivetran-handoff-title`}>Connect {copy.sourceName}</h3>
+                  </div>
+                  <small>Three quick steps on our secure connection page</small>
+                </div>
+              </div>
+              <ol className={styles.connectionsHandoffSteps}>
+                {handoff.steps.map(([before, emphasis, after]) => (
+                  <li key={emphasis}>{before}<strong>{emphasis}</strong>{after}</li>
+                ))}
+              </ol>
+              <p className={styles.connectionsHandoffNote}>
+                {handoff.note}
+                {" "}Albert only reads your {copy.dataNoun}; nothing is written back to {copy.sourceName}.
+              </p>
+              <div className={styles.connectionsManageActions}>
+                <button
+                  className={styles.connectionsProviderActionSecondary}
+                  type="button"
+                  onClick={() => setFivetranHandoff(null)}
+                >
+                  Not now
+                </button>
+                <button
+                  className={styles.connectionsProviderActionPrimary}
+                  type="button"
+                  ref={fivetranHandoffContinueRef}
+                  onClick={() => {
+                    setFivetranHandoff(null);
+                    onConnect?.(handoffProvider);
+                  }}
+                >
+                  Continue to {copy.sourceName}
+                </button>
+              </div>
+            </section>
+          </div>
+        );
+      })() : null}
+
       {managedConnection ? (
         <div
           className={styles.connectionsManageBackdrop}
@@ -1140,26 +1606,46 @@ function ConnectionsWorkspaceStateful({
                     A sync is enqueued server-side; the button reports only what the
                     request ledger accepted, never an optimistic success. */}
                 <button
-                  className={styles.connectionsProviderActionPrimary}
+                  className={`${styles.connectionsProviderActionPrimary} ${
+                    managedConnection.connection.manualIngestionStartRequired
+                      ? styles.connectionsStartIngestionAction
+                      : ""
+                  }`}
                   type="button"
-                  disabled={!mutationsEnabled || syncState.status === "requesting"}
-                  aria-busy={syncState.status === "requesting"}
-                  title={
-                    syncState.status === "requesting"
-                      ? "Starting the sync."
-                      : "Fetch the latest data from this integration."
+                  disabled={
+                    !mutationsEnabled
+                    || managedSyncState.status === "requesting"
+                    || managedSyncState.status === "accepted"
                   }
-                  onClick={() => void requestManualSync(managedConnection.connection.connectionId)}
+                  aria-busy={managedSyncState.status === "requesting"}
+                  title={
+                    managedSyncState.status === "requesting"
+                      ? "Starting the sync."
+                      : managedConnection.connection.manualIngestionStartRequired
+                        ? `Start ingestion for ${managedConnection.connection.auth.accountName || managedConnection.provider.name}.`
+                        : "Fetch the latest data from this integration."
+                  }
+                  onClick={() => void requestManualSync(
+                    managedConnection.connection.connectionId,
+                    managedConnection.connection.manualIngestionStartRequired === true,
+                    managedConnection.provider.id,
+                  )}
                 >
-                  {syncState.status === "requesting" ? "Starting…" : "Sync now"}
+                  {managedSyncState.status === "requesting"
+                    ? "Starting…"
+                    : managedSyncState.status === "accepted"
+                      ? "Ingestion queued"
+                      : managedConnection.connection.manualIngestionStartRequired
+                        ? "Start ingestion"
+                        : "Sync now"}
                 </button>
-                {syncState.status === "accepted" ? (
+                {managedSyncState.status === "accepted" ? (
                   <small role="status">
                     Sync queued. Data appears as each domain becomes ready.
                   </small>
                 ) : null}
-                {syncState.status === "declined" ? (
-                  <small role="alert">{syncState.message}</small>
+                {managedSyncState.status === "declined" ? (
+                  <small role="alert">{managedSyncState.message}</small>
                 ) : null}
                 <button
                   className={styles.connectionsProviderActionSecondary}

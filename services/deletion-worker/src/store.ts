@@ -19,7 +19,7 @@ export type RevocationTarget = Readonly<{
   tenantId: string;
   connectionId: string;
   connectionGeneration: number;
-  connectorId: "lightspeed-r" | "xero" | "deputy";
+  connectorId: "lightspeed-r" | "lightspeed-x" | "xero" | "deputy" | "square" | "momence" | "shopify";
   credentialRef: string;
 }>;
 
@@ -52,7 +52,15 @@ function revocationTargets(value: unknown): readonly RevocationTarget[] {
   return value.map((candidate) => {
     const target = evidence(candidate, "deletion_revocation_target");
     const connectorId = requiredString(target.connectorId, "connector");
-    if (connectorId !== "lightspeed-r" && connectorId !== "xero" && connectorId !== "deputy") {
+    if (
+      connectorId !== "lightspeed-r" &&
+      connectorId !== "lightspeed-x" &&
+      connectorId !== "xero" &&
+      connectorId !== "deputy" &&
+      connectorId !== "square" &&
+      connectorId !== "momence" &&
+      connectorId !== "shopify"
+    ) {
       throw new Error("deletion_revocation_connector_invalid");
     }
     const connectionGeneration = Number(target.connectionGeneration);

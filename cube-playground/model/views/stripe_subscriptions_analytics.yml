@@ -1,0 +1,38 @@
+views:
+  - name: stripe_subscriptions_analytics
+    title: Stripe subscriptions analytics
+    description: >
+      Current Stripe subscriptions and their items (price, product, quantity).
+      Active means status active or trialing.
+    meta:
+      ai_context: >
+        Subscription grain for MRR-style headcount (active_subscriptions), not
+        recognised revenue. Invoice money stays in stripe_billing_analytics.
+        Item quantity is a different grain from subscription_count.
+    cubes:
+      - join_path: stripe_subscriptions
+        includes:
+          - tenant_id
+          - status
+          - cancel_at_period_end
+          - created
+          - current_period_start
+          - current_period_end
+          - canceled_at
+          - ended_at
+          - subscription_count
+          - active_subscriptions
+          - canceled_subscriptions
+          - past_due_subscriptions
+      - join_path: stripe_subscriptions.stripe_customers
+        prefix: true
+        includes: [name, email]
+      - join_path: stripe_subscription_items
+        prefix: true
+        includes: [item_count, item_quantity]
+      - join_path: stripe_subscription_items.stripe_prices
+        prefix: true
+        includes: [nickname, type, recurring_interval, unit_price, currency]
+      - join_path: stripe_subscription_items.stripe_prices.stripe_products
+        prefix: true
+        includes: [name, active]

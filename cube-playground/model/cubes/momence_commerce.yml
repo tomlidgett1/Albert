@@ -1,0 +1,630 @@
+cubes:
+  - name: momence_sales
+    title: Momence host sales
+    public: false
+    description: >
+      One row per experimental HostSale record with sale-date, independently
+      rolled-up item values and embedded sale-tender values. The source does not
+      expose sale status, location or currency on this endpoint.
+    meta:
+      ai_context: >
+        This is the HostSale header grain. Values are source-reported arithmetic
+        over item unit price/tax and tender amount/tax, but HostSaleDto provides
+        no currency, lifecycle status, void flag, location or canonical order
+        total. Call them reported sale values, not certified revenue. Never add
+        item value to tender value. Refund-like item types remain included as
+        reported and do not establish captured/refunded cash; use detailed
+        payment/refund views when available.
+    sql: >
+      WITH latest AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_sales
+        GROUP BY tenant_id, connection_id
+      )
+      SELECT s.*,
+             NULLIF(s.payload_json ->> 'saleDate', '')::timestamptz AS cc_sale_at,
+             COALESCE(items.item_rows, 0) AS cc_item_rows,
+             COALESCE(items.units, 0) AS cc_units,
+             COALESCE(items.value_ex_tax, 0) AS cc_item_value_ex_tax,
+             COALESCE(items.tax, 0) AS cc_item_tax,
+             COALESCE(items.value_inc_tax, 0) AS cc_item_value_inc_tax,
+             COALESCE(items.discount_ex_tax, 0) AS cc_discount_ex_tax,
+             COALESCE(items.discount_tax, 0) AS cc_discount_tax,
+             COALESCE(items.refund_like_rows, 0) AS cc_refund_like_rows,
+             COALESCE(items.paying_members, 0) AS cc_paying_members,
+             COALESCE(items.target_members, 0) AS cc_target_members,
+             COALESCE(tenders.tender_rows, 0) AS cc_tender_rows,
+             COALESCE(tenders.amount_ex_tax, 0) AS cc_tender_amount_ex_tax,
+             COALESCE(tenders.tax, 0) AS cc_tender_tax,
+             COALESCE(tenders.amount_inc_tax, 0) AS cc_tender_amount_inc_tax
+      FROM source_momence.momence_sales s
+      JOIN latest l USING (tenant_id, connection_id, mapping_version)
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS item_rows,
+               SUM(COALESCE(NULLIF(item.value ->> 'quantity', '')::numeric, 0)) AS units,
+               SUM(COALESCE(NULLIF(item.value ->> 'quantity', '')::numeric, 0)
+                 * COALESCE(NULLIF(item.value ->> 'unitPriceExcludingTaxInCurrency', '')::numeric, 0)) AS value_ex_tax,
+               SUM(COALESCE(NULLIF(item.value ->> 'quantity', '')::numeric, 0)
+                 * COALESCE(NULLIF(item.value ->> 'unitTaxAmountInCurrency', '')::numeric, 0)) AS tax,
+               SUM(COALESCE(NULLIF(item.value ->> 'quantity', '')::numeric, 0)
+                 * (COALESCE(NULLIF(item.value ->> 'unitPriceExcludingTaxInCurrency', '')::numeric, 0)
+                  + COALESCE(NULLIF(item.value ->> 'unitTaxAmountInCurrency', '')::numeric, 0))) AS value_inc_tax,
+               SUM(COALESCE(NULLIF(item.value ->> 'quantity', '')::numeric, 0)
+                 * COALESCE(NULLIF(item.value #>> ARRAY['discountCode', 'unitDiscountExcludingTaxInCurrency'], '')::numeric, 0)) AS discount_ex_tax,
+               SUM(COALESCE(NULLIF(item.value ->> 'quantity', '')::numeric, 0)
+                 * COALESCE(NULLIF(item.value #>> ARRAY['discountCode', 'unitDiscountTaxAmountInCurrency'], '')::numeric, 0)) AS discount_tax,
+               COUNT(*) FILTER (WHERE item.value ->> 'itemType' IN ('refund', 'stripe-refund')) AS refund_like_rows,
+               COUNT(DISTINCT NULLIF(item.value #>> ARRAY['payingMember', 'id'], '')) AS paying_members,
+               COUNT(DISTINCT NULLIF(item.value #>> ARRAY['targetMember', 'id'], '')) AS target_members
+        FROM jsonb_array_elements(COALESCE(s.payload_json -> 'items', '[]'::jsonb)) item(value)
+      ) items ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS tender_rows,
+               SUM(COALESCE(NULLIF(tender.value ->> 'amountInCurrencyWithoutTax', '')::numeric, 0)) AS amount_ex_tax,
+               SUM(COALESCE(NULLIF(tender.value ->> 'taxAmountInCurrency', '')::numeric, 0)) AS tax,
+               SUM(COALESCE(NULLIF(tender.value ->> 'amountInCurrencyWithoutTax', '')::numeric, 0)
+                 + COALESCE(NULLIF(tender.value ->> 'taxAmountInCurrency', '')::numeric, 0)) AS amount_inc_tax
+        FROM jsonb_array_elements(COALESCE(s.payload_json #> ARRAY['paymentTransaction', 'items'], '[]'::jsonb)) tender(value)
+      ) tenders ON true
+      WHERE NOT s.tombstone
+    joins:
+      - name: momence_host_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_host_accounts}.tenant_id
+          AND {CUBE}.connection_id = {momence_host_accounts}.connection_id
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: sale_id, sql: record_id, type: string }
+      - { name: sale_at, sql: cc_sale_at, type: time, title: Sale date }
+      - name: currency_availability
+        sql: "'Not returned by HostSaleDto'"
+        type: string
+        description: Explicitly records why HostSale monetary values cannot be currency-labelled from this endpoint.
+      - { name: item_row_count, sql: cc_item_rows, type: number }
+      - { name: units_as_reported, sql: cc_units, type: number }
+      - { name: tender_row_count, sql: cc_tender_rows, type: number }
+      - { name: paying_member_count, sql: cc_paying_members, type: number }
+      - { name: target_member_count, sql: cc_target_members, type: number }
+      - { name: contains_refund_like_item, sql: "cc_refund_like_rows > 0", type: boolean }
+    measures:
+      - { name: sale_records, type: count }
+      - { name: reported_units, type: sum, sql: cc_units }
+      - name: reported_item_value_ex_tax
+        type: sum
+        sql: cc_item_value_ex_tax
+        description: Quantity times source unit price excluding tax; currency is absent and sale lifecycle is not exposed.
+      - { name: reported_item_tax, type: sum, sql: cc_item_tax }
+      - { name: reported_item_value_inc_tax, type: sum, sql: cc_item_value_inc_tax }
+      - { name: reported_discount_ex_tax, type: sum, sql: cc_discount_ex_tax }
+      - { name: reported_discount_tax, type: sum, sql: cc_discount_tax }
+      - { name: embedded_tender_value_ex_tax, type: sum, sql: cc_tender_amount_ex_tax }
+      - { name: embedded_tender_tax, type: sum, sql: cc_tender_tax }
+      - name: embedded_tender_value_inc_tax
+        type: sum
+        sql: cc_tender_amount_inc_tax
+        description: Embedded payment-method amount plus tax; currency and transaction status are not present here.
+      - name: sale_records_with_refund_like_items
+        type: count
+        filters:
+          - sql: "{CUBE}.cc_refund_like_rows > 0"
+      - { name: average_reported_item_value_inc_tax, type: avg, sql: cc_item_value_inc_tax }
+
+  - name: momence_sale_items
+    title: Momence sale items
+    public: false
+    description: >
+      One row per item embedded in a HostSale, preserving service/product/member
+      references, quantity, unit price, unit tax and discount-code components.
+    meta:
+      ai_context: >
+        This is sale-item grain. Use it for what was sold: memberships, sessions,
+        appointments, products, videos, courses, gift cards, fees and other
+        Momence item types. Unit price/tax values have no returned currency code
+        and the endpoint has no sale status, so label totals as reported source
+        values rather than certified revenue. Paying member and target member
+        can differ. Refund item types do not replace the refund-event view.
+    sql: >
+      WITH latest AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_sales
+        GROUP BY tenant_id, connection_id
+      ), current_sales AS MATERIALIZED (
+        SELECT s.* FROM source_momence.momence_sales s
+        JOIN latest l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT s.tombstone
+      )
+      SELECT s.tenant_id, s.connection_id,
+             s.namespaced_source_key || '#item:' || COALESCE(NULLIF(item.value ->> 'id', ''), item.ordinal::text) AS row_key,
+             s.record_id AS sale_id,
+             NULLIF(s.payload_json ->> 'saleDate', '')::timestamptz AS sale_at,
+             item.value AS item_json,
+             item.ordinal,
+             NULLIF(item.value ->> 'quantity', '')::numeric AS quantity,
+             NULLIF(item.value ->> 'unitPriceExcludingTaxInCurrency', '')::numeric AS unit_price_ex_tax,
+             NULLIF(item.value ->> 'unitTaxAmountInCurrency', '')::numeric AS unit_tax,
+             COALESCE(NULLIF(item.value ->> 'quantity', '')::numeric, 0)
+               * COALESCE(NULLIF(item.value ->> 'unitPriceExcludingTaxInCurrency', '')::numeric, 0) AS line_value_ex_tax,
+             COALESCE(NULLIF(item.value ->> 'quantity', '')::numeric, 0)
+               * COALESCE(NULLIF(item.value ->> 'unitTaxAmountInCurrency', '')::numeric, 0) AS line_tax,
+             COALESCE(NULLIF(item.value ->> 'quantity', '')::numeric, 0)
+               * (COALESCE(NULLIF(item.value ->> 'unitPriceExcludingTaxInCurrency', '')::numeric, 0)
+                + COALESCE(NULLIF(item.value ->> 'unitTaxAmountInCurrency', '')::numeric, 0)) AS line_value_inc_tax,
+             COALESCE(NULLIF(item.value ->> 'quantity', '')::numeric, 0)
+               * COALESCE(NULLIF(item.value #>> ARRAY['discountCode', 'unitDiscountExcludingTaxInCurrency'], '')::numeric, 0) AS line_discount_ex_tax,
+             COALESCE(NULLIF(item.value ->> 'quantity', '')::numeric, 0)
+               * COALESCE(NULLIF(item.value #>> ARRAY['discountCode', 'unitDiscountTaxAmountInCurrency'], '')::numeric, 0) AS line_discount_tax
+      FROM current_sales s
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.payload_json -> 'items', '[]'::jsonb))
+        WITH ORDINALITY AS item(value, ordinal)
+    joins:
+      - name: momence_sales
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_sales}.tenant_id
+          AND {CUBE}.connection_id = {momence_sales}.connection_id
+          AND {CUBE}.sale_id = {momence_sales}.sale_id
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: sale_id, sql: sale_id, type: string, public: false }
+      - { name: sale_item_row_id, sql: "item_json ->> 'id'", type: string, public: false }
+      - { name: sale_item_id, sql: "item_json ->> 'saleItemId'", type: string }
+      - { name: item_type, sql: "item_json ->> 'itemType'", type: string }
+      - { name: item_name, sql: "item_json ->> 'itemName'", type: string }
+      - { name: descriptive_item_name, sql: "item_json ->> 'descriptiveItemName'", type: string }
+      - { name: sale_at, sql: sale_at, type: time }
+      - { name: quantity, sql: quantity, type: number }
+      - { name: unit_price_ex_tax_source_value, sql: unit_price_ex_tax, type: number }
+      - { name: unit_tax_source_value, sql: unit_tax, type: number }
+      - { name: paying_member_id, sql: "item_json #>> ARRAY['payingMember', 'id']", type: string, public: false }
+      - { name: paying_member_name, sql: "NULLIF(BTRIM(CONCAT_WS(' ', item_json #>> ARRAY['payingMember', 'firstName'], item_json #>> ARRAY['payingMember', 'lastName'])), '')", type: string }
+      - { name: target_member_id, sql: "item_json #>> ARRAY['targetMember', 'id']", type: string, public: false }
+      - { name: target_member_name, sql: "NULLIF(BTRIM(CONCAT_WS(' ', item_json #>> ARRAY['targetMember', 'firstName'], item_json #>> ARRAY['targetMember', 'lastName'])), '')", type: string }
+      - { name: session_id, sql: "item_json #>> ARRAY['session', 'id']", type: string, public: false }
+      - { name: session_name, sql: "item_json #>> ARRAY['session', 'name']", type: string }
+      - { name: session_starts_at, sql: "NULLIF(item_json #>> ARRAY['session', 'startsAt'], '')::timestamptz", type: time }
+      - { name: session_ends_at, sql: "NULLIF(item_json #>> ARRAY['session', 'endsAt'], '')::timestamptz", type: time }
+      - { name: appointment_id, sql: "item_json #>> ARRAY['appointment', 'id']", type: string, public: false }
+      - { name: appointment_name, sql: "item_json #>> ARRAY['appointment', 'name']", type: string }
+      - { name: product_id, sql: "item_json #>> ARRAY['product', 'id']", type: string, public: false }
+      - { name: product_name, sql: "item_json #>> ARRAY['product', 'name']", type: string }
+      - { name: product_variant_id, sql: "item_json #>> ARRAY['productVariant', 'id']", type: string, public: false }
+      - { name: product_variant_name, sql: "item_json #>> ARRAY['productVariant', 'name']", type: string }
+      - { name: open_area_id, sql: "item_json #>> ARRAY['openArea', 'id']", type: string, public: false }
+      - { name: open_area_name, sql: "item_json #>> ARRAY['openArea', 'name']", type: string }
+      - { name: discount_code, sql: "item_json #>> ARRAY['discountCode', 'code']", type: string }
+      - { name: discount_type, sql: "item_json #>> ARRAY['discountCode', 'type']", type: string }
+      - name: currency_availability
+        sql: "'Not returned by HostSaleDto'"
+        type: string
+    measures:
+      - { name: sale_item_rows, type: count }
+      - { name: reported_quantity, type: sum, sql: quantity }
+      - { name: reported_line_value_ex_tax, type: sum, sql: line_value_ex_tax }
+      - { name: reported_line_tax, type: sum, sql: line_tax }
+      - { name: reported_line_value_inc_tax, type: sum, sql: line_value_inc_tax }
+      - { name: reported_line_discount_ex_tax, type: sum, sql: line_discount_ex_tax }
+      - { name: reported_line_discount_tax, type: sum, sql: line_discount_tax }
+      - name: refund_like_item_rows
+        type: count
+        filters:
+          - sql: "{CUBE}.item_json ->> 'itemType' IN ('refund', 'stripe-refund')"
+      - name: refund_like_value_as_reported
+        type: sum
+        sql: line_value_inc_tax
+        filters:
+          - sql: "{CUBE}.item_json ->> 'itemType' IN ('refund', 'stripe-refund')"
+
+  - name: momence_sale_tenders
+    title: Momence sale tender items
+    public: false
+    description: >
+      One row per payment-method item embedded in a HostSale, retaining method,
+      optional custom/membership label and source amount/tax components.
+    meta:
+      ai_context: >
+        This is sale-linked tender-item grain and is useful for source payment
+        method mix when experimental sales are available. HostSale does not
+        return transaction status or currency, so these are embedded tender
+        values, not certified captured cash. A membership, gift card, credit or
+        free method is a settlement unit and must not be called bank/card cash.
+    sql: >
+      WITH latest AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_sales
+        GROUP BY tenant_id, connection_id
+      ), current_sales AS MATERIALIZED (
+        SELECT s.* FROM source_momence.momence_sales s
+        JOIN latest l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT s.tombstone
+      )
+      SELECT s.tenant_id, s.connection_id,
+             s.namespaced_source_key || '#tender:' || COALESCE(NULLIF(tender.value ->> 'id', ''), tender.ordinal::text) AS row_key,
+             s.record_id AS sale_id,
+             NULLIF(s.payload_json ->> 'saleDate', '')::timestamptz AS sale_at,
+             tender.value AS tender_json,
+             NULLIF(tender.value ->> 'amountInCurrencyWithoutTax', '')::numeric AS amount_ex_tax,
+             NULLIF(tender.value ->> 'taxAmountInCurrency', '')::numeric AS tax_amount
+      FROM current_sales s
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.payload_json #> ARRAY['paymentTransaction', 'items'], '[]'::jsonb))
+        WITH ORDINALITY AS tender(value, ordinal)
+    joins:
+      - name: momence_sales
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_sales}.tenant_id
+          AND {CUBE}.connection_id = {momence_sales}.connection_id
+          AND {CUBE}.sale_id = {momence_sales}.sale_id
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: sale_id, sql: sale_id, type: string }
+      - { name: tender_item_id, sql: "tender_json ->> 'id'", type: string }
+      - { name: payment_method_type, sql: "tender_json ->> 'paymentMethodType'", type: string }
+      - { name: payment_method_name, sql: "tender_json ->> 'paymentMethodName'", type: string }
+      - { name: sale_at, sql: sale_at, type: time }
+      - name: currency_availability
+        sql: "'Not returned by HostSaleDto'"
+        type: string
+    measures:
+      - { name: tender_items, type: count }
+      - { name: tender_amount_ex_tax, type: sum, sql: amount_ex_tax }
+      - { name: tender_tax, type: sum, sql: tax_amount }
+      - { name: tender_amount_inc_tax, type: sum, sql: "COALESCE(amount_ex_tax, 0) + COALESCE(tax_amount, 0)" }
+
+  - name: momence_payment_transactions
+    title: Momence payment transactions
+    public: false
+    description: >
+      One row per detailed payment transaction discoverable through member notes,
+      with transaction status, currency, purchase/source, paid value, tax, fees,
+      credits and independently aggregated refund values.
+    meta:
+      ai_context: >
+        This is payment-transaction header grain. Only status succeeded counts as
+        captured currency. Paid currency, money credits and event credits are
+        different units. Always group currency amounts by currency. Refunds are
+        separate dated events and subtract only in net-after-refunds measures.
+        Coverage is partial because Momence exposes no transaction list: Albert
+        can retrieve only IDs discoverable in member notes. Never treat missing
+        transactions as zero or claim complete processing reconciliation.
+    sql: >
+      WITH latest AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_payment_transactions
+        GROUP BY tenant_id, connection_id
+      )
+      SELECT p.*,
+             NULLIF(p.payload_json ->> 'createdAt', '')::timestamptz AS cc_created_at,
+             NULLIF(p.payload_json ->> 'priceExcludingVatInCurrency', '')::numeric AS cc_price_ex_vat,
+             NULLIF(p.payload_json ->> 'vatAmountInCurrency', '')::numeric AS cc_vat,
+             NULLIF(p.payload_json ->> 'paidInCurrency', '')::numeric AS cc_paid_currency,
+             NULLIF(p.payload_json ->> 'paidInMoneyCredits', '')::numeric AS cc_paid_money_credits,
+             NULLIF(p.payload_json ->> 'paidInEventCredits', '')::numeric AS cc_paid_event_credits,
+             NULLIF(p.payload_json ->> 'paymentProcessorFeeCoveredByCustomerInCurrency', '')::numeric AS cc_processor_fee_customer,
+             NULLIF(p.payload_json ->> 'paymentProcessorFeeCoveredByHostInCurrency', '')::numeric AS cc_processor_fee_host,
+             NULLIF(p.payload_json ->> 'platformFeeCoveredByCustomerInCurrency', '')::numeric AS cc_platform_fee_customer,
+             NULLIF(p.payload_json ->> 'platformFeeCoveredByHostInCurrency', '')::numeric AS cc_platform_fee_host,
+             COALESCE(refunds.refund_count, 0) AS cc_refund_count,
+             COALESCE(refunds.refunded_currency, 0) AS cc_refunded_currency,
+             COALESCE(refunds.refunded_money_credits, 0) AS cc_refunded_money_credits,
+             COALESCE(refunds.refunded_event_credits, 0) AS cc_refunded_event_credits
+      FROM source_momence.momence_payment_transactions p
+      JOIN latest l USING (tenant_id, connection_id, mapping_version)
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS refund_count,
+               SUM(COALESCE(NULLIF(refund.value ->> 'refundedInCurrency', '')::numeric, 0)) AS refunded_currency,
+               SUM(COALESCE(NULLIF(refund.value ->> 'refundedInMoneyCredits', '')::numeric, 0)) AS refunded_money_credits,
+               SUM(COALESCE(NULLIF(refund.value ->> 'refundedInEventCredits', '')::numeric, 0)) AS refunded_event_credits
+        FROM jsonb_array_elements(COALESCE(p.payload_json -> 'refunds', '[]'::jsonb)) refund(value)
+      ) refunds ON true
+      WHERE NOT p.tombstone
+    joins:
+      - name: momence_members
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_members}.tenant_id
+          AND {CUBE}.connection_id = {momence_members}.connection_id
+          AND {CUBE}.payload_json #>> ARRAY['payingMember', 'id'] = {momence_members}.member_id
+      - name: momence_host_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_host_accounts}.tenant_id
+          AND {CUBE}.connection_id = {momence_host_accounts}.connection_id
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: payment_transaction_id, sql: record_id, type: string }
+      - { name: host_id, sql: "{CUBE}.payload_json ->> 'hostId'", type: string, public: false }
+      - { name: payment_status, sql: "{CUBE}.payload_json ->> 'paymentStatus'", type: string }
+      - { name: payment_source, sql: "{CUBE}.payload_json ->> 'paymentSource'", type: string }
+      - { name: purchase_type, sql: "{CUBE}.payload_json ->> 'purchaseType'", type: string }
+      - { name: currency_code, sql: "{CUBE}.payload_json ->> 'currency'", type: string }
+      - { name: created_at, sql: cc_created_at, type: time }
+      - { name: paying_member_id, sql: "{CUBE}.payload_json #>> ARRAY['payingMember', 'id']", type: string, public: false }
+      - { name: paying_member_name, sql: "NULLIF(BTRIM(CONCAT_WS(' ', {CUBE}.payload_json #>> ARRAY['payingMember', 'firstName'], {CUBE}.payload_json #>> ARRAY['payingMember', 'lastName'])), '')", type: string }
+      - { name: paying_member_email, sql: "{CUBE}.payload_json #>> ARRAY['payingMember', 'email']", type: string, public: false }
+      - { name: paying_member_phone, sql: "{CUBE}.payload_json #>> ARRAY['payingMember', 'phoneNumber']", type: string, public: false }
+      - { name: failure_reason, sql: "{CUBE}.payload_json #>> ARRAY['failure', 'failureReason']", type: string }
+      - { name: is_apple_pay, sql: "COALESCE(({CUBE}.payload_json #>> ARRAY['metadata', 'isApplePay'])::boolean, false)", type: boolean }
+      - { name: is_google_pay, sql: "COALESCE(({CUBE}.payload_json #>> ARRAY['metadata', 'isGooglePay'])::boolean, false)", type: boolean }
+      - { name: refund_count, sql: cc_refund_count, type: number }
+      - name: coverage_scope
+        sql: "'Only transaction IDs discoverable from member notes'"
+        type: string
+    measures:
+      - { name: discovered_payment_transactions, type: count }
+      - name: succeeded_payment_transactions
+        type: count
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'"
+      - name: failed_payment_transactions
+        type: count
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'failed'"
+      - name: pending_or_incomplete_payment_transactions
+        type: count
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' IN ('pending', 'unpaid', 'incomplete')"
+      - name: voided_payment_transactions
+        type: count
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'voided'"
+      - name: captured_currency_amount
+        type: sum
+        sql: cc_paid_currency
+        format: currency
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'"
+      - name: price_excluding_vat_for_succeeded
+        type: sum
+        sql: cc_price_ex_vat
+        format: currency
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'"
+      - name: vat_for_succeeded
+        type: sum
+        sql: cc_vat
+        format: currency
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'"
+      - name: paid_money_credit_units
+        type: sum
+        sql: cc_paid_money_credits
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'"
+      - name: paid_event_credit_units
+        type: sum
+        sql: cc_paid_event_credits
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'"
+      - { name: refunded_currency_amount, type: sum, sql: cc_refunded_currency, format: currency }
+      - { name: refunded_money_credit_units, type: sum, sql: cc_refunded_money_credits }
+      - { name: refunded_event_credit_units, type: sum, sql: cc_refunded_event_credits }
+      - name: net_captured_currency_after_refunds
+        type: sum
+        sql: >
+          CASE WHEN {CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'
+               THEN COALESCE(cc_paid_currency, 0) - COALESCE(cc_refunded_currency, 0)
+               ELSE -COALESCE(cc_refunded_currency, 0) END
+        format: currency
+        description: Captured succeeded currency less dated currency refunds on the discovered transactions only.
+      - name: host_covered_processor_fees
+        type: sum
+        sql: cc_processor_fee_host
+        format: currency
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'"
+      - name: host_covered_platform_fees
+        type: sum
+        sql: cc_platform_fee_host
+        format: currency
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'"
+      - name: customer_covered_processor_fees
+        type: sum
+        sql: cc_processor_fee_customer
+        format: currency
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'"
+      - name: customer_covered_platform_fees
+        type: sum
+        sql: cc_platform_fee_customer
+        format: currency
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'"
+      - name: average_captured_currency_amount
+        type: avg
+        sql: cc_paid_currency
+        format: currency
+        filters:
+          - sql: "{CUBE}.payload_json ->> 'paymentStatus' = 'succeeded'"
+
+  - name: momence_payment_items
+    title: Momence payment method items
+    public: false
+    description: >
+      One row per transactionItems element on a discovered detailed payment,
+      retaining item status, method, currency, cash/tax/fee/credit components and
+      used membership, bought-membership or gift-card references.
+    meta:
+      ai_context: >
+        This is payment-method item grain. Use it for method-specific success,
+        failures, custom payment modes, fees and membership/gift-card settlement.
+        Currency, money credits and event credits are different units. Header
+        captured value must not be added to item value. Coverage inherits the
+        partial notes-discovery limitation of detailed payment transactions.
+    sql: >
+      WITH latest AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_payment_transactions
+        GROUP BY tenant_id, connection_id
+      ), current_payments AS MATERIALIZED (
+        SELECT p.* FROM source_momence.momence_payment_transactions p
+        JOIN latest l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT p.tombstone
+      )
+      SELECT p.tenant_id, p.connection_id,
+             p.namespaced_source_key || '#payment-item:' || COALESCE(NULLIF(item.value ->> 'id', ''), item.ordinal::text) AS row_key,
+             p.record_id AS payment_transaction_id,
+             NULLIF(p.payload_json ->> 'createdAt', '')::timestamptz AS transaction_created_at,
+             item.value AS item_json,
+             NULLIF(item.value ->> 'priceExcludingVatInCurrency', '')::numeric AS price_ex_vat,
+             NULLIF(item.value ->> 'vatAmountInCurrency', '')::numeric AS vat,
+             NULLIF(item.value ->> 'paidInMoneyCredits', '')::numeric AS paid_money_credits,
+             NULLIF(item.value ->> 'paidInEventCredits', '')::numeric AS paid_event_credits,
+             NULLIF(item.value ->> 'paymentProcessorFeeCoveredByCustomerInCurrency', '')::numeric AS processor_fee_customer,
+             NULLIF(item.value ->> 'paymentProcessorFeeCoveredByHostInCurrency', '')::numeric AS processor_fee_host,
+             NULLIF(item.value ->> 'platformFeeCoveredByCustomerInCurrency', '')::numeric AS platform_fee_customer,
+             NULLIF(item.value ->> 'platformFeeCoveredByHostInCurrency', '')::numeric AS platform_fee_host
+      FROM current_payments p
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(p.payload_json -> 'transactionItems', '[]'::jsonb))
+        WITH ORDINALITY AS item(value, ordinal)
+    joins:
+      - name: momence_payment_transactions
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_payment_transactions}.tenant_id
+          AND {CUBE}.connection_id = {momence_payment_transactions}.connection_id
+          AND {CUBE}.payment_transaction_id = {momence_payment_transactions}.payment_transaction_id
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: payment_transaction_id, sql: payment_transaction_id, type: string, public: false }
+      - { name: payment_item_id, sql: "item_json ->> 'id'", type: string }
+      - { name: payment_method, sql: "item_json ->> 'paymentMethod'", type: string }
+      - { name: payment_status, sql: "item_json ->> 'paymentStatus'", type: string }
+      - { name: currency_code, sql: "item_json ->> 'currency'", type: string }
+      - { name: custom_payment_method, sql: "item_json ->> 'customPaymentMethod'", type: string }
+      - { name: custom_payment_method_mode, sql: "item_json ->> 'customPaymentMethodMode'", type: string }
+      - { name: transaction_created_at, sql: transaction_created_at, type: time }
+      - { name: used_membership_id, sql: "item_json #>> ARRAY['usedMembership', 'id']", type: string, public: false }
+      - { name: used_membership_name, sql: "item_json #>> ARRAY['usedMembership', 'name']", type: string }
+      - { name: used_membership_type, sql: "item_json #>> ARRAY['usedMembership', 'type']", type: string }
+      - { name: used_bought_membership_id, sql: "item_json #>> ARRAY['usedBoughtMembership', 'id']", type: string, public: false }
+      - { name: used_gift_card_id, sql: "item_json #>> ARRAY['usedGiftCard', 'id']", type: string, public: false }
+      - { name: used_gift_card_code, sql: "item_json #>> ARRAY['usedGiftCard', 'code']", type: string, public: false }
+    measures:
+      - { name: payment_items, type: count }
+      - name: succeeded_payment_items
+        type: count
+        filters:
+          - sql: "{CUBE}.item_json ->> 'paymentStatus' = 'succeeded'"
+      - name: failed_payment_items
+        type: count
+        filters:
+          - sql: "{CUBE}.item_json ->> 'paymentStatus' = 'failed'"
+      - name: succeeded_item_price_ex_vat
+        type: sum
+        sql: price_ex_vat
+        format: currency
+        filters:
+          - sql: "{CUBE}.item_json ->> 'paymentStatus' = 'succeeded'"
+      - name: succeeded_item_vat
+        type: sum
+        sql: vat
+        format: currency
+        filters:
+          - sql: "{CUBE}.item_json ->> 'paymentStatus' = 'succeeded'"
+      - { name: item_paid_money_credit_units, type: sum, sql: paid_money_credits }
+      - { name: item_paid_event_credit_units, type: sum, sql: paid_event_credits }
+      - name: item_host_processor_fees
+        type: sum
+        sql: processor_fee_host
+        format: currency
+        filters:
+          - sql: "{CUBE}.item_json ->> 'paymentStatus' = 'succeeded'"
+      - name: item_host_platform_fees
+        type: sum
+        sql: platform_fee_host
+        format: currency
+        filters:
+          - sql: "{CUBE}.item_json ->> 'paymentStatus' = 'succeeded'"
+      - name: item_customer_processor_fees
+        type: sum
+        sql: processor_fee_customer
+        format: currency
+        filters:
+          - sql: "{CUBE}.item_json ->> 'paymentStatus' = 'succeeded'"
+      - name: item_customer_platform_fees
+        type: sum
+        sql: platform_fee_customer
+        format: currency
+        filters:
+          - sql: "{CUBE}.item_json ->> 'paymentStatus' = 'succeeded'"
+
+  - name: momence_refunds
+    title: Momence payment refunds
+    public: false
+    description: >
+      One row per refund event embedded on a discovered payment transaction,
+      retaining refund date, method, currency amount and separately typed money-
+      credit and event-credit reversals.
+    meta:
+      ai_context: >
+        This is refund-event grain. Use refund created_at as the refund-flow date,
+        not the original sale, session or appointment date. Currency refunds,
+        money-credit refunds and event-credit refunds are different units. A
+        refund method does not identify the returned service/product allocation.
+        Coverage is partial because detailed payment IDs are discoverable only
+        through member notes; missing refund rows are not zero.
+    sql: >
+      WITH latest AS MATERIALIZED (
+        SELECT tenant_id, connection_id,
+               (ARRAY_AGG(mapping_version ORDER BY ingested_at DESC))[1] AS mapping_version
+        FROM source_momence.momence_payment_transactions
+        GROUP BY tenant_id, connection_id
+      ), current_payments AS MATERIALIZED (
+        SELECT p.* FROM source_momence.momence_payment_transactions p
+        JOIN latest l USING (tenant_id, connection_id, mapping_version)
+        WHERE NOT p.tombstone
+      )
+      SELECT p.tenant_id, p.connection_id,
+             p.namespaced_source_key || '#refund:' || COALESCE(NULLIF(refund.value ->> 'id', ''), refund.ordinal::text) AS row_key,
+             p.record_id AS payment_transaction_id,
+             p.payload_json ->> 'purchaseType' AS purchase_type,
+             p.payload_json ->> 'paymentSource' AS payment_source,
+             refund.value AS refund_json,
+             NULLIF(refund.value ->> 'createdAt', '')::timestamptz AS refund_created_at,
+             NULLIF(refund.value ->> 'refundedInCurrency', '')::numeric AS refunded_currency,
+             NULLIF(refund.value ->> 'refundedInMoneyCredits', '')::numeric AS refunded_money_credits,
+             NULLIF(refund.value ->> 'refundedInEventCredits', '')::numeric AS refunded_event_credits
+      FROM current_payments p
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(p.payload_json -> 'refunds', '[]'::jsonb))
+        WITH ORDINALITY AS refund(value, ordinal)
+    joins:
+      - name: momence_payment_transactions
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {momence_payment_transactions}.tenant_id
+          AND {CUBE}.connection_id = {momence_payment_transactions}.connection_id
+          AND {CUBE}.payment_transaction_id = {momence_payment_transactions}.payment_transaction_id
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: refund_id, sql: "refund_json ->> 'id'", type: string }
+      - { name: payment_transaction_id, sql: payment_transaction_id, type: string, public: false }
+      - { name: payment_method, sql: "refund_json ->> 'paymentMethod'", type: string }
+      - { name: currency_code, sql: "refund_json ->> 'currency'", type: string }
+      - { name: purchase_type, sql: purchase_type, type: string }
+      - { name: payment_source, sql: payment_source, type: string }
+      - { name: refund_created_at, sql: refund_created_at, type: time }
+    measures:
+      - { name: refund_events, type: count }
+      - { name: refunded_currency_amount, type: sum, sql: refunded_currency, format: currency }
+      - { name: refunded_money_credit_units, type: sum, sql: refunded_money_credits }
+      - { name: refunded_event_credit_units, type: sum, sql: refunded_event_credits }
+      - { name: average_currency_refund, type: avg, sql: refunded_currency, format: currency }

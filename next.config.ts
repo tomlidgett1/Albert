@@ -2,7 +2,11 @@ import type { NextConfig } from "next";
 
 const publicSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
 const declaredBuildSha = (
-  process.env.GITHUB_SHA?.trim() || process.env.ALBERT_BUILD_SHA?.trim() || ""
+  process.env.VERCEL === "1"
+    ? process.env.VERCEL_GIT_COMMIT_SHA?.trim() || ""
+    : process.env.GITHUB_SHA?.trim() ||
+      process.env.ALBERT_BUILD_SHA?.trim() ||
+      ""
 ).toLowerCase();
 const embeddedBuildSha = /^[a-f0-9]{40}$/u.test(declaredBuildSha)
   ? declaredBuildSha
@@ -38,7 +42,9 @@ const contentSecurityPolicy = [
   "frame-ancestors 'none'",
   "img-src 'self' data: blob:",
   "object-src 'none'",
-  "script-src 'self' 'unsafe-inline'",
+  // Next's development React refresh runtime requires eval. Production
+  // continues to forbid it; see the bundled Next CSP development guide.
+  `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
   ...(process.env.NODE_ENV === "production"
     ? ["upgrade-insecure-requests"]
@@ -48,7 +54,7 @@ const contentSecurityPolicy = [
 const securityHeaders = [
   { key: "Content-Security-Policy", value: contentSecurityPolicy },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(self), geolocation=(), payment=()" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -75,6 +81,9 @@ const nextConfig: NextConfig = {
   // Plain Next/Vercel builds need TypeScript ESM extension rewriting and
   // Vite-style `?raw` imports that vinext already provides for Sites.
   webpack: (config) => {
+    // Constrained local QA can skip the regenerable filesystem cache without
+    // changing the application bundle or weakening the production CSP.
+    if (process.env.ALBERT_BUILD_NO_CACHE === "true") config.cache = false;
     config.resolve = config.resolve ?? {};
     config.resolve.extensionAlias = {
       ".js": [".ts", ".tsx", ".js", ".jsx"],

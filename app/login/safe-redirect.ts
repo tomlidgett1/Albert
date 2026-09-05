@@ -48,10 +48,12 @@ export function safeDashboardRedirect(value: string | null | undefined, origin: 
       return fallbackRedirect;
     }
     const views = candidate.searchParams.getAll("view");
-    if (views.length > 1 || (views.length === 1 && views[0] !== "Connections")) {
+    if (views.length > 1 || (
+      views.length === 1 && views[0] !== "Connections" && views[0] !== "MyData" && views[0] !== "TestChart"
+    )) {
       return fallbackRedirect;
     }
-    return views.length === 1 ? "/dash?view=Connections" : fallbackRedirect;
+    return views.length === 1 ? `/dash?view=${views[0]}` : fallbackRedirect;
   } catch {
     return fallbackRedirect;
   }

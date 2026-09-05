@@ -1,0 +1,428 @@
+cubes:
+  - name: square_inventory_counts
+    title: Square inventory counts
+    public: false
+    description: >
+      One row per current Square inventory quantity at catalog variation,
+      location and inventory state. This is a balance snapshot, not movement
+      history: sum across SKUs/locations/states at one as-of point, never across time.
+    meta:
+      ai_context: >
+        Use for current stock by SKU, store and Square inventory state. quantity
+        is a last-known balance and is semi-additive: never sum several
+        calculated_at snapshots. IN_STOCK is sellable on-hand; other states such
+        as WASTE, SOLD, RETURNED_BY_CUSTOMER and IN_TRANSIT answer operational
+        questions but must not be merged into IN_STOCK. is_estimated signals a
+        computed rather than directly counted balance.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_inventory_counts t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json->>'location_id' = {square_locations}.payload_json->>'id'"
+      - name: square_catalog_objects
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_catalog_objects}.tenant_id AND {CUBE}.connection_id = {square_catalog_objects}.connection_id AND {CUBE}.payload_json->>'catalog_object_id' = {square_catalog_objects}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: catalog_object_id, sql: "{CUBE}.payload_json->>'catalog_object_id'", type: string, public: false }
+      - { name: location_id, sql: "{CUBE}.payload_json->>'location_id'", type: string, public: false }
+      - { name: inventory_state, sql: "{CUBE}.payload_json->>'state'", type: string }
+      - { name: quantity, sql: "({CUBE}.payload_json->>'quantity')::numeric", type: number }
+      - { name: is_estimated, sql: "COALESCE(({CUBE}.payload_json->>'is_estimated')::boolean, false)", type: boolean }
+      - { name: calculated_at, sql: "({CUBE}.payload_json->>'calculated_at')::timestamptz", type: time, title: Inventory calculated at }
+      - { name: is_in_stock, sql: "({CUBE}.payload_json->>'state' = 'IN_STOCK')", type: boolean }
+    measures:
+      - { name: inventory_balances, type: count }
+      - { name: stocked_variations, sql: "{CUBE}.payload_json->>'catalog_object_id'", type: count_distinct }
+      - name: quantity_by_state
+        sql: "({CUBE}.payload_json->>'quantity')::numeric"
+        type: sum
+        description: Quantity for the selected inventory state at the latest loaded observation.
+      - name: units_in_stock
+        sql: "({CUBE}.payload_json->>'quantity')::numeric"
+        type: sum
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'IN_STOCK'" }]
+      - name: estimated_balances
+        type: count
+        filters: [{ sql: "COALESCE(({CUBE}.payload_json->>'is_estimated')::boolean, false)" }]
+
+  - name: square_inventory_changes
+    title: Square inventory changes
+    public: false
+    description: >
+      One row per Square InventoryChange feed event. A change contains either an
+      adjustment or a physical count. Quantity is kept at the vendor event grain;
+      state transitions are exposed separately so stock direction is never guessed.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_inventory_changes t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {square_locations}.tenant_id AND
+          {CUBE}.connection_id = {square_locations}.connection_id AND
+          COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'location_id'], {CUBE}.payload_json#>> ARRAY['physical_count', 'location_id']) = {square_locations}.payload_json->>'id'
+      - name: square_catalog_objects
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {square_catalog_objects}.tenant_id AND
+          {CUBE}.connection_id = {square_catalog_objects}.connection_id AND
+          COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'catalog_object_id'], {CUBE}.payload_json#>> ARRAY['physical_count', 'catalog_object_id']) = {square_catalog_objects}.payload_json->>'id'
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: change_type, sql: "{CUBE}.payload_json->>'type'", type: string }
+      - { name: catalog_object_id, sql: "COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'catalog_object_id'], {CUBE}.payload_json#>> ARRAY['physical_count', 'catalog_object_id'])", type: string, public: false }
+      - { name: location_id, sql: "COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'location_id'], {CUBE}.payload_json#>> ARRAY['physical_count', 'location_id'])", type: string, public: false }
+      - { name: from_state, sql: "{CUBE}.payload_json#>> ARRAY['adjustment', 'from_state']", type: string }
+      - { name: to_state, sql: "{CUBE}.payload_json#>> ARRAY['adjustment', 'to_state']", type: string }
+      - { name: reference_id, sql: "{CUBE}.payload_json#>> ARRAY['adjustment', 'reference_id']", type: string }
+      - { name: change_reason, sql: "{CUBE}.payload_json#>> ARRAY['adjustment', 'reason']", type: string }
+      - { name: quantity, sql: "COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'quantity'], {CUBE}.payload_json#>> ARRAY['physical_count', 'quantity'])::numeric", type: number }
+      - { name: occurred_at, sql: "(COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'occurred_at'], {CUBE}.payload_json#>> ARRAY['physical_count', 'occurred_at']))::timestamptz", type: time }
+    measures:
+      - { name: inventory_changes, type: count }
+      - name: units_affected
+        sql: "ABS(COALESCE({CUBE}.payload_json#>> ARRAY['adjustment', 'quantity'], {CUBE}.payload_json#>> ARRAY['physical_count', 'quantity'])::numeric)"
+        type: sum
+        description: Absolute units mentioned by events; not net stock movement.
+      - name: physical_counts
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'type' = 'PHYSICAL_COUNT'" }]
+      - name: adjustments
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'type' = 'ADJUSTMENT'" }]
+
+  - name: square_team_members
+    title: Square team members
+    public: false
+    description: One row per Square TeamMember, active or inactive.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_team_members t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: team_member_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: display_name, sql: "NULLIF(TRIM(CONCAT_WS(' ', {CUBE}.payload_json->>'given_name', {CUBE}.payload_json->>'family_name')), '')", type: string, title: Team member }
+      - { name: status, sql: "{CUBE}.payload_json->>'status'", type: string }
+      - { name: is_owner, sql: "COALESCE(({CUBE}.payload_json->>'is_owner')::boolean, false)", type: boolean }
+      - { name: location_assignment_type, sql: "{CUBE}.payload_json#>> ARRAY['assigned_locations', 'assignment_type']", type: string }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
+    measures:
+      - { name: team_members, type: count }
+      - name: active_team_members
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'status' = 'ACTIVE'" }]
+
+  - name: square_timecards
+    title: Square timecards
+    public: false
+    description: >
+      One row per Square Timecard (actual worked interval). Unpaid breaks are
+      removed from worked hours. Open timecards have no end_at and are retained
+      for “who is clocked in” questions; they contribute no completed hours/cost.
+    meta:
+      ai_context: >
+        This is actual worked time, not the roster. completed_worked_hours uses
+        start/end minus unpaid breaks and requires a closed timecard. labour_cost
+        is a wage-rate estimate, not payroll: it excludes overtime rules, taxes,
+        super/benefits and adjustments. Square-declared cash tips are separate
+        from payment tips and must not be added without explaining the distinction.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json,
+             COALESCE(b.unpaid_break_seconds, 0) AS unpaid_break_seconds
+      FROM source_square.square_timecards t
+      LEFT JOIN LATERAL (
+        SELECT SUM(EXTRACT(EPOCH FROM ((break_value->>'end_at')::timestamptz - (break_value->>'start_at')::timestamptz))) AS unpaid_break_seconds
+        FROM jsonb_array_elements(COALESCE(t.payload_json->'breaks', '[]'::jsonb)) AS breaks(break_value)
+        WHERE COALESCE((break_value->>'is_paid')::boolean, false) = false
+          AND break_value ? 'start_at' AND break_value ? 'end_at'
+      ) b ON true
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json->>'location_id' = {square_locations}.payload_json->>'id'"
+      - name: square_team_members
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_team_members}.tenant_id AND {CUBE}.connection_id = {square_team_members}.connection_id AND {CUBE}.payload_json->>'team_member_id' = {square_team_members}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: timecard_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: team_member_id, sql: "{CUBE}.payload_json->>'team_member_id'", type: string, public: false }
+      - { name: location_id, sql: "{CUBE}.payload_json->>'location_id'", type: string, public: false }
+      - { name: status, sql: "{CUBE}.payload_json->>'status'", type: string }
+      - { name: timezone, sql: "{CUBE}.payload_json->>'timezone'", type: string }
+      - { name: job_id, sql: "{CUBE}.payload_json#>> ARRAY['wage', 'job_id']", type: string, public: false }
+      - { name: job_title, sql: "{CUBE}.payload_json#>> ARRAY['wage', 'title']", type: string }
+      - { name: wage_currency, sql: "{CUBE}.payload_json#>> ARRAY['wage', 'hourly_rate', 'currency']", type: string }
+      - { name: start_at, sql: "({CUBE}.payload_json->>'start_at')::timestamptz", type: time, title: Clocked in at }
+      - { name: end_at, sql: "({CUBE}.payload_json->>'end_at')::timestamptz", type: time, title: Clocked out at }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
+      - { name: is_open, sql: "({CUBE}.payload_json->>'end_at' IS NULL)", type: boolean }
+    measures:
+      - { name: timecards, type: count }
+      - name: completed_timecards
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'end_at' IS NOT NULL" }]
+      - name: open_timecards
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'end_at' IS NULL" }]
+      - name: completed_worked_hours
+        sql: >
+          GREATEST(0, EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'end_at')::timestamptz - ({CUBE}.payload_json->>'start_at')::timestamptz)) - unpaid_break_seconds) / 3600.0
+        type: sum
+        filters: [{ sql: "{CUBE}.payload_json->>'start_at' IS NOT NULL AND {CUBE}.payload_json->>'end_at' IS NOT NULL" }]
+      - name: estimated_labour_cost
+        sql: >
+          (GREATEST(0, EXTRACT(EPOCH FROM (({CUBE}.payload_json->>'end_at')::timestamptz - ({CUBE}.payload_json->>'start_at')::timestamptz)) - unpaid_break_seconds) / 3600.0) *
+          (({CUBE}.payload_json#>> ARRAY['wage', 'hourly_rate', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['wage', 'hourly_rate', 'currency'])))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'start_at' IS NOT NULL AND {CUBE}.payload_json->>'end_at' IS NOT NULL" }]
+      - name: declared_cash_tips
+        sql: >
+          ({CUBE}.payload_json#>> ARRAY['declared_cash_tip_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['declared_cash_tip_money', 'currency']))
+        type: sum
+        format: currency
+
+  - name: square_scheduled_shifts
+    title: Square scheduled shifts (roster)
+    public: false
+    description: >
+      One row per published Square scheduled shift: the roster as planned, not
+      time actually worked. Draft-only shifts are excluded. Actual worked time
+      lives in square_timecards.
+    meta:
+      ai_context: >
+        Use for roster, rostered hours, planned shifts, who is scheduled to
+        work and upcoming coverage questions. starts_at/ends_at are the
+        published roster times. This is planned time; for hours actually
+        worked or labour cost use square_timecards instead. rostered_hours is
+        the published shift span; unpaid breaks are not deducted from a roster.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_scheduled_shifts t
+      WHERE NOT t.tombstone
+        AND t.payload_json ? 'published_shift_details'
+        AND COALESCE((t.payload_json#>> ARRAY['published_shift_details', 'is_deleted'])::boolean, false) = false
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json#>> ARRAY['published_shift_details', 'location_id'] = {square_locations}.payload_json->>'id'"
+      - name: square_team_members
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_team_members}.tenant_id AND {CUBE}.connection_id = {square_team_members}.connection_id AND {CUBE}.payload_json#>> ARRAY['published_shift_details', 'team_member_id'] = {square_team_members}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: scheduled_shift_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: team_member_id, sql: "{CUBE}.payload_json#>> ARRAY['published_shift_details', 'team_member_id']", type: string, public: false }
+      - { name: location_id, sql: "{CUBE}.payload_json#>> ARRAY['published_shift_details', 'location_id']", type: string, public: false }
+      - { name: job_id, sql: "{CUBE}.payload_json#>> ARRAY['published_shift_details', 'job_id']", type: string, public: false }
+      - { name: shift_notes, sql: "{CUBE}.payload_json#>> ARRAY['published_shift_details', 'notes']", type: string }
+      - { name: starts_at, sql: "({CUBE}.payload_json#>> ARRAY['published_shift_details', 'start_at'])::timestamptz", type: time, title: Rostered start }
+      - { name: ends_at, sql: "({CUBE}.payload_json#>> ARRAY['published_shift_details', 'end_at'])::timestamptz", type: time, title: Rostered end }
+    measures:
+      - { name: scheduled_shifts, type: count, title: Rostered shifts }
+      - name: rostered_hours
+        sql: >
+          EXTRACT(EPOCH FROM (({CUBE}.payload_json#>> ARRAY['published_shift_details', 'end_at'])::timestamptz -
+                              ({CUBE}.payload_json#>> ARRAY['published_shift_details', 'start_at'])::timestamptz)) / 3600.0
+        type: sum
+        title: Rostered hours
+      - { name: rostered_team_members, sql: "{CUBE}.payload_json#>> ARRAY['published_shift_details', 'team_member_id']", type: count_distinct, title: Team members rostered }
+
+  - name: square_cash_drawer_shifts
+    title: Square cash drawer shifts
+    public: false
+    description: >
+      One row per Square till session. Cash variance is counted cash minus
+      expected cash on closed shifts. Payments/refunds/paid-ins/paid-outs are
+      retained separately so the expected-cash bridge remains explainable.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_cash_drawer_shifts t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json->>'location_id' = {square_locations}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: cash_drawer_shift_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: location_id, sql: "{CUBE}.payload_json->>'location_id'", type: string, public: false }
+      - { name: state, sql: "{CUBE}.payload_json->>'state'", type: string }
+      - { name: description, sql: "{CUBE}.payload_json->>'description'", type: string }
+      - { name: device_id, sql: "{CUBE}.payload_json#>> ARRAY['device', 'id']", type: string, public: false }
+      - { name: device_name, sql: "{CUBE}.payload_json#>> ARRAY['device', 'name']", type: string }
+      - { name: currency, sql: "{CUBE}.payload_json#>> ARRAY['expected_cash_money', 'currency']", type: string }
+      - { name: opened_at, sql: "({CUBE}.payload_json->>'opened_at')::timestamptz", type: time }
+      - { name: ended_at, sql: "({CUBE}.payload_json->>'ended_at')::timestamptz", type: time }
+      - { name: closed_at, sql: "({CUBE}.payload_json->>'closed_at')::timestamptz", type: time, title: Drawer closed at }
+    measures:
+      - { name: drawer_shifts, type: count }
+      - name: closed_drawer_shifts
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'CLOSED'" }]
+      - name: expected_cash
+        sql: >
+          ({CUBE}.payload_json#>> ARRAY['expected_cash_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['expected_cash_money', 'currency']))
+        type: sum
+        format: currency
+      - name: counted_cash
+        sql: >
+          ({CUBE}.payload_json#>> ARRAY['closed_cash_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['closed_cash_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'CLOSED'" }]
+      - name: cash_variance
+        sql: >
+          (({CUBE}.payload_json#>> ARRAY['closed_cash_money', 'amount'])::numeric - ({CUBE}.payload_json#>> ARRAY['expected_cash_money', 'amount'])::numeric) /
+          POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['expected_cash_money', 'currency']))
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.payload_json->>'state' = 'CLOSED'" }]
+
+  - name: square_cash_drawer_events
+    title: Square cash drawer events
+    public: false
+    description: >
+      One row per action recorded during a Square cash drawer shift: cash
+      payments/refunds, paid-in, paid-out and other drawer-affecting events.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.source_record_id,
+             t.parent_context->>'cash_drawer_shift_id' AS cash_drawer_shift_id,
+             t.payload_json
+      FROM source_square.square_cash_drawer_shift_events t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_cash_drawer_shifts
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_cash_drawer_shifts}.tenant_id AND {CUBE}.connection_id = {square_cash_drawer_shifts}.connection_id AND {CUBE}.cash_drawer_shift_id = {square_cash_drawer_shifts}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: event_source_record_id, sql: source_record_id, type: string, public: false }
+      - { name: cash_drawer_shift_id, sql: cash_drawer_shift_id, type: string, public: false }
+      - { name: event_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: event_type, sql: "{CUBE}.payload_json->>'event_type'", type: string }
+      - { name: description, sql: "{CUBE}.payload_json->>'description'", type: string }
+      - { name: team_member_id, sql: "{CUBE}.payload_json->>'team_member_id'", type: string, public: false }
+      - { name: currency, sql: "{CUBE}.payload_json#>> ARRAY['event_money', 'currency']", type: string }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time, title: Drawer event at }
+    measures:
+      - { name: drawer_events, type: count }
+      - name: event_amount
+        sql: >
+          ({CUBE}.payload_json#>> ARRAY['event_money', 'amount'])::numeric / POWER(10::numeric, source_square.square_currency_exponent({CUBE}.payload_json#>> ARRAY['event_money', 'currency']))
+        type: sum
+        format: currency
+
+  - name: square_loyalty_accounts
+    title: Square loyalty accounts
+    public: false
+    description: >
+      One row per buyer membership in the seller's Square loyalty program.
+      Current balance and lifetime points are snapshots and must not be summed over time.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_loyalty_accounts t
+      WHERE NOT t.tombstone
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: loyalty_account_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: program_id, sql: "{CUBE}.payload_json->>'program_id'", type: string, public: false }
+      - { name: customer_id, sql: "{CUBE}.payload_json#>> ARRAY['mapping', 'id']", type: string, public: false }
+      - { name: point_balance, sql: "({CUBE}.payload_json->>'balance')::numeric", type: number }
+      - { name: lifetime_points, sql: "({CUBE}.payload_json->>'lifetime_points')::numeric", type: number }
+      - { name: enrolled_at, sql: "({CUBE}.payload_json->>'enrolled_at')::timestamptz", type: time }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time }
+      - { name: updated_at, sql: "({CUBE}.payload_json->>'updated_at')::timestamptz", type: time }
+    measures:
+      - { name: loyalty_members, type: count }
+      - { name: current_points_outstanding, sql: "({CUBE}.payload_json->>'balance')::numeric", type: sum }
+      - { name: lifetime_points_earned, sql: "({CUBE}.payload_json->>'lifetime_points')::numeric", type: sum }
+      - { name: average_point_balance, sql: "({CUBE}.payload_json->>'balance')::numeric", type: avg }
+
+  - name: square_loyalty_events
+    title: Square loyalty events
+    public: false
+    description: >
+      One row per Square LoyaltyEvent. Points are signed by event meaning rather
+      than assumed from the raw payload: earning/adjustment adds its returned
+      signed points; reward creation, expiry and reward redemption remove points.
+    sql: >
+      SELECT t.namespaced_source_key, t.tenant_id, t.connection_id, t.payload_json
+      FROM source_square.square_loyalty_events t
+      WHERE NOT t.tombstone
+    joins:
+      - name: square_loyalty_accounts
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_loyalty_accounts}.tenant_id AND {CUBE}.connection_id = {square_loyalty_accounts}.connection_id AND {CUBE}.payload_json->>'loyalty_account_id' = {square_loyalty_accounts}.payload_json->>'id'"
+      - name: square_locations
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {square_locations}.tenant_id AND {CUBE}.connection_id = {square_locations}.connection_id AND {CUBE}.payload_json->>'location_id' = {square_locations}.payload_json->>'id'"
+    dimensions:
+      - { name: row_key, sql: namespaced_source_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: connection_id, sql: connection_id, type: string, public: false }
+      - { name: loyalty_event_id, sql: "{CUBE}.payload_json->>'id'", type: string, public: false }
+      - { name: loyalty_account_id, sql: "{CUBE}.payload_json->>'loyalty_account_id'", type: string, public: false }
+      - { name: location_id, sql: "{CUBE}.payload_json->>'location_id'", type: string, public: false }
+      - { name: event_type, sql: "{CUBE}.payload_json->>'type'", type: string }
+      - { name: source, sql: "{CUBE}.payload_json->>'source'", type: string }
+      - { name: order_id, sql: "COALESCE({CUBE}.payload_json#>> ARRAY['accumulate_points', 'order_id'], {CUBE}.payload_json#>> ARRAY['accumulate_promotion_points', 'order_id'], {CUBE}.payload_json#>> ARRAY['redeem_reward', 'order_id'])", type: string, public: false }
+      - { name: adjustment_reason, sql: "{CUBE}.payload_json#>> ARRAY['adjust_points', 'reason']", type: string }
+      - { name: created_at, sql: "({CUBE}.payload_json->>'created_at')::timestamptz", type: time, title: Loyalty event at }
+    measures:
+      - { name: loyalty_events, type: count }
+      - name: points_net_change
+        sql: >
+          CASE {CUBE}.payload_json->>'type'
+            WHEN 'ACCUMULATE_POINTS' THEN COALESCE(({CUBE}.payload_json#>> ARRAY['accumulate_points', 'points'])::numeric, 0)
+            WHEN 'ACCUMULATE_PROMOTION_POINTS' THEN COALESCE(({CUBE}.payload_json#>> ARRAY['accumulate_promotion_points', 'points'])::numeric, 0)
+            WHEN 'ADJUST_POINTS' THEN COALESCE(({CUBE}.payload_json#>> ARRAY['adjust_points', 'points'])::numeric, 0)
+            WHEN 'CREATE_REWARD' THEN -COALESCE(({CUBE}.payload_json#>> ARRAY['create_reward', 'points'])::numeric, 0)
+            WHEN 'DELETE_REWARD' THEN COALESCE(({CUBE}.payload_json#>> ARRAY['delete_reward', 'points'])::numeric, 0)
+            WHEN 'EXPIRE_POINTS' THEN -COALESCE(({CUBE}.payload_json#>> ARRAY['expire_points', 'points'])::numeric, 0)
+            ELSE COALESCE(({CUBE}.payload_json#>> ARRAY['other_event', 'points'])::numeric, 0)
+          END
+        type: sum
+      - name: points_earned
+        sql: >
+          COALESCE(({CUBE}.payload_json#>> ARRAY['accumulate_points', 'points'])::numeric,
+                   ({CUBE}.payload_json#>> ARRAY['accumulate_promotion_points', 'points'])::numeric, 0)
+        type: sum
+        filters: [{ sql: "{CUBE}.payload_json->>'type' IN ('ACCUMULATE_POINTS', 'ACCUMULATE_PROMOTION_POINTS')" }]
+      - name: points_expired
+        sql: "COALESCE(({CUBE}.payload_json#>> ARRAY['expire_points', 'points'])::numeric, 0)"
+        type: sum
+        filters: [{ sql: "{CUBE}.payload_json->>'type' = 'EXPIRE_POINTS'" }]
+      - name: rewards_created
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'type' = 'CREATE_REWARD'" }]
+      - name: rewards_redeemed
+        type: count
+        filters: [{ sql: "{CUBE}.payload_json->>'type' = 'REDEEM_REWARD'" }]

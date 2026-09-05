@@ -6,7 +6,7 @@ kill_signal = "SIGTERM"
 kill_timeout = 30
 
 [build]
-  dockerfile = "Dockerfile.vendor-connection-attestor"
+  dockerfile = "../../Dockerfile.vendor-connection-attestor"
 
 [env]
   ALBERT_VENDOR_ATTESTOR_HOST = "0.0.0.0"

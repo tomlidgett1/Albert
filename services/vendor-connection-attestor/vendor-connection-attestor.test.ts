@@ -139,6 +139,6 @@ test("attestor signs the DB-canonical digest, proves admission possession, and z
   assert.equal(verify(null, Buffer.from(completed.digest, "hex"), publicKey, Buffer.from(completed.signature, "base64url")), true);
   assert.equal(completed.admissionMac,
     createHmac("sha256", admissionKey).update(Buffer.from(completed.digest, "hex")).digest("hex"));
-  assert.ok(token.every((byte) => byte === 0), "incoming token buffer must be zeroed");
+  assert.ok(token.every((byte: number) => byte === 0), "incoming token buffer must be zeroed");
   assert.equal(JSON.stringify(completed.binding).includes("access-token"), false);
 });

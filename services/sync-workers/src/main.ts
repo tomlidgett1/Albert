@@ -19,11 +19,22 @@ import {
   CredentialVaultFactory,
   EnvelopeCryptography,
 } from "./credential-vault.js";
+import { FivetranDestinationStore } from "./fivetran-destinations.js";
+import { DeputyFivetranCredentialBridge, NativeFivetranCredentialBridge, StripeFivetranCredentialBridge } from "./fivetran-native-credentials.js";
+import { FivetranDestinationMaintenance } from "./fivetran-destination-maintenance.js";
+import { FivetranDeputyTokenRelay } from "./fivetran-deputy-relay.js";
+import { FivetranWorkerHttpHandler } from "./fivetran-http.js";
+import { FivetranConnectionStore } from "./fivetran-store.js";
 import { OAuthWorkerHttpHandler } from "./oauth-http.js";
 import { OAuthSessionStore } from "./oauth-session-store.js";
 import { PgTransactionalDatabase } from "./postgres.js";
 import { LeaseBoundSyncRawWriter } from "./raw-storage.js";
 import { SyncWorkerService } from "./service.js";
+import { ShopifyQLWorkerHttpHandler } from "./shopifyql-http.js";
+import { ShopifyQLRuntimeStore } from "./shopifyql-store.js";
+import { ShopifyAdminWorkerHttpHandler } from "./shopify-admin-http.js";
+import { ShopifyAdminRuntimeStore } from "./shopify-admin-store.js";
+import { XeroMcpWorkerHttpHandler } from "../../../packages/xero-mcp/src/http.js";
 import {
   OAuthTokenKekRotationService,
   PostgresOAuthTokenKekRotationStore,
@@ -193,6 +204,86 @@ export async function runSyncWorker(): Promise<void> {
     }),
     connectors: connectorFactory,
   });
+  const fivetran = config.fivetran
+    ? new FivetranWorkerHttpHandler({
+        oauthWorkerSigningSecret: config.oauthWorkerSigningSecret,
+        allowedRedirectUris: config.oauthRedirectUris,
+        config: config.fivetran,
+        store: new FivetranConnectionStore(controlDb),
+        destinations: new FivetranDestinationStore(analyticalDb),
+        // Deputy via Fivetran reuses Albert's own Deputy grant; only offered
+        // when the Deputy OAuth app is configured on this worker.
+        deputyCredentials: connectorFactory.isConfigured("deputy")
+          ? new DeputyFivetranCredentialBridge({
+              db: controlDb,
+              vault: credentialVaults.reader(),
+              connector: () => registry.get("deputy"),
+            })
+          : undefined,
+        stripeCredentials: new StripeFivetranCredentialBridge({
+          db: controlDb,
+          vault: credentialVaults.reader(),
+        }),
+        // Xero via Fivetran = Albert's SDK connector fed by this worker's token
+        // broker; the grant is the tenant's native Xero connection.
+        xeroCredentials: connectorFactory.isConfigured("xero")
+          ? new NativeFivetranCredentialBridge({
+              db: controlDb,
+              vault: credentialVaults.reader(),
+              connectorKey: "xero",
+              connector: () => registry.get("xero"),
+            })
+          : undefined,
+        // Lightspeed R-Series via Fivetran = the same SDK + token-broker shape
+        // over the tenant's native Lightspeed grant.
+        lightspeedCredentials: connectorFactory.isConfigured("lightspeed-r")
+          ? new NativeFivetranCredentialBridge({
+              db: controlDb,
+              vault: credentialVaults.reader(),
+              connectorKey: "lightspeed-r",
+              connector: () => registry.get("lightspeed-r"),
+            })
+          : undefined,
+      })
+    : null;
+  const fivetranDeputyRelay = fivetran && connectorFactory.isConfigured("deputy")
+    ? new FivetranDeputyTokenRelay(fivetran)
+    : null;
+  const fivetranDestinationMaintenance = fivetran
+    ? new FivetranDestinationMaintenance(fivetran)
+    : null;
+  const shopifyQLStore = connectorFactory.isConfigured("shopify")
+    ? new ShopifyQLRuntimeStore(controlDb)
+    : null;
+  const shopifyQL = shopifyQLStore
+    ? new ShopifyQLWorkerHttpHandler({
+        signingSecret: config.shopifyQLSigningSecret,
+        shopifyClientId: config.shopifyClientId,
+        store: shopifyQLStore,
+        connectors: registry,
+        control,
+      })
+    : null;
+  const shopifyAdminStore = connectorFactory.isConfigured("shopify")
+    ? new ShopifyAdminRuntimeStore(controlDb)
+    : null;
+  const shopifyAdmin = shopifyAdminStore
+    ? new ShopifyAdminWorkerHttpHandler({
+        signingSecret: config.shopifyAdminSigningSecret,
+        shopifyClientId: config.shopifyClientId,
+        store: shopifyAdminStore,
+        connectors: registry,
+        control,
+      })
+    : null;
+  const xeroMcp = connectorFactory.isConfigured("xero")
+    ? new XeroMcpWorkerHttpHandler({
+        signingSecret: config.oauthWorkerSigningSecret,
+        store: controlDb,
+        vault: credentialVaults.reader(),
+        connectors: registry,
+      })
+    : null;
 
   const dependenciesReady = async () => {
     await Promise.all([
@@ -202,6 +293,8 @@ export async function runSyncWorker(): Promise<void> {
       rawObjectStore.ready(),
       controlDb.query("select control_plane.assert_raw_storage_session_authority_ready('sync')"),
       tokenKekRotation.assertReady(),
+      ...(shopifyQLStore ? [shopifyQLStore.ready()] : []),
+      ...(shopifyAdminStore ? [shopifyAdminStore.ready()] : []),
       ...(vendorAttestationRelay ? [vendorAttestationRelay.ready()] : []),
       controlDb.query("select control_plane.assert_analytical_capability_issuer_ready()"),
       analyticalDb.query("select capability_internal.assert_verifier_ready()"),
@@ -252,6 +345,9 @@ export async function runSyncWorker(): Promise<void> {
               activeJobs: health.activeJobs,
               releaseSha,
               deploymentId,
+              fivetranConfigured: Boolean(fivetran),
+              stripeConfigured: connectorFactory.isConfigured("stripe"),
+              destinationMaintenance: fivetranDestinationMaintenance?.health() ?? null,
             });
             return;
           } catch {
@@ -263,6 +359,22 @@ export async function runSyncWorker(): Promise<void> {
       }
       if (pathname.startsWith("/v1/oauth/")) {
         await writeFetchResponse(await oauth.handle(await toFetchRequest(request)), response);
+        return;
+      }
+      if (fivetran && pathname.startsWith("/v1/fivetran/")) {
+        await writeFetchResponse(await fivetran.handle(await toFetchRequest(request)), response);
+        return;
+      }
+      if (shopifyQL && pathname.startsWith("/v1/shopifyql/")) {
+        await writeFetchResponse(await shopifyQL.handle(await toFetchRequest(request)), response);
+        return;
+      }
+      if (shopifyAdmin && pathname.startsWith("/v1/shopify-admin/")) {
+        await writeFetchResponse(await shopifyAdmin.handle(await toFetchRequest(request)), response);
+        return;
+      }
+      if (xeroMcp && pathname.startsWith("/v1/xero-mcp/")) {
+        await writeFetchResponse(await xeroMcp.handle(await toFetchRequest(request)), response);
         return;
       }
       json(response, 404, { error: "not_found" });
@@ -279,7 +391,9 @@ export async function runSyncWorker(): Promise<void> {
     });
   });
   server.headersTimeout = 10_000;
-  server.requestTimeout = 15_000;
+  // OAuth and both governed Shopify read planes have explicit application
+  // deadlines; leave transport headroom for their bounded vendor calls.
+  server.requestTimeout = 45_000;
   server.keepAliveTimeout = 5_000;
   server.maxRequestsPerSocket = 1_000;
   server.maxHeadersCount = 100;
@@ -396,6 +510,8 @@ export async function runSyncWorker(): Promise<void> {
         service.run(abort.signal),
         tokenKekRotation.run(abort.signal),
         ...(vendorAttestationRelay ? [vendorAttestationRelay.run(abort.signal)] : []),
+        ...(fivetranDeputyRelay ? [fivetranDeputyRelay.run(abort.signal)] : []),
+        ...(fivetranDestinationMaintenance ? [fivetranDestinationMaintenance.run(abort.signal)] : []),
       ]);
     } finally {
       clearInterval(heartbeatTimer);

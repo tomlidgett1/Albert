@@ -1,0 +1,35 @@
+views:
+  - name: square_catalogue_analytics
+    title: Square catalogue analytics
+    description: Square items, variations, categories, SKU/UPC, prices, taxability and stock/sell flags.
+    meta:
+      ai_context: >
+        Use this for catalogue setup rather than sales. ITEM is a product family;
+        ITEM_VARIATION is the SKU and owns price/inventory behaviour. Counts are
+        current catalogue snapshots. Sales by catalogue object use
+        square_product_sales_analytics.
+    cubes:
+      - join_path: square_catalog_objects
+        includes:
+          - tenant_id
+          - object_type
+          - object_name
+          - sku
+          - upc
+          - product_type
+          - is_taxable
+          - is_archived
+          - is_alcoholic
+          - track_inventory
+          - sellable
+          - stockable
+          - price_currency
+          - price
+          - created_at
+          - updated_at
+          - catalogue_objects
+          - items
+          - variations
+          - categories
+          - active_catalogue_objects
+

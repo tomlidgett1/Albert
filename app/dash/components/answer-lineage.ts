@@ -8,20 +8,20 @@ export type SafeAnswerLineage = Readonly<{
   conversationId: string;
   turnId: string;
   turnNumber: number;
-  answerState: "verified" | "qualified" | "exploratory" | "clarification" | "unavailable";
+  answerState: "verified" | "derived" | "qualified" | "exploratory" | "clarification" | "no_data" | "unavailable";
   semanticBundleHash: string | null;
   traceDigest: string;
   artifactDigest: string;
   finalizedAt: string;
   queries: readonly Readonly<{
     queryAuditId: string;
-    route: "semantic" | "source_exploration" | "sql_first";
+    route: "semantic" | "semantic_v2" | "source_exploration" | "sql_first";
     topic: string | null;
     bundleHash: string;
     registryVersion: string;
     compilerOutputHash: string;
     resultDigest: string;
-    answerState: "verified" | "qualified" | "exploratory" | "clarification" | "unavailable";
+    answerState: "verified" | "derived" | "qualified" | "exploratory" | "clarification" | "no_data" | "unavailable";
   }>[];
 }>;
 
@@ -29,9 +29,11 @@ const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 const digestPattern = /^[a-f0-9]{64}$/u;
 const answerStates = new Set<SafeAnswerLineage["answerState"]>([
   "verified",
+  "derived",
   "qualified",
   "exploratory",
   "clarification",
+  "no_data",
   "unavailable",
 ]);
 
@@ -72,7 +74,7 @@ export function parseSafeAnswerLineage(
     if (!isRecord(rawQuery)) return null;
     if (
       typeof rawQuery.queryAuditId !== "string" || !ulidPattern.test(rawQuery.queryAuditId)
-      || (rawQuery.route !== "semantic" && rawQuery.route !== "source_exploration" && rawQuery.route !== "sql_first")
+      || (rawQuery.route !== "semantic" && rawQuery.route !== "semantic_v2" && rawQuery.route !== "source_exploration" && rawQuery.route !== "sql_first")
       || (rawQuery.topic !== null && (typeof rawQuery.topic !== "string" || rawQuery.topic.length > 200))
       || typeof rawQuery.bundleHash !== "string" || !digestPattern.test(rawQuery.bundleHash)
       || typeof rawQuery.registryVersion !== "string" || rawQuery.registryVersion.length < 1 || rawQuery.registryVersion.length > 160

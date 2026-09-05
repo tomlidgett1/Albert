@@ -10,12 +10,15 @@ VALUES ('01JA0000000000000000000001','raw-storage-runtime','Raw Storage runtime'
 
 INSERT INTO control_plane.connections(
   tenant_id,connection_id,connector_key,display_name,external_account_reference,
-  status,auth_health,connection_generation
+  status,auth_health,connection_generation,
+  ingestion_activated_at,ingestion_activated_generation
 ) VALUES
   ('01JA0000000000000000000001','01JA0000000000000000000002','deputy',
-   'Raw Storage ingest','raw-storage-ingest','connected','healthy',1),
+   'Raw Storage ingest','raw-storage-ingest','connected','healthy',1,
+   clock_timestamp(),1),
   ('01JA0000000000000000000001','01JA0000000000000000000003','deputy',
-   'Raw Storage deletion','raw-storage-deletion','connected','healthy',1);
+   'Raw Storage deletion','raw-storage-deletion','connected','healthy',1,
+   NULL,NULL);
 
 INSERT INTO control_plane.sync_runs(
   tenant_id,sync_run_id,connection_id,job_type,stream,status,attempt_number,
