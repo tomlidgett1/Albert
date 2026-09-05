@@ -33,7 +33,9 @@ test("renders a real built dashboard", async ({ page }) => {
   });
 
   await page.goto("/dash");
-  await page.getByRole("button", { name: "Dashboard", exact: true }).click();
+  // Dashboards, plural (ADR 0134): the tab is the list; open the first row.
+  await page.getByRole("button", { name: "Dashboards", exact: true }).click();
+  await page.getByRole("list", { name: "Your dashboards" }).getByRole("button").first().click();
   const tiles = Array.isArray(dashboard.tiles) ? dashboard.tiles : [];
   expect(tiles.length).toBeGreaterThan(0);
   const firstTitle = String((tiles[0] as Record<string, unknown>).title);

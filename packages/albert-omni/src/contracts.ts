@@ -4,6 +4,8 @@ import {
   CLAUDE_SONNET_5_MODEL_ID,
 } from "../../shared/src/agent-runtime.js";
 import type { CubeFilter, CubeQuery } from "../../albert-v3/src/cube/types.js";
+import { codexPriorResultSchema } from "../../albert-codex/src/contracts.js";
+import { resultSemanticsSchema } from "../../shared/src/result-semantics.js";
 
 export const ALBERT_OMNI_RUNTIME = "omni-agent" as const;
 export const ALBERT_OMNI_ANALYTICAL_RUNTIME = "cube-omni-v1" as const;
@@ -26,6 +28,13 @@ export const ALBERT_OMNI_ANALYSIS_TIMEOUT_MS = 720_000 as const;
  */
 export const ALBERT_OMNI_MESSAGE_MAX_CHARS = 32_000 as const;
 export const ALBERT_OMNI_ANSWER_MAX_CHARS = 120_000 as const;
+export const ALBERT_OMNI_REQUEST_MAX_BYTES = 180 * 1024;
+export const ALBERT_OMNI_CONTEXT_MAX_BYTES = 160 * 1024;
+
+export const omniPriorResultSchema = codexPriorResultSchema.extend({
+  semantics: resultSemanticsSchema.optional(),
+  rowFormats: z.array(z.object({ type: z.enum(["number", "currency", "percent"]), currency: z.string().regex(/^[A-Z]{3}$/u).optional(), percentScale: z.enum(["ratio", "percent"]).optional() }).strict().nullable()).max(20).optional(),
+});
 
 const ulidSchema = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u);
 const roleSchema = z.enum(["owner", "manager", "bookkeeper", "internal_operator"]);
@@ -37,6 +46,10 @@ export const omniConversationRequestSchema = z.object({
   replaceTurnId: ulidSchema.optional(),
   /** Runs the turn in dashboard-architect mode (ADR 0129). */
   dashboardBuild: z.boolean().optional(),
+  /** With dashboardBuild: the lean one-element edit mode (ADR 0134). */
+  dashboardEdit: z.boolean().optional(),
+  /** The edited element's topic (Cube view), inlined so no model search is needed. */
+  dashboardEditTopic: z.string().regex(/^[a-z][a-z0-9_]{0,159}$/u).optional(),
 }).strict();
 
 export const omniPriorMessageSchema = z.object({
@@ -61,6 +74,7 @@ export const omniServiceTurnSchema = z.object({
   turnId: ulidSchema,
   message: z.string().trim().min(1).max(ALBERT_OMNI_MESSAGE_MAX_CHARS),
   priorConversation: z.array(omniPriorMessageSchema).max(24),
+  priorResults: z.array(omniPriorResultSchema).max(8).optional(),
   activeConnectors: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u)).max(24),
   connectorFreshness: z.array(omniConnectorFreshnessSchema).max(80),
   businessContext: z.string().max(20_000).optional(),
@@ -68,7 +82,8 @@ export const omniServiceTurnSchema = z.object({
   ownerName: z.string().trim().min(1).max(120).optional(),
   organisationName: z.string().trim().min(1).max(160).optional(),
   cubeBearer: z.string().regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u).max(12_000),
-  model: z.string().regex(/^[a-zA-Z0-9._-]{1,120}$/u),
+  model: z.string().regex(/^[a-zA-Z0-9._-]{1,120}$/u)
+    .refine((value) => (ALBERT_OMNI_MODEL_IDS as readonly string[]).includes(value), "Unsupported Omni model."),
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]),
   fastMode: z.boolean(),
   /**
@@ -79,6 +94,15 @@ export const omniServiceTurnSchema = z.object({
    * the runtime must deploy before any caller sends it.
    */
   dashboardBuild: z.boolean().optional(),
+  /**
+   * Element edit (ADR 0134): with dashboardBuild, the architect edits ONE
+   * existing element — no task list, no design pass, the element's topic
+   * definitions inlined, one query and one single-tile compose. Optional so
+   * existing callers are unaffected; the runtime must deploy before any
+   * caller sends it.
+   */
+  dashboardEdit: z.boolean().optional(),
+  dashboardEditTopic: z.string().regex(/^[a-z][a-z0-9_]{0,159}$/u).optional(),
   /**
    * Delivery channel. "imessage" appends a text-message answer contract to
    * the analyst instructions (no tables/headings/links — short bold-accented
@@ -210,7 +234,9 @@ export const omniComposeDashboardInputSchema = z.object({
     }).strict()).max(6).nullable(),
     stacked: z.boolean().nullable(),
     orientation: z.enum(["vertical", "horizontal"]).nullable(),
-  }).strict()).min(3).max(12),
+  // A whole build composes several tiles; an element edit (ADR 0134)
+  // composes exactly the one replacement, so the floor is one.
+  }).strict()).min(1).max(12),
 }).strict();
 
 export type OmniComposeDashboardInput = z.infer<typeof omniComposeDashboardInputSchema>;
@@ -238,6 +264,8 @@ export const omniSemanticTurnResultSchema = z.object({
   modelRequests: z.number().int().min(0),
   durationMs: z.number().int().min(0).nullable(),
   usage: omniTurnUsageSchema.optional(),
+  buildHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+  semanticModelDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
 }).strict();
 
 export type OmniSemanticTurnResult = z.infer<typeof omniSemanticTurnResultSchema>;

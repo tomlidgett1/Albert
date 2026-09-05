@@ -19,6 +19,8 @@ import type {
   TraceConnector,
   TraceProvenance,
   TraceTableColumn,
+  ResultSemantics,
+  TraceRowFormat,
 } from "../../../shared/src/index.js";
 import { sanitizeTraceText } from "../../../shared/src/index.js";
 import type { StoredTableResult, V3TurnContext } from "./context.js";
@@ -40,6 +42,8 @@ export type PriorTurnResult = Readonly<{
   queryYaml?: string;
   timeRangeLabel?: string;
   provenance?: TraceProvenance;
+  semantics?: ResultSemantics;
+  rowFormats?: readonly (TraceRowFormat | null)[];
 }>;
 
 /** How many prior results, and how many rows each, the model is shown. */
@@ -196,7 +200,9 @@ export function priorResultsFromTraceEvents(
       // The query event that produced this table (Cube tables emit query then table with the same view).
       const provenance = table.provenance && typeof table.provenance === "object" ? table.provenance as TraceProvenance : undefined;
       const view = provenance?.view?.name;
-      const query = queries.find((q) => typeof q.view === "string" && q.view === view && typeof q.queryYaml === "string");
+      const query = queries.find((q) => q.resultId === resultId && typeof q.queryYaml === "string")
+        ?? queries.find((q) => typeof q.view === "string" && q.view === view && typeof q.queryYaml === "string");
+      const semantics = table.semantics as ResultSemantics | undefined;
       out.push({
         resultId,
         turnsAgo: turn.turnsAgo,
@@ -204,7 +210,9 @@ export function priorResultsFromTraceEvents(
         presentation: table.presentation === "answer" ? "answer" : "evidence",
         columns,
         rows,
-        rowCount: rows.length,
+        rowCount: typeof query?.rowCount === "number" ? query.rowCount : semantics?.returnedRows ?? rows.length,
+        ...(semantics ? { semantics: { ...semantics, ...(rows.length < semantics.returnedRows ? { completeness: "limited" as const } : {}), returnedRows: rows.length } } : {}),
+        ...(Array.isArray(table.rowFormats) ? { rowFormats: (table.rowFormats as (TraceRowFormat | null)[]).slice(0, rows.length) } : {}),
         ...(view ? { view } : {}),
         ...(provenance?.sources?.[0]?.connector ? { connector: provenance.sources[0].connector } : {}),
         ...(query && typeof query.queryYaml === "string" ? { queryYaml: query.queryYaml } : {}),

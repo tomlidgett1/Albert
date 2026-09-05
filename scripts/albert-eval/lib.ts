@@ -255,6 +255,12 @@ export type EvalTurnRecord = {
   fastMode?: boolean;
   /** Non-secret provider identity boundary used for this model-backed turn. */
   authenticationMode?: "api" | "chatgpt";
+  attemptNumber?: number;
+  totalDurationMs?: number;
+  runtimeBuildHash?: string;
+  semanticDigests?: string[];
+  claims?: import("../../packages/shared/src/index.js").TraceAnswerEvent["claims"];
+  deterministic?: { pass: boolean; issues: string[] };
 };
 
 const MAX_GOVERNED_QUERIES_PER_ANSWER = 8;

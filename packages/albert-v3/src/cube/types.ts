@@ -153,4 +153,15 @@ export type CubeSecurityContext = Readonly<{
     conversation_id?: never;
     turn_id?: never;
   }>
+  /**
+   * Catalogue-only: no lease, so the data API refuses every query (Cube's
+   * prepareConnection grants no capability) while /v1/meta — the model's
+   * public surface — still answers. Used by the element editor's field list.
+   */
+  | Readonly<{
+    conversation_id?: never;
+    turn_id?: never;
+    dashboard_tile_id?: never;
+    dashboard_refresh_lease_id?: never;
+  }>
 );

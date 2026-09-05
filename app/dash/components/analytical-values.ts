@@ -90,7 +90,7 @@ export function formatTraceCell(value: TraceCell, column: TraceTableColumn, rowF
   // A pivoted table stacks measures with different units in the same column,
   // so the row's own format outranks the column type for its numeric cells.
   if (rowFormat && numericColumnTypes.has(column.type)) {
-    column = { ...column, type: rowFormat.type, currency: rowFormat.currency };
+    column = { ...column, type: rowFormat.type, currency: rowFormat.currency, percentScale: rowFormat.percentScale };
   }
   if (value === null) return "—";
   if (typeof value === "string" && column.type === "date") return formatDate(value, false);
@@ -116,7 +116,9 @@ export function formatTraceCell(value: TraceCell, column: TraceTableColumn, rowF
   }
 
   if (column.type === "percent") {
-    const normalized = Math.abs(numericValue) <= 1 ? numericValue : numericValue / 100;
+    const normalized = column.percentScale === "percent" ? numericValue / 100
+      : column.percentScale === "ratio" ? numericValue
+        : Math.abs(numericValue) <= 1 ? numericValue : numericValue / 100;
     return new Intl.NumberFormat("en-AU", {
       style: "percent",
       maximumFractionDigits: 2,

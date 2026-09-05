@@ -122,6 +122,7 @@ jobs:
       ALBERT_TRANSFORM_CONTROL_DB_PASSWORD: ci-control-transform-password-0000001
       ALBERT_SEMANTIC_CONTROL_DB_PASSWORD: ci-control-semantic-password-00000001
       ALBERT_ANTHROPIC_CONTROL_DB_PASSWORD: ci-control-anthropic-password-0000001
+      ALBERT_OMNI_CONTROL_DB_PASSWORD: ci-control-omni-password-00000000001
       ALBERT_OPERATOR_DIAGNOSTIC_CONTROL_DB_PASSWORD: ci-control-diagnostic-password-000001
       ALBERT_WEBHOOK_CONTROL_DB_PASSWORD: ci-control-webhook-password-00000001
       ALBERT_DELETION_CONTROL_DB_PASSWORD: ci-control-deletion-password-0000001

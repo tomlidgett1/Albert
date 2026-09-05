@@ -12,7 +12,9 @@ import type {
   TraceTasksEvent,
 } from "../../../packages/shared/src/agent-runtime";
 import { formatTraceCell } from "./analytical-values";
+import { TileTable } from "./DashboardTileView";
 import { renderAssistantMarkdown } from "../lib/render-assistant-markdown";
+import { dashboardActivityLabel } from "../lib/dashboard-build-view";
 import styles from "./omni-trace.module.css";
 
 const ResultChart = lazy(() => import("./AnalyticalTrace").then((module) => ({
@@ -27,7 +29,7 @@ type OmniBlock =
   | Readonly<{ kind: "tasks"; id: string; event: TraceTasksEvent }>
   | Readonly<{ kind: "prose"; id: string; text: string; warning?: boolean }>
   | { kind: "research"; id: string; entries: OmniResearchEntry[]; stepCount: number }
-  | { kind: "query"; id: string; query: TraceQueryEvent; table?: TraceTableEvent }
+  | { kind: "query"; id: string; query: TraceQueryEvent; table?: TraceTableEvent; pivot?: boolean }
   | Readonly<{ kind: "chart"; id: string; chart: TraceChartEvent; table?: TraceTableEvent }>;
 
 type OmniModel = Readonly<{
@@ -40,14 +42,14 @@ type OmniModel = Readonly<{
 
 const NUMERIC_COLUMN_TYPES = new Set(["number", "currency", "percent"]);
 
-function buildOmniModel(events: readonly TraceEvent[]): OmniModel {
+function buildOmniModel(events: readonly TraceEvent[], dashboardMode = false): OmniModel {
   const blocks: OmniBlock[] = [];
   const tablesByResultId = new Map<string, TraceTableEvent>();
   let tasksBlock: { kind: "tasks"; id: string; event: TraceTasksEvent } | undefined;
   let answer: OmniModel["answer"];
   let clarification: OmniModel["clarification"];
   let error: string | undefined;
-  let runningLabel = "Thinking";
+  let runningLabel = dashboardMode ? "Reading your data model" : "Thinking";
 
   const openResearch = (): Extract<OmniBlock, { kind: "research" }> => {
     const last = blocks.at(-1);
@@ -63,6 +65,13 @@ function buildOmniModel(events: readonly TraceEvent[]): OmniModel {
   };
 
   for (const event of events) {
+    // Dashboard builds narrate as design work: "Determining the best
+    // elements", "Creating element: Revenue trend" — every step that says
+    // something about the build updates the live thinking state.
+    if (dashboardMode) {
+      const activity = dashboardActivityLabel(event);
+      if (activity) runningLabel = activity;
+    }
     switch (event.type) {
       case "tasks": {
         if (tasksBlock) {
@@ -103,12 +112,14 @@ function buildOmniModel(events: readonly TraceEvent[]): OmniModel {
       }
       case "dashboard_plan": {
         // A build turn's composition reads as one prose line in the trail;
-        // the dashboard itself is the product, over on the Dashboard tab.
-        const group = openResearch();
-        group.entries.push({
+        // the dashboard itself is the product, over in the build panel.
+        blocks.push({
           kind: "prose",
           id: event.id,
-          text: `Composed the dashboard “${event.dashboardTitle}” — ${event.tiles.length} tiles · ${event.timeframe}.`,
+          text: event.tiles.length === 1
+            // An element edit composes exactly the replacement (ADR 0134).
+            ? `Reworked the element “${event.tiles[0]!.title}” · ${event.timeframe}.`
+            : `Composed the dashboard “${event.dashboardTitle}” — ${event.tiles.length} elements · ${event.timeframe}.`,
         });
         break;
       }
@@ -124,7 +135,14 @@ function buildOmniModel(events: readonly TraceEvent[]): OmniModel {
         break;
       }
       case "query": {
-        blocks.push({ kind: "query", id: event.id, query: event });
+        // ComposePivotTable reports itself as a derived result: its card is
+        // the pivot, open by default, not a collapsed evidence query.
+        blocks.push({
+          kind: "query",
+          id: event.id,
+          query: event,
+          ...(event.view === "derived_result" ? { pivot: true } : {}),
+        });
         break;
       }
       case "table": {
@@ -149,7 +167,8 @@ function buildOmniModel(events: readonly TraceEvent[]): OmniModel {
       }
       case "progress": {
         if (event.status === "running") {
-          runningLabel = event.label;
+          // Dashboard mode already mapped this label above.
+          if (!dashboardMode) runningLabel = event.label;
         } else if (event.status === "warning") {
           blocks.push({
             kind: "prose",
@@ -208,8 +227,8 @@ function WorkHeader({ events, working }: {
   events: readonly TraceEvent[];
   working: boolean;
 }) {
-  const mountedAtRef = useRef(Date.now());
-  const [now, setNow] = useState(() => Date.now());
+  const [mountedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(mountedAt);
   useEffect(() => {
     if (!working) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -218,8 +237,8 @@ function WorkHeader({ events, working }: {
   const firstAt = events.length > 0 ? Date.parse(events[0]!.occurredAt) : Number.NaN;
   const lastAt = events.length > 0 ? Date.parse(events[events.length - 1]!.occurredAt) : Number.NaN;
   const startedAt = Number.isFinite(firstAt)
-    ? (working ? Math.min(firstAt, mountedAtRef.current) : firstAt)
-    : mountedAtRef.current;
+    ? (working ? Math.min(firstAt, mountedAt) : firstAt)
+    : mountedAt;
   const endedAt = working ? now : (Number.isFinite(lastAt) ? lastAt : now);
   const duration = formatWorkDuration(Math.max(0, endedAt - startedAt));
   return (
@@ -366,7 +385,105 @@ function describeChipFilter(filter: NonNullable<TraceTableEvent["provenance"]["f
   return { field: filter.label, condition: text };
 }
 
-function QueryCard({ block }: { block: Extract<OmniBlock, { kind: "query" }> }) {
+type AddToDashboard = (table: TraceTableEvent) => void | Promise<void>;
+
+function PinButton({ table, onAddToDashboard }: {
+  table: TraceTableEvent | undefined;
+  onAddToDashboard: AddToDashboard | undefined;
+}) {
+  const [state, setState] = useState<"idle" | "busy" | "done" | "failed">("idle");
+  if (!table?.dashboardReplay || !onAddToDashboard) return null;
+  return (
+    <button
+      className={styles.pinButton}
+      type="button"
+      data-state={state}
+      disabled={state === "busy"}
+      aria-label={state === "done" ? "Added to dashboard" : "Add to dashboard"}
+      title={state === "done" ? "Added to dashboard" : "Add to dashboard"}
+      onClick={(clickEvent) => {
+        clickEvent.stopPropagation();
+        setState("busy");
+        void Promise.resolve(onAddToDashboard(table)).then(
+          () => setState("done"),
+          () => setState("failed"),
+        );
+      }}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        {state === "done"
+          ? <path d="m5 12.5 4.5 4.5L19 7" />
+          : <><rect x="3.5" y="4" width="17" height="16" rx="2.5" /><path d="M12 9v6M9 12h6" /></>}
+      </svg>
+      <span>{state === "done" ? "Added" : state === "failed" ? "Try again" : "Add to dashboard"}</span>
+    </button>
+  );
+}
+
+/**
+ * A composed pivot: the product of the turn, so it opens expanded, drawn by
+ * the dashboard's own pivot renderer (frozen metric column, right-aligned
+ * figures, row units), with a one-click pin to the dashboard.
+ */
+function PivotCard({ block, onAddToDashboard }: {
+  block: Extract<OmniBlock, { kind: "query" }>;
+  onAddToDashboard: AddToDashboard | undefined;
+}) {
+  const [open, setOpen] = useState(true);
+  const { query, table } = block;
+  const title = query.name ?? query.topic;
+  const metricCount = table?.rows.length ?? query.rowCount;
+  const periodCount = table ? Math.max(0, table.columns.length - 1) : undefined;
+  const summary = [
+    metricCount !== undefined ? `${metricCount} ${metricCount === 1 ? "metric" : "metrics"}` : null,
+    periodCount !== undefined ? `${periodCount} ${periodCount === 1 ? "period" : "periods"}` : null,
+  ].filter(Boolean).join(" × ");
+  return (
+    <section className={styles.pivotCard} aria-label={`Pivot: ${title}`} data-open={open}>
+      <div className={styles.pivotHeader}>
+        <button
+          className={styles.stepHeader}
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <Chevron open={open} className={styles.stepChevron} />
+          <svg className={styles.stepIcon} viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3.5" y="4.5" width="17" height="15" rx="1.6" />
+            <path d="M3.5 9.5h17M9.5 4.5v15M3.5 14.5h17" />
+          </svg>
+          <span className={styles.stepTool}>Pivot</span>
+          <span className={styles.stepLabel}>{title}</span>
+          {summary ? <span className={styles.stepSummary}>{summary}</span> : null}
+        </button>
+        <PinButton table={table} onAddToDashboard={onAddToDashboard} />
+      </div>
+      <div className={styles.stepBody} data-open={open}>
+        <div className={styles.stepBodyInner}>
+          {table ? (
+            <div className={styles.pivotBody}>
+              <TileTable
+                data={{
+                  columns: table.columns,
+                  rows: table.rows,
+                  ...(table.rowFormats ? { rowFormats: table.rowFormats } : {}),
+                  pivot: true,
+                }}
+                ariaLabel={title}
+              />
+            </div>
+          ) : (
+            <div className={styles.queryFooter}>Composing…</div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function QueryCard({ block }: {
+  block: Extract<OmniBlock, { kind: "query" }>;
+}) {
   // Evidence stays a click away: the answer carries the story, so query
   // cards open collapsed with their name, topic and row count on show.
   const [open, setOpen] = useState(false);
@@ -546,12 +663,16 @@ function Prose({ text, warning, onFollowUp }: {
   );
 }
 
-export default function OmniTrace({ events, streaming = false, onFollowUp }: {
+export default function OmniTrace({ events, streaming = false, dashboardMode = false, onFollowUp, onAddToDashboard }: {
   events: readonly TraceEvent[];
   streaming?: boolean;
+  /** Dashboard-architect turns narrate as design work ("Creating element: …"). */
+  dashboardMode?: boolean;
   onFollowUp?: (prompt: string) => void;
+  /** Pins a replayable governed table (a query result or a composed pivot). */
+  onAddToDashboard?: AddToDashboard;
 }) {
-  const model = useMemo(() => buildOmniModel(events), [events]);
+  const model = useMemo(() => buildOmniModel(events, dashboardMode), [events, dashboardMode]);
   const showThinking = streaming && !model.answer && !model.error && !model.clarification;
   return (
     <div className={styles.root}>
@@ -565,7 +686,9 @@ export default function OmniTrace({ events, streaming = false, onFollowUp }: {
           case "research":
             return <ResearchGroup block={block} key={block.id} />;
           case "query":
-            return <QueryCard block={block} key={block.id} />;
+            return block.pivot
+              ? <PivotCard block={block} onAddToDashboard={onAddToDashboard} key={block.id} />
+              : <QueryCard block={block} key={block.id} />;
           case "chart":
             return (
               <div className={styles.chartCard} key={block.id}>

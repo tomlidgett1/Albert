@@ -22,6 +22,9 @@ export type CodexRuntimeConfig = Readonly<{
   omniOpenAi?: Readonly<{ apiKey: string; baseUrl: string }>;
   /** Native Anthropic Messages credentials for Omni turns on Claude models. */
   omniAnthropic?: Readonly<{ apiKey: string; baseUrl: string }>;
+  omniJobDatabaseUrl?: string;
+  omniJobDirectory?: string;
+  omniDurabilityRequired?: boolean;
 }>;
 
 function required(source: NodeJS.ProcessEnv, key: string): string {
@@ -104,6 +107,13 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
       && source.ALBERT_ANTHROPIC_ZDR_APPROVED === "true");
   const anthropicApiKey = anthropicApproved ? source.ANTHROPIC_API_KEY?.trim() : undefined;
   const anthropicBaseUrl = source.ANTHROPIC_BASE_URL?.trim() || ANTHROPIC_API_BASE_URL;
+  const omniJobDatabaseUrl = source.ALBERT_OMNI_JOB_DATABASE_URL?.trim();
+  if (omniJobDatabaseUrl) {
+    const url = new URL(omniJobDatabaseUrl);
+    if (!["postgres:", "postgresql:"].includes(url.protocol)) throw new Error("ALBERT_OMNI_JOB_DATABASE_URL must be a Postgres URL.");
+    if (source.NODE_ENV === "production" && !decodeURIComponent(url.username).startsWith("albert_omni_control_runtime")) throw new Error("Omni job storage requires its dedicated runtime identity.");
+    if (source.NODE_ENV === "production" && !["require", "verify-ca", "verify-full"].includes(url.searchParams.get("sslmode") ?? "")) throw new Error("Production Omni job storage requires TLS.");
+  }
   return Object.freeze({
     port,
     listenHost,
@@ -115,6 +125,8 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
     pinnedCliVersion: ALBERT_CODEX_PINNED_CLI_VERSION,
     releaseSha,
     deploymentId,
+    omniDurabilityRequired: source.NODE_ENV === "production",
+    ...(omniJobDatabaseUrl ? { omniJobDatabaseUrl } : source.NODE_ENV !== "production" ? { omniJobDirectory: source.ALBERT_OMNI_JOB_DIRECTORY?.trim() || join(process.cwd(), ".albert-build", `omni-jobs-${port}`) } : {}),
     ...(omniApiKey ? {
       omniOpenAi: Object.freeze({
         apiKey: omniApiKey,

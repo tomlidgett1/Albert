@@ -8,6 +8,8 @@
  * the "why" line come only from the brief or research highlight. The playbook
  * never invents numbers.
  */
+import type { TraceConnector } from "../../../packages/shared/src/index.js";
+import { toolForDomain } from "./tools.js";
 
 export const ANALYTICAL_MOVES = [
   "decompose",
@@ -62,6 +64,8 @@ export type RecommendedQuestion = Readonly<{
   why: string;
   move: AnalyticalMove;
   domain: AnalysisDomain;
+  /** The connected tool the question reads (the logo beside it); null when none of them can. */
+  tool?: TraceConnector | null;
   fromTitle: string;
   fromConversationId: string | null;
 }>;
@@ -361,7 +365,7 @@ function addFollowUps(
   });
 }
 
-function inferMove(question: string): AnalyticalMove {
+export function inferMove(question: string): AnalyticalMove {
   if (/\b(markdown|reorder|keep|chase|roster|clear|discount)\b/iu.test(question)) return "act";
   if (/\b(why|what(?:'s| is) dragging|explain|drove|drive|caused|cause)\b/iu.test(question)) return "diagnose";
   if (/\b(compar|versus|vs|last year|prior|same period)\b/iu.test(question)) return "compare";
@@ -782,6 +786,7 @@ export function buildPlaybookRecommendations(
     why: item.why,
     move: item.move,
     domain: item.domain,
+    tool: toolForDomain(item.domain, connectors),
     fromTitle: item.fromTitle,
     fromConversationId: item.fromConversationId,
   })));
@@ -793,6 +798,7 @@ export const recommendedQuestionSchemaShape = Object.freeze({
   why: true,
   move: true,
   domain: true,
+  tool: true,
   fromTitle: true,
   fromConversationId: true,
 });

@@ -28,7 +28,7 @@ function renderEmphasis(escaped: string): string {
 }
 
 function renderBareUrls(escaped: string, linkMode: LinkMode): string {
-  const urlPattern = /https?:\/\/[^\s<]+/g;
+  const urlPattern = /https?:\/\/[^\s<\u0000]+/g;
   if (linkMode === "text") return escaped.replace(urlPattern, "");
   return escaped.replace(urlPattern, (url) => {
     const trimmedUrl = url.replace(/[.,;:!?)]$/, "");
@@ -59,17 +59,18 @@ function renderTextSegment(segment: string, linkMode: LinkMode): string {
 }
 
 function renderInlineMarkdown(value: string, linkMode: LinkMode): string {
-  const codePattern = /`([^`]+?)`/g;
-  let output = "";
-  let lastIndex = 0;
-  for (const match of value.matchAll(codePattern)) {
-    const index = match.index ?? 0;
-    output += renderTextSegment(value.slice(lastIndex, index), linkMode);
-    output += `<code>${escapeHtml(match[1]!)}</code>`;
-    lastIndex = index + match[0].length;
-  }
-  output += renderTextSegment(value.slice(lastIndex), linkMode);
-  return output;
+  // Protect code and escaped punctuation before emphasis/link parsing. The
+  // sentinel cannot collide with input, and restored atoms are HTML-escaped.
+  // This keeps governed names such as "A*B" literal inside a composed table.
+  const atoms: string[] = [];
+  const protectedText = value.replaceAll("\u0000", "\uFFFD")
+    .replace(/`([^`]+?)`|\\([\\`*_{}[\]()<>|#+.!-])/gu, (_match, code: string | undefined, literal: string | undefined) => {
+      const index = atoms.length;
+      atoms.push(code !== undefined ? `<code>${escapeHtml(code)}</code>` : escapeHtml(literal!));
+      return `\u0000${index}\u0000`;
+    });
+  return renderTextSegment(protectedText, linkMode)
+    .replace(/\u0000(\d+)\u0000/gu, (_match, index: string) => atoms[Number(index)]!);
 }
 
 function splitTableRow(line: string): string[] {
@@ -85,7 +86,7 @@ function splitTableRow(line: string): string[] {
 }
 
 function isTableRow(line: string): boolean {
-  return splitTableRow(line).length >= 2;
+  return splitTableRow(line).length >= 1;
 }
 
 /**

@@ -520,6 +520,8 @@ export type TraceTableColumn = Readonly<{
   type: "string" | "number" | "currency" | "percent" | "date" | "datetime";
   /** ISO-4217 code proven by query validation; omitted when the currency is unknown. */
   currency?: string;
+  /** Explicit units avoid treating 0.5 percentage points as a 50% ratio. */
+  percentScale?: "ratio" | "percent";
 }>;
 
 /**
@@ -532,6 +534,7 @@ export type TraceRowFormat = Readonly<{
   type: "number" | "currency" | "percent";
   /** ISO-4217 code proven by query validation; omitted when the currency is unknown. */
   currency?: string;
+  percentScale?: "ratio" | "percent";
 }>;
 
 /**
@@ -648,6 +651,8 @@ export interface TraceTableEvent extends TraceEventBase {
   rowFormats?: readonly (TraceRowFormat | null)[];
   resultId: string;
   provenance: TraceProvenance;
+  /** Complete-result coverage and key identity, authored by the executor. */
+  semantics?: import("./result-semantics.js").ResultSemantics;
   /** Answer tables render beside prose; evidence tables remain in the query trail. */
   presentation?: "evidence" | "answer";
   /**

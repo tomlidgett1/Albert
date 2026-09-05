@@ -15,11 +15,18 @@ import {
   type OmniComposeDashboardInput,
 } from "../../packages/albert-omni/src/contracts.js";
 import { validateOmniDashboardPlan } from "../../packages/albert-omni/src/runtime.js";
+import { readFileSync } from "node:fs";
 import {
+  DASHBOARD_EDIT_EFFORT,
+  DASHBOARD_EDIT_FAST_MODE,
   buildDashboardBriefMessage,
+  dashboardBriefDisplayText,
+  queryYamlTopic,
   dashboardPlanEventSchema,
   displayFromPlanTile,
   packDashboardLayouts,
+  parseDashboardBriefMessage,
+  replaceTileInLayouts,
 } from "../../services/dashboard-build/src/contracts.js";
 import {
   dashboardTileDisplaySchema,
@@ -55,6 +62,36 @@ test("omni service turn accepts dashboardBuild and stays strict", () => {
     false,
     "unknown fields must still be rejected",
   );
+});
+
+test("the lean element-edit mode travels on the turn with its topic, and the brief route picks it", () => {
+  const edit = omniServiceTurnSchema.safeParse({
+    ...baseTurn,
+    dashboardBuild: true,
+    dashboardEdit: true,
+    dashboardEditTopic: "workshop_analytics",
+  });
+  assert.equal(edit.success, true);
+  assert.equal(omniServiceTurnSchema.safeParse({ ...baseTurn, dashboardEditTopic: "Bad Topic!" }).success, false);
+  assert.equal(
+    omniConversationRequestSchema.safeParse({ message: "edit it", dashboardBuild: true, dashboardEdit: true, dashboardEditTopic: "sales_analytics" }).success,
+    true,
+  );
+  assert.equal(queryYamlTopic("measures:\n  - workshop_analytics.workorder_count\ntimeDimensions:\n  - dimension: workshop_analytics.checked_in_at"), "workshop_analytics");
+  assert.equal(queryYamlTopic("timeDimensions:\n  - dimension: sales_analytics.completed_at\n    granularity: day"), "sales_analytics");
+  assert.equal(queryYamlTopic(null), null);
+  assert.equal(DASHBOARD_EDIT_EFFORT, "low");
+  assert.equal(DASHBOARD_EDIT_FAST_MODE, true);
+  const buildRoute = readFileSync(new URL("../../app/api/dashboard/build/route.ts", import.meta.url), "utf8");
+  assert.match(buildRoute, /preferences: editTile\s*\?\s*\{\s*model: DASHBOARD_EDIT_MODEL/u);
+  assert.match(buildRoute, /queryYamlTopic\(editTile\.queryYaml\)/u);
+  const runtime = readFileSync(new URL("../../packages/albert-omni/src/runtime.ts", import.meta.url), "utf8");
+  assert.match(runtime, /const dashboardEditMode = dashboardMode && turn\.dashboardEdit === true;/u);
+  assert.match(runtime, /if \(editTopicView\) inspectedTopics\.add\(editTopicView\.name\);/u, "the inlined topic passes the query guard");
+  assert.match(runtime, /tools: dashboardEditMode\s*\?\s*\[\s*searchSemanticModel,\s*fetchFieldValues,\s*generateSemanticQuery,\s*composeDashboard,\s*getCurrentTime,\s*\]/u, "no task list, derive or pivot tools in edit mode");
+  const prompts = readFileSync(new URL("../../packages/albert-omni/src/prompts.ts", import.meta.url), "utf8");
+  assert.match(prompts, /Call GenerateSemanticQuery ONCE/u);
+  assert.match(prompts, /Call ComposeDashboard with exactly ONE tile/u);
 });
 
 test("omni web request accepts dashboardBuild and stays strict", () => {
@@ -158,9 +195,23 @@ const goodPlan: OmniComposeDashboardInput = {
 test("compose schema parses a full plan and enforces tile bounds", () => {
   assert.equal(omniComposeDashboardInputSchema.safeParse(goodPlan).success, true);
   assert.equal(
-    omniComposeDashboardInputSchema.safeParse({ ...goodPlan, tiles: goodPlan.tiles.slice(0, 2) }).success,
+    omniComposeDashboardInputSchema.safeParse({ ...goodPlan, tiles: [] }).success,
     false,
-    "a dashboard needs at least three tiles",
+    "a plan needs at least one tile",
+  );
+  // An element edit (ADR 0134) composes exactly the one replacement tile.
+  assert.equal(
+    omniComposeDashboardInputSchema.safeParse({ ...goodPlan, tiles: goodPlan.tiles.slice(0, 1) }).success,
+    true,
+    "a single-tile plan is an element edit",
+  );
+  assert.equal(
+    omniComposeDashboardInputSchema.safeParse({
+      ...goodPlan,
+      tiles: Array.from({ length: 13 }, (_, index) => ({ ...goodPlan.tiles[0]!, resultId: ulid(), title: `Tile ${index}` })),
+    }).success,
+    false,
+    "at most twelve tiles",
   );
 });
 
@@ -200,6 +251,16 @@ test("plan validation grounds every tile in executed evidence", () => {
     tiles: [{ ...goodPlan.tiles[0]!, width: "full" }, ...goodPlan.tiles.slice(1)],
   }, evidence);
   assert.ok(wideKpi.some((issue) => /quarter or third width/u.test(issue)));
+
+  // A derived result that cannot refresh (an aggregate, say) is refused as a
+  // tile, with the replayable results named so the plan can self-repair.
+  const unreplayable = validateOmniDashboardPlan(goodPlan, evidence, {
+    unreplayableResultIds: new Set([tableResult]),
+  });
+  assert.equal(unreplayable.length, 1);
+  assert.match(unreplayable[0]!, /cannot refresh on a dashboard/u);
+  assert.ok(unreplayable[0]!.includes(kpiResult), "names the replayable results");
+  assert.ok(!unreplayable[0]!.includes(`${tableResult} (`), "does not offer the unreplayable one");
 });
 
 test("plan tiles map onto tile display configs", () => {
@@ -289,6 +350,109 @@ test("the brief carries the instruction and the current tiles", () => {
   assert.match(brief, /replacing my current dashboard/u);
   const fresh = buildDashboardBriefMessage({ instruction: "Cash overview", currentTiles: [] });
   assert.doesNotMatch(fresh, /replacing/u);
+});
+
+test("the brief names its target dashboard and the chat reads the owner's words back", () => {
+  const dashboardId = ulid();
+  const brief = buildDashboardBriefMessage({
+    instruction: "Cash overview",
+    currentTiles: [],
+    dashboardId,
+    dashboardTitle: "Ops cockpit",
+  });
+  assert.match(brief, /Dashboard name today: "Ops cockpit"/u);
+  assert.match(brief, new RegExp(`Target dashboard: ${dashboardId}\\s*$`, "u"));
+  assert.deepEqual(parseDashboardBriefMessage(brief), { kind: "build", instruction: "Cash overview", dashboardId });
+  assert.equal(dashboardBriefDisplayText(brief), "Cash overview");
+  // A pre-0133 brief (no target line) still parses.
+  const legacy = "Design and build my dashboard.\n\nWhat I want: Top level metrics\n\nYou are replacing my current dashboard. Its tiles, for context — keep what still serves the request, improve or drop the rest:\n- \"Revenue\" (kpi)";
+  assert.deepEqual(parseDashboardBriefMessage(legacy), { kind: "build", instruction: "Top level metrics", dashboardId: null });
+  assert.equal(parseDashboardBriefMessage("What were sales last week?"), null);
+  assert.equal(dashboardBriefDisplayText("What were sales last week?"), "What were sales last week?");
+});
+
+test("an element-edit brief carries the one element, its governed query and the rules", () => {
+  const dashboardId = ulid();
+  const tileId = ulid();
+  const tile = {
+    tileId,
+    title: "Revenue by week",
+    display: { mode: "chart", chartType: "line", xKey: "sales_analytics_completed_at", yKey: "sales_analytics_gross_takings" },
+    queryYaml: "measures:\n  - sales_analytics.gross_takings\ntimeDimensions:\n  - dimension: sales_analytics.completed_at\n    granularity: week\n    dateRange: last 12 weeks",
+    snapshot: {
+      empty: false,
+      columns: [
+        { key: "sales_analytics.completed_at.week", label: "Week", type: "datetime" },
+        { key: "sales_analytics.gross_takings", label: "Gross takings", type: "currency" },
+      ],
+    },
+  } as unknown as DashboardTile;
+  const brief = buildDashboardBriefMessage({
+    instruction: "make it daily and only the last 30 days",
+    currentTiles: [tile],
+    dashboardId,
+    dashboardTitle: "Ashburton at a glance",
+    editTile: { tile, span: 6 },
+  });
+  assert.match(brief, /^Edit one element of my dashboard\./u);
+  assert.match(brief, /Element: "Revenue by week" \(chart\)/u);
+  assert.match(brief, /What I want changed: make it daily and only the last 30 days/u);
+  assert.match(brief, /granularity: week/u, "the governed query travels with the brief");
+  assert.match(brief, /Display today: line chart, x sales_analytics_completed_at, y sales_analytics_gross_takings/u);
+  assert.match(brief, /Width today: half/u);
+  assert.match(brief, /exactly ONE tile/u);
+  assert.match(brief, /dashboardTitle "Ashburton at a glance"/u);
+  assert.doesNotMatch(brief, /replacing my current dashboard/u);
+  assert.match(brief, new RegExp(`Target element: ${tileId}\\s*$`, "u"));
+  assert.deepEqual(parseDashboardBriefMessage(brief), {
+    kind: "edit",
+    instruction: "make it daily and only the last 30 days",
+    dashboardId,
+    tileId,
+    elementTitle: "Revenue by week",
+  });
+  assert.equal(dashboardBriefDisplayText(brief), "Edit “Revenue by week”: make it daily and only the last 30 days");
+});
+
+test("an element edit takes the edited tile's slot on both breakpoints", () => {
+  const previousId = ulid();
+  const otherId = ulid();
+  const newId = ulid();
+  const layouts = {
+    desktop: [
+      { i: otherId, x: 0, y: 0, w: 3, h: 5 },
+      { i: previousId, x: 3, y: 0, w: 6, h: 9 },
+    ],
+    tablet: [
+      { i: otherId, x: 0, y: 0, w: 4, h: 5 },
+      { i: previousId, x: 4, y: 0, w: 4, h: 9 },
+    ],
+  };
+  const sameKind = replaceTileInLayouts(
+    layouts,
+    { tileId: previousId, display: { mode: "chart", chartType: "line", xKey: "x", yKey: "y" } },
+    { tileId: newId, kind: "chart", width: "half" },
+  );
+  assert.deepEqual(sameKind.desktop, [
+    { i: otherId, x: 0, y: 0, w: 3, h: 5 },
+    { i: newId, x: 3, y: 0, w: 6, h: 9 },
+  ]);
+  assert.deepEqual(sameKind.tablet[1], { i: newId, x: 4, y: 0, w: 4, h: 9 });
+  // A kind change takes the new kind's default height in the same place.
+  const kindChange = replaceTileInLayouts(
+    layouts,
+    { tileId: previousId, display: { mode: "chart", chartType: "line", xKey: "x", yKey: "y" } },
+    { tileId: newId, kind: "table", width: "half" },
+  );
+  assert.deepEqual(kindChange.desktop[1], { i: newId, x: 3, y: 0, w: 6, h: 7 });
+  // A tile the layout never placed lands beneath everything else.
+  const unplaced = replaceTileInLayouts(
+    { desktop: layouts.desktop.slice(0, 1), tablet: layouts.tablet.slice(0, 1) },
+    { tileId: previousId, display: { mode: "table" } },
+    { tileId: newId, kind: "kpi", width: "quarter" },
+  );
+  assert.deepEqual(unplaced.desktop[1], { i: newId, x: 0, y: 5, w: 3, h: 5 });
+  assert.equal(dashboardLayoutsSchema.safeParse(unplaced).success, true);
 });
 
 test("the persisted plan event revalidates before apply", () => {

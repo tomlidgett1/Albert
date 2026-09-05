@@ -337,10 +337,11 @@ accessible_views:
       and positions. Labour against sales by day or week (labour cost as a
       share of sales, sales per labour hour) is one query here through the
       labour_sales_* members; rostered-versus-actual, late and no-show
-      questions are one query through the shift_* members. Only per-person
-      cross-tool comparisons (a staff member's sales against their hours)
-      still need this view and the sales views queried separately and
-      matched by name.
+      questions are one query through the shift_* members. Per-person
+      cross-tool comparisons require an explicit governed identity mapping.
+      Names alone do not establish identity. Without that mapping, keep the
+      per-source figures separate and disclose the gap; use common periods
+      for cross-source aggregate comparisons.
   - name: xero_profit_and_loss_analytics
     connector: xero
     routing_terms:

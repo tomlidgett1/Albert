@@ -21,6 +21,8 @@ const requestSchema = z.object({
   tableEventId: ulid,
   resultId: z.string().min(1).max(160),
   expectedRevision: z.number().int().nonnegative(),
+  /** Unnamed: the member's most recently touched dashboard. */
+  dashboardId: ulid.optional(),
 }).strict();
 
 export async function POST(request: Request) {
@@ -44,4 +46,3 @@ export async function POST(request: Request) {
     return Response.json({ error: message }, { status, headers: { "Cache-Control": "no-store" } });
   }
 }
-

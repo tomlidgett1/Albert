@@ -11,11 +11,22 @@ kill_timeout = 30
   dockerfile = "../../Dockerfile.services"
 
 [env]
+  ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
+  ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
   ALBERT_IMESSAGE_BOT_NUMBER = "+16502831814"
   ALBERT_IMESSAGE_ALLOWED_SENDERS = "+61414187820"
   ALBERT_IMESSAGE_OWNER_EMAIL = "tom@lidgett.net"
   ALBERT_IMESSAGE_SUPABASE_URL = "https://jjiugnriaypjoxsupjft.supabase.co"
   CODEX_RUNTIME_SERVICE_URL = "https://albert-codex-runtime.fly.dev"
+  # Heads-up alerts (ADR 0132) query Cube directly under an owner turn lease.
+  CUBE_API_URL = "https://albert-cube.fly.dev"
+  ALBERT_ALERTS_POLL_SECONDS = "60"
+  ALBERT_ALERTS_QUIET_HOURS = "21-7"
+  # The daily look (ADR 0133): Luna at max effort on the Omni harness, once a
+  # day from 6am local, polled every five minutes.
+  ALBERT_DAILY_BRIEF_MODEL = "gpt-5.6-luna"
+  ALBERT_DAILY_BRIEF_HOUR = "6"
+  ALBERT_DAILY_BRIEF_POLL_SECONDS = "300"
   NODE_ENV = "production"
   PORT = "8797"
 
@@ -43,11 +54,19 @@ kill_timeout = 30
     path = "/readyz"
     timeout = "10s"
 
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/livez"
+    timeout = "10s"
+
 [[restart]]
   policy = "always"
   processes = ["app"]
 
 [[vm]]
-  size = "shared-cpu-1x"
+  cpu_kind = "shared"
+  cpus = 1
   memory = "512mb"
   processes = ["app"]

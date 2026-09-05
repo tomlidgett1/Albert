@@ -142,6 +142,7 @@ for(const forbidden of [
 
 for(const required of [
   "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
+  "ALBERT_OMNI_JOB_DATABASE_URL",
   "CUBE_API_URL",
   "OPENAI_API_KEY",
   "albert_codex_tab",

@@ -13,57 +13,22 @@ import {
 } from "@/services/control-plane/src/web-repository";
 import { assertSameOriginMutation, readBoundedJsonBody, rateLimitExceededResponse } from "@/services/control-plane/src/request-security";
 import { refreshDashboardClaim } from "@/services/dashboard/src/refresh";
+import { currentCurrency, currentWatermarks } from "@/services/dashboard/src/workspace-context";
 
 export const maxDuration = 180;
 
+const ulid = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/);
 const requestSchema = z.object({
-  tileIds: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/)).min(1).max(24).optional(),
+  tileIds: z.array(ulid).min(1).max(24).optional(),
   force: z.boolean().default(false),
+  /** Unnamed: the member's most recently touched dashboard. */
+  dashboardId: ulid.optional(),
 }).strict();
 
 async function inBatches<T>(items: readonly T[], width: number, task: (item: T) => Promise<void>) {
   for (let index = 0; index < items.length; index += width) {
     await Promise.all(items.slice(index, index + width).map(task));
   }
-}
-
-function currentWatermarks(workspace: unknown, connector: string | null | undefined): readonly unknown[] {
-  if (!workspace || typeof workspace !== "object" || Array.isArray(workspace)) return [];
-  const providers = (workspace as Record<string, unknown>).providers;
-  if (!Array.isArray(providers)) return [];
-  return providers.flatMap((provider) => {
-    if (!provider || typeof provider !== "object" || Array.isArray(provider)) return [];
-    const row = provider as Record<string, unknown>;
-    if (connector && row.id !== connector) return [];
-    const connections = Array.isArray(row.connections) ? row.connections : [];
-    return connections.flatMap((connection) => {
-      if (!connection || typeof connection !== "object" || Array.isArray(connection)) return [];
-      const domains = (connection as Record<string, unknown>).domains;
-      if (!Array.isArray(domains)) return [];
-      return domains.flatMap((domain) => {
-        if (!domain || typeof domain !== "object" || Array.isArray(domain)) return [];
-        const watermark = (domain as Record<string, unknown>).watermark;
-        if (!watermark || typeof watermark !== "object" || Array.isArray(watermark)) return [];
-        const at = (watermark as Record<string, unknown>).at;
-        return typeof at === "string" ? [{ connector: row.id, label: row.name, dataThrough: at }] : [];
-      });
-    });
-  });
-}
-
-function currentCurrency(workspace: unknown): string | undefined {
-  if (!workspace || typeof workspace !== "object" || Array.isArray(workspace)) return undefined;
-  const dossier = (workspace as Record<string, unknown>).dossier;
-  if (!Array.isArray(dossier)) return undefined;
-  const value = dossier.find((entry) =>
-    entry && typeof entry === "object" && !Array.isArray(entry)
-      && (entry as Record<string, unknown>).id === "base_currency"
-  );
-  const currency = value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>).value
-    : undefined;
-  const normalized = typeof currency === "string" ? currency.trim().toUpperCase() : "";
-  return /^[A-Z]{3}$/u.test(normalized) ? normalized : undefined;
 }
 
 export async function POST(request: Request) {
@@ -76,8 +41,15 @@ export async function POST(request: Request) {
     const parsed = requestSchema.safeParse(await readBoundedJsonBody(request));
     if (!parsed.success) return Response.json({ error: "A valid refresh request is required." }, { status: 400 });
     const claims = await claimDashboardRefresh(parsed.data);
+    if (claims.length === 0) {
+      // Nothing eligible (the five-minute window has not passed): answer
+      // with the document without paying for the connections lookup.
+      return Response.json({ dashboard: await loadDashboard(parsed.data.dashboardId), refreshedTileIds: [] }, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
     const connections = await loadConnectionsWorkspace().catch(() => null);
-    await inBatches(claims, 4, async (claim) => {
+    await inBatches(claims, 8, async (claim) => {
       const startedAt = new Date().toISOString();
       const started = Date.now();
       const result = await refreshDashboardClaim(
@@ -103,7 +75,10 @@ export async function POST(request: Request) {
         adapterMetadata: result.metadata,
       });
     });
-    return Response.json({ dashboard: await loadDashboard(), refreshedTileIds: claims.map(({ tileId }) => tileId) }, {
+    return Response.json({
+      dashboard: await loadDashboard(parsed.data.dashboardId),
+      refreshedTileIds: claims.map(({ tileId }) => tileId),
+    }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {

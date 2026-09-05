@@ -3,6 +3,7 @@
   "framework": "nextjs",
   "buildCommand": "next build --webpack",
   "installCommand": "npm ci",
+  "regions": ["syd1"],
   "functions": {
     "app/api/omni-conversation/route.ts": {
       "regions": ["syd1"]

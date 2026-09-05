@@ -36,6 +36,13 @@ type ModelRunControlsProps = {
   /** Codex-only GPT-5.6 Responses Pro mode. Omit outside Codex. */
   proModeEnabled?: boolean;
   onProModeChange?: (enabled: boolean) => void;
+  superAgentEnabled?: boolean;
+  onSuperAgentChange?: (enabled: boolean) => void;
+  swarmEnabled?: boolean;
+  onSwarmChange?: (enabled: boolean) => void;
+  /** Development inspector: request, response headers, SSE frames and trace events. */
+  rawDebugOpen?: boolean;
+  onRawDebugChange?: (open: boolean) => void;
   disabled?: boolean;
   runActive?: boolean;
   popoverPlacement?: "above" | "below";
@@ -103,6 +110,12 @@ export function ModelRunControls({
   onSolPlannerChange,
   proModeEnabled = false,
   onProModeChange,
+  superAgentEnabled = false,
+  onSuperAgentChange,
+  swarmEnabled = false,
+  onSwarmChange,
+  rawDebugOpen = false,
+  onRawDebugChange,
   disabled = false,
   popoverPlacement = "above",
   popoverAlign = "trigger-end",
@@ -141,7 +154,15 @@ export function ModelRunControls({
   }, [clearCloseTimer, reduceMotion]);
 
   const openPopover = useCallback(() => {
+    const reopeningMidClose = closeTimerRef.current !== null;
     clearCloseTimer();
+    if (reopeningMidClose) {
+      // Reopening during the exit animation: `open` never flipped to false,
+      // so the enter effect will not re-run. The popover is still mounted
+      // and positioned — return it to its entered state directly.
+      setPopoverEntered(true);
+      return;
+    }
     setPopoverEntered(false);
     setFlipPopoverBelow(false);
     setOpen(true);
@@ -179,10 +200,14 @@ export function ModelRunControls({
 
   const effortLabel = EFFORT_LABELS[value.reasoningEffort] ?? value.reasoningEffort;
 
+  const showRunModes = Boolean(onSuperAgentChange || onSwarmChange);
+
   const triggerSummary = [
     selectedModel.label,
     effortLabel,
     value.fastMode ? "Fast mode" : null,
+    onSuperAgentChange && superAgentEnabled ? "Super agent" : null,
+    onSwarmChange && swarmEnabled ? "Swarm" : null,
     onProModeChange && proModeEnabled ? "Pro reasoning" : null,
     onSolPlannerChange && solPlannerEnabled ? "Sol planner" : null,
   ].filter(Boolean).join(" · ");
@@ -203,7 +228,19 @@ export function ModelRunControls({
     measure();
     const frame = window.requestAnimationFrame(measure);
     return () => window.cancelAnimationFrame(frame);
-  }, [effortLabel, onProModeChange, onSolPlannerChange, proModeEnabled, selectedModel.label, solPlannerEnabled, value.fastMode]);
+  }, [
+    effortLabel,
+    onProModeChange,
+    onSolPlannerChange,
+    onSuperAgentChange,
+    onSwarmChange,
+    proModeEnabled,
+    selectedModel.label,
+    solPlannerEnabled,
+    superAgentEnabled,
+    swarmEnabled,
+    value.fastMode,
+  ]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -257,6 +294,8 @@ export function ModelRunControls({
     proModeEnabled,
     selectedModel.label,
     solPlannerEnabled,
+    superAgentEnabled,
+    swarmEnabled,
     value.fastMode,
   ]);
 
@@ -356,13 +395,15 @@ export function ModelRunControls({
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-controls={popoverId}
-        aria-label={`Run settings: ${selectedModel.label}, ${value.fastMode ? "Fast mode" : "Standard speed"}, ${value.reasoningEffort} reasoning${onProModeChange ? `, Pro reasoning ${proModeEnabled ? "on" : "off"}` : ""}${onSolPlannerChange ? `, Sol planner ${solPlannerEnabled ? "on" : "off"}` : ""}`}
+        aria-label={`Run settings: ${selectedModel.label}, ${value.fastMode ? "Fast mode" : "Standard speed"}, ${value.reasoningEffort} reasoning${onSuperAgentChange ? `, Super agent ${superAgentEnabled ? "on" : "off"}` : ""}${onSwarmChange ? `, Swarm ${swarmEnabled ? "on" : "off"}` : ""}${onProModeChange ? `, Pro reasoning ${proModeEnabled ? "on" : "off"}` : ""}${onSolPlannerChange ? `, Sol planner ${solPlannerEnabled ? "on" : "off"}` : ""}`}
         data-testid="model-run-controls-trigger"
         title={triggerSummary}
         style={triggerWidth ? { width: triggerWidth } : undefined}
         data-width-ready={triggerWidth ? "true" : undefined}
         onClick={() => {
-          if (open) closePopover();
+          // While the exit animation runs, `open` is still true for 180ms; a
+          // click in that window means "open it again", not "close it more".
+          if (open && closeTimerRef.current === null) closePopover();
           else openPopover();
         }}
       >
@@ -423,6 +464,54 @@ export function ModelRunControls({
             : undefined
         }
       >
+        {showRunModes ? (
+        <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-mode`}>
+          <p className={styles.modelControlsSectionTitle} id={`${popoverId}-mode`}>
+            Mode
+          </p>
+          <div className={styles.modelControlsMenuList}>
+            {onSuperAgentChange ? (
+              <button
+                className={styles.modelControlsMenuRow}
+                type="button"
+                role="switch"
+                aria-checked={superAgentEnabled}
+                aria-label="Super agent"
+                title="Run the next question through five sequential deep passes for up to 45 minutes"
+                onClick={() => onSuperAgentChange(!superAgentEnabled)}
+              >
+                <span>Super agent</span>
+                <span
+                  className={`${styles.modelControlsToggle} ${superAgentEnabled ? styles.modelControlsToggleOn : ""}`}
+                  aria-hidden="true"
+                >
+                  <i />
+                </span>
+              </button>
+            ) : null}
+            {onSwarmChange ? (
+              <button
+                className={styles.modelControlsMenuRow}
+                type="button"
+                role="switch"
+                aria-checked={swarmEnabled}
+                aria-label="Swarm"
+                title="Split a hard question across specialists, then combine their findings"
+                onClick={() => onSwarmChange(!swarmEnabled)}
+              >
+                <span>Swarm</span>
+                <span
+                  className={`${styles.modelControlsToggle} ${swarmEnabled ? styles.modelControlsToggleOn : ""}`}
+                  aria-hidden="true"
+                >
+                  <i />
+                </span>
+              </button>
+            ) : null}
+          </div>
+        </section>
+        ) : null}
+
         <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-effort`}>
           <p className={styles.modelControlsSectionTitle} id={`${popoverId}-effort`}>
             Effort
@@ -584,6 +673,34 @@ export function ModelRunControls({
             ) : null}
           </div>
         </section>
+
+        {onRawDebugChange ? (
+        <section className={styles.modelControlsMenuSection} aria-labelledby={`${popoverId}-developer`}>
+          <p className={styles.modelControlsSectionTitle} id={`${popoverId}-developer`}>
+            Developer
+          </p>
+          <div className={styles.modelControlsMenuList}>
+            <button
+              className={styles.modelControlsMenuRow}
+              type="button"
+              role="switch"
+              aria-checked={rawDebugOpen}
+              aria-label="Raw debugger"
+              title="Development inspector: request, response headers, SSE frames, and trace events"
+              data-testid="model-run-controls-raw-debugger"
+              onClick={() => onRawDebugChange(!rawDebugOpen)}
+            >
+              <span>Raw debugger</span>
+              <span
+                className={`${styles.modelControlsToggle} ${rawDebugOpen ? styles.modelControlsToggleOn : ""}`}
+                aria-hidden="true"
+              >
+                <i />
+              </span>
+            </button>
+          </div>
+        </section>
+        ) : null}
       </div>
     </div>
   );

@@ -1,34 +1,19 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { ulid } from "ulid";
-import { signCubeJwt } from "../../../packages/albert-v3/src/cube/jwt.js";
-import {
-  ALBERT_OMNI_ANALYSIS_TIMEOUT_MS,
-  ALBERT_OMNI_ANALYTICAL_RUNTIME,
-  ALBERT_OMNI_MESSAGE_MAX_CHARS,
-  ALBERT_OMNI_PROTOCOL_VERSION,
-  ALBERT_OMNI_RUNTIME,
-  type OmniServiceTurn,
-} from "../../../packages/albert-omni/src/contracts.js";
-import { OmniRuntimeServiceClient } from "../../../packages/albert-omni/src/service-client.js";
-import type { OmniTraceEventInput } from "../../../packages/albert-omni/src/runtime.js";
-import {
-  codexSocialProvenance,
-  codexSocialReply,
-  detectCodexSocialMessage,
-} from "../../../packages/albert-codex/src/social.js";
-import { isAlbertModelId, providerForModel } from "../../../packages/shared/src/agent-runtime.js";
+import { ALBERT_OMNI_MESSAGE_MAX_CHARS } from "../../../packages/albert-omni/src/contracts.js";
+import { runOwnerAnalysis } from "./analysis.js";
 import type { ImessageBridgeConfig } from "./config.js";
 import { mentionsAlbert } from "./contracts.js";
 import { decodeInboundMessage, LinqClient, verifyLinqWebhook, type InboundLinqMessage } from "./linq.js";
 import { formatAnswerForImessage } from "./format.js";
-import { createPersistingEmitter, OwnerControlPlane } from "./owner-session.js";
+import { OwnerControlPlane } from "./owner-session.js";
+import type { SchedulerStatus } from "./scheduler.js";
+import type { AlertsLoopStatus } from "./alerts.js";
+import type { DailyBriefStatus } from "./daily-brief.js";
 
 const WEBHOOK_PATH = "/v1/imessage/webhook";
 const MAX_WEBHOOK_BODY_BYTES = 512 * 1024;
 const DEDUP_TTL_MS = 15 * 60_000;
 const SENDER_POLICY_TTL_MS = 30_000;
-const LEASE_RENEWAL_INTERVAL_MS = 120_000;
-const TURN_TIMEOUT_MS = ALBERT_OMNI_ANALYSIS_TIMEOUT_MS + 60_000;
 
 const BUSY_REPLY = "Still working on your last question — give me a moment and ask again.";
 const MEDIA_ONLY_REPLY = "I can only read text here for now. Type the question and I'll dig into the numbers.";
@@ -65,6 +50,9 @@ export class ImessageBridgeHandler {
   private readonly seenMessages = new Map<string, number>();
   private readonly activeChats = new Set<string>();
   private senderPolicyCache: Readonly<{ value: SenderPolicy; fetchedAt: number }> | null = null;
+  private schedulerStatus: (() => SchedulerStatus | Readonly<{ enabled: false }>) | null = null;
+  private alertsStatus: (() => AlertsLoopStatus | Readonly<{ enabled: false }>) | null = null;
+  private dailyBriefStatus: (() => DailyBriefStatus | Readonly<{ enabled: false }>) | null = null;
 
   constructor(private readonly config: ImessageBridgeConfig) {
     this.linq = new LinqClient(config.linqApiBaseUrl, config.linqApiToken);
@@ -74,6 +62,31 @@ export class ImessageBridgeHandler {
       serviceKey: config.supabaseServiceKey,
       ownerEmail: config.ownerEmail,
     });
+  }
+
+  /** The owner session the scheduler shares (one session mint, one cache). */
+  get controlPlane(): OwnerControlPlane {
+    return this.store;
+  }
+
+  /** The Linq client the scheduler sends through. */
+  get linqClient(): LinqClient {
+    return this.linq;
+  }
+
+  /** Lets /readyz report the scheduler loop alongside the webhook state. */
+  setSchedulerStatus(status: () => SchedulerStatus | Readonly<{ enabled: false }>): void {
+    this.schedulerStatus = status;
+  }
+
+  /** Lets /readyz report the alerts evaluator loop too. */
+  setAlertsStatus(status: () => AlertsLoopStatus | Readonly<{ enabled: false }>): void {
+    this.alertsStatus = status;
+  }
+
+  /** Lets /readyz report the daily-look loop as well. */
+  setDailyBriefStatus(status: () => DailyBriefStatus | Readonly<{ enabled: false }>): void {
+    this.dailyBriefStatus = status;
   }
 
   async handle(request: Request): Promise<Response> {
@@ -90,6 +103,9 @@ export class ImessageBridgeHandler {
         deploymentId: this.config.deploymentId,
         botNumber: this.config.botNumber,
         activeChats: this.activeChats.size,
+        scheduler: this.schedulerStatus?.() ?? null,
+        alerts: this.alertsStatus?.() ?? null,
+        dailyBrief: this.dailyBriefStatus?.() ?? null,
       }, { headers: { "cache-control": "no-store" } });
     }
     if (request.method !== "POST" || url.pathname !== WEBHOOK_PATH) {
@@ -232,206 +248,28 @@ export class ImessageBridgeHandler {
     }
   }
 
+  /**
+   * One inbound question: continue the chat's standing conversation (found
+   * by its stable title), run the analysis as the owner, reply in bubbles.
+   * The analysis itself is shared with the scheduler (analysis.ts).
+   */
   private async runOwnerTurn(message: InboundLinqMessage): Promise<void> {
     const question = message.text.slice(0, ALBERT_OMNI_MESSAGE_MAX_CHARS);
-    const tenant = await this.store.tenantContext();
     const title = imessageConversationTitle(message.chatId);
     const existingConversationId = await this.store.findConversationByTitle(title) ?? undefined;
-    const turnId = ulid();
-    const runtimeProfile = {
-      provider: isAlbertModelId(this.config.model) ? providerForModel(this.config.model) : "anthropic",
-      runtime: ALBERT_OMNI_RUNTIME,
-      analyticalRuntime: ALBERT_OMNI_ANALYTICAL_RUNTIME,
-      model: this.config.model,
-      reasoningEffort: this.config.effort,
-      fastMode: false,
-      channel: "imessage",
-      analysisTimeoutMs: ALBERT_OMNI_ANALYSIS_TIMEOUT_MS,
-    } as const;
-    let conversationId: string;
-    try {
-      conversationId = await this.store.beginTurn({
-        ...(existingConversationId ? { conversationId: existingConversationId } : {}),
-        turnId,
-        message: question,
-        runtimeProfile,
-      });
-    } catch (error) {
-      // A running turn from a crashed process holds the conversation; this
-      // process is not running one (activeChats gates that), so release and
-      // retry once before giving up.
-      if (existingConversationId && /running|55000/iu.test(error instanceof Error ? error.message : "")) {
-        await this.store.releaseRunningTurns(existingConversationId);
-        conversationId = await this.store.beginTurn({
-          conversationId: existingConversationId,
-          turnId,
-          message: question,
-          runtimeProfile,
-        });
-      } else {
-        throw error;
-      }
-    }
-    if (!existingConversationId) {
-      await this.store.assignConversationTitle(conversationId, title).catch(() => undefined);
-    }
-
-    const emitter = createPersistingEmitter({
-      store: this.store,
-      conversationId,
-      turnId,
-      onPersistError: (error, event) => log("imessage_trace_persist_failed", {
-        conversationId,
-        turnId,
-        eventType: (event as { type?: string }).type,
-        error: error instanceof Error ? error.message : String(error),
-      }),
+    const result = await runOwnerAnalysis({ store: this.store, config: this.config, log }, {
+      question,
+      ...(existingConversationId ? { conversationId: existingConversationId } : { newConversationTitle: title }),
     });
-
-    const social = detectCodexSocialMessage(question);
-    if (social) {
-      const reply = codexSocialReply(social, question);
-      await emitter.emit({
-        type: "answer",
-        status: "complete",
-        state: "Verified",
-        text: reply.text,
-        provenance: codexSocialProvenance(),
-        followUps: [],
-        presentedResultIds: [],
-        claims: [],
-      });
-      await emitter.drain();
-      await this.store.failTurn(conversationId, turnId, "albert_omni_social_answered");
-      await Promise.allSettled([this.linq.stopTyping(message.chatId)]);
-      await this.sendBubbles(message.chatId, reply.text);
-      return;
-    }
-
-    const [priorConversation, routing, businessContext] = await Promise.all([
-      existingConversationId
-        ? this.store.priorConversation(conversationId).catch(() => [] as const)
-        : Promise.resolve([] as const),
-      this.store.connectorRouting(),
-      this.store.businessContext(),
-    ]);
-    // The current turn's user message is already stored; the model context
-    // RPC returns finished turns only, so no self-echo trim is needed.
-    const cubeBearer = signCubeJwt({
-      secret: this.config.cubeApiSecret,
-      expiresInSeconds: 2_700,
-      securityContext: {
-        tenant_id: tenant.tenant_id,
-        role: tenant.role,
-        specialist_agent_id: "general",
-        specialist_agent_version: 1,
-        conversation_id: conversationId,
-        turn_id: turnId,
-      },
-    });
-    const turn: OmniServiceTurn = {
-      protocolVersion: ALBERT_OMNI_PROTOCOL_VERSION,
-      requestId: ulid(),
-      tenantId: tenant.tenant_id,
-      actorId: await this.store.ownerUserId(),
-      role: tenant.role,
-      conversationId,
-      turnId,
-      message: question,
-      priorConversation: [...priorConversation],
-      activeConnectors: [...routing.activeConnectors],
-      connectorFreshness: routing.freshness.map((entry) => ({
-        connector: entry.connector,
-        domain: entry.domain,
-        dataThrough: entry.dataThrough,
-      })),
-      ...(businessContext ? { businessContext } : {}),
-      timezone: tenant.timezone,
-      ownerName: "Tom",
-      organisationName: tenant.tenant_name.slice(0, 160),
-      cubeBearer,
-      model: this.config.model,
-      effort: this.config.effort,
-      fastMode: false,
-      channel: "imessage",
-    };
-
-    const abort = new AbortController();
-    const timeout = setTimeout(() => abort.abort(new Error("The analysis timed out.")), TURN_TIMEOUT_MS);
-    const leaseRenewal = setInterval(() => {
-      void this.store.renewTurnLease(turnId).catch(() => undefined);
-    }, LEASE_RENEWAL_INTERVAL_MS);
-    let answerText = "";
-    let answerState = "";
-    let clarification = "";
-    // Replayable tables arrive with an empty dashboardReplay.queryEventId and
-    // a resultId pairing them to their query event; the caller stamps event
-    // ids, so the pairing happens here exactly as in the web route — an
-    // unpairable reference is stripped so a broken replay ref never persists.
-    const queryEventIdByResultId = new Map<string, string>();
-    try {
-      const client = new OmniRuntimeServiceClient(this.config.runtimeServiceUrl, this.config.runtimeSigningSecret);
-      const result = await client.runTurn(
-        turn,
-        async (event: OmniTraceEventInput) => {
-          if (event.type === "answer") {
-            answerText = event.text;
-            answerState = event.state;
-          } else if (event.type === "clarification") {
-            clarification = [
-              event.question,
-              ...event.options.map((option, index) => `${index + 1}. ${option.label}`),
-            ].join("\n");
-            answerState = "Clarification";
-          }
-          let outbound = event as unknown as Record<string, unknown>;
-          const replay = (outbound as {
-            type?: string;
-            resultId?: string;
-            dashboardReplay?: { kind?: string; queryEventId?: string };
-          });
-          if (replay.type === "table" && replay.dashboardReplay?.kind === "cube_v3" && !replay.dashboardReplay.queryEventId) {
-            const queryEventId = replay.resultId ? queryEventIdByResultId.get(replay.resultId) : undefined;
-            if (queryEventId) {
-              outbound = { ...outbound, dashboardReplay: { ...replay.dashboardReplay, queryEventId } };
-            } else {
-              outbound = { ...outbound };
-              delete outbound.dashboardReplay;
-            }
-          }
-          const stamped = await emitter.emit(outbound) as unknown as { type?: string; resultId?: string; id?: string };
-          if (stamped.type === "query" && stamped.resultId && stamped.id) {
-            queryEventIdByResultId.set(stamped.resultId, stamped.id);
-          }
-        },
-        abort.signal,
-        async () => undefined,
-      );
-      if (!answerState) answerState = result.answerState;
-      await emitter.drain();
-      await this.store.failTurn(
-        conversationId,
-        turnId,
-        answerState === "Unavailable" ? "albert_omni_unavailable" : "albert_omni_answered",
-      );
-    } catch (error) {
-      await emitter.emit({
-        type: "error",
-        status: "error",
-        message: "The analysis could not be completed.",
-        recoverable: true,
-      }).catch(() => undefined);
-      await emitter.drain().catch(() => undefined);
-      await this.store.failTurn(conversationId, turnId, "omni_runtime_failure").catch(() => undefined);
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-      clearInterval(leaseRenewal);
-    }
-
-    const reply = clarification || answerText || "The analysis finished without an answer. Try asking again.";
+    const reply = result.clarification || result.answerText || "The analysis finished without an answer. Try asking again.";
     await Promise.allSettled([this.linq.stopTyping(message.chatId)]);
     const bubbles = await this.sendBubbles(message.chatId, reply);
-    log("imessage_reply_sent", { chatId: message.chatId, conversationId, turnId, answerState, bubbles });
+    log("imessage_reply_sent", {
+      chatId: message.chatId,
+      conversationId: result.conversationId,
+      turnId: result.turnId,
+      answerState: result.answerState,
+      bubbles,
+    });
   }
 }

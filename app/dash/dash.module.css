@@ -2593,7 +2593,7 @@
   flex-direction: column;
   overflow: hidden;
   background: var(--dash-chat-workspace);
-  padding: 0 clamp(14px, 2.5vw, 28px) 14px;
+  padding: 12px clamp(14px, 2.5vw, 28px) 14px;
   /* Match takeaways / user-bubble expand easing; slower for the wide panel. */
   transition:
     padding 720ms cubic-bezier(0.23, 1, 0.32, 1),
@@ -2601,16 +2601,16 @@
 }
 
 .chatTopBar {
-  display: flex;
+  display: grid;
   flex: 0 0 auto;
+  /* Chat/Discover slider | title | actions: the slider sits at the top-left
+     of the card, the title truncates beside it, the actions hug the right. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 14px;
   height: var(--dash-control-height);
   min-height: var(--dash-control-height);
-  /* Content panel border is 1px; pull this row up so it shares
-     the sidebar header's viewport Y. */
-  margin-top: -1px;
+  margin-top: 0;
   padding: 0;
 }
 
@@ -2620,107 +2620,6 @@
   flex: 1 1 auto;
   align-items: center;
   gap: 8px;
-}
-
-.chatRuntimeMenu {
-  position: relative;
-  z-index: 8;
-  flex: 0 0 auto;
-}
-
-.chatRuntimeMenuTrigger {
-  display: inline-flex;
-  height: 30px;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dash-text-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 560;
-  letter-spacing: -0.02em;
-  padding: 0 8px 0 10px;
-  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
-  white-space: nowrap;
-}
-
-.chatRuntimeMenuTrigger:hover,
-.chatRuntimeMenuTrigger[aria-expanded="true"] {
-  border-color: var(--dash-border-soft);
-  background: var(--dash-surface-hover);
-  color: var(--dash-text-heading);
-}
-
-.chatRuntimeMenuTrigger:focus-visible {
-  outline: 2px solid var(--dash-focus);
-  outline-offset: 2px;
-}
-
-.chatRuntimeMenuChevron {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-  transition: transform 200ms ease;
-}
-
-.chatRuntimeMenuChevronOpen {
-  transform: rotate(180deg);
-}
-
-.chatRuntimeMenuPanel {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 60;
-  display: flex;
-  width: max-content;
-  min-width: 196px;
-  flex-direction: column;
-  gap: 1px;
-  overflow: hidden;
-  border: 1px solid var(--dash-border-quiet);
-  border-radius: 16px;
-  background: var(--dash-popup-surface);
-  box-shadow: 0 18px 40px rgba(30, 30, 32, 0.13), 0 3px 8px rgba(30, 30, 32, 0.08);
-  padding: 6px;
-}
-
-.chatRuntimeMenuItem {
-  display: flex;
-  width: 100%;
-  min-height: var(--dash-control-height);
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dash-text-body);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: -0.02em;
-  padding: 0 10px;
-  text-align: left;
-}
-
-.chatRuntimeMenuItem:hover {
-  background: var(--dash-surface-hover);
-  color: var(--dash-text-heading);
-}
-
-.chatRuntimeMenuItem[aria-checked="true"] {
-  background: var(--dash-surface-active);
-  color: var(--dash-text-heading);
-}
-
-.chatRuntimeMenuItem:focus-visible {
-  outline: 2px solid var(--dash-focus);
-  outline-offset: 2px;
 }
 
 .compareShell {
@@ -3293,7 +3192,67 @@
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
+  justify-self: end;
   gap: 4px;
+}
+
+.chatSurfaceTabs {
+  position: relative;
+  display: inline-flex;
+  height: var(--dash-control-height);
+  align-items: center;
+  justify-self: start;
+  border-radius: 999px;
+  background: var(--dash-control);
+  padding: 3px;
+}
+
+.chatSurfaceTab {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  height: 30px;
+  min-width: 72px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dash-control-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(13px * var(--text-scale));
+  font-weight: 450;
+  letter-spacing: -0.03em;
+  padding: 0 14px;
+  transition: color 180ms ease;
+}
+
+.chatSurfaceTab:hover,
+.chatSurfaceTabActive {
+  color: var(--dash-active-text);
+}
+
+.chatSurfaceTabActive {
+  font-weight: 620;
+}
+
+.chatSurfaceTab:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
+.chatSurfaceTabsIndicator {
+  position: absolute;
+  z-index: 0;
+  top: 3px;
+  left: 0;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--dash-control-active);
+  box-shadow: 0 1px 3px rgba(26, 27, 30, 0.16), 0 0 0 1px rgba(26, 27, 30, 0.03);
+  pointer-events: none;
+  transition: left 260ms cubic-bezier(0.22, 1, 0.36, 1), width 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms ease;
 }
 
 .chatNewMethod {
@@ -3352,6 +3311,8 @@
 
 @media (max-width: 700px) {
   .chatTopBar {
+    height: auto;
+    min-height: var(--dash-control-height);
     align-items: flex-start;
   }
 
@@ -3359,10 +3320,16 @@
     flex-wrap: wrap;
     justify-content: flex-end;
   }
+
+  .chatSurfaceTab {
+    min-width: 0;
+    padding: 0 11px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chatRuntimeMenuChevron {
+  .chatSurfaceTabsIndicator,
+  .chatSurfaceTab {
     transition: none;
   }
 
@@ -3684,81 +3651,6 @@
   font-size: calc(12px * var(--text-scale));
   letter-spacing: -0.02em;
   line-height: 1.5;
-}
-
-.keyInsightsFeed {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.keyInsightsLive {
-  margin: 0 0 10px;
-  color: var(--dash-text-muted);
-  font-size: calc(11px * var(--text-scale));
-  letter-spacing: -0.015em;
-  line-height: 1.45;
-}
-
-.keyInsightsTextList {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.keyInsightTextItem {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 13px 0 14px;
-}
-
-.keyInsightTextItem + .keyInsightTextItem {
-  border-top: 1px solid var(--dash-border-soft);
-}
-
-.keyInsightSentence {
-  margin: 0;
-  color: var(--dash-text-body);
-  font-size: calc(13px * var(--text-scale));
-  font-weight: 400;
-  letter-spacing: -0.025em;
-  line-height: 1.48;
-}
-
-.keyInsightSentence strong {
-  color: var(--dash-text-heading);
-  font-weight: 640;
-}
-
-.keyInsightMeta,
-.keyInsightSourceText {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-}
-
-.keyInsightMeta {
-  flex-wrap: wrap;
-  gap: 5px;
-  color: var(--dash-text-faint);
-  font-size: calc(10px * var(--text-scale));
-  letter-spacing: -0.01em;
-  line-height: 1.3;
-}
-
-.keyInsightSourceText {
-  gap: 4px;
-  color: var(--dash-text-muted);
-  font-weight: 530;
-}
-
-.keyInsightSourceText img {
-  width: 14px;
-  height: 14px;
-  object-fit: contain;
 }
 
 .takeawayItem {
@@ -6876,117 +6768,54 @@
 }
 
 .recommendedAnalysis {
+  /* Bare rows below the composer and out of the flow, so the composer
+     stays centred on the page whether or not a brief has arrived. No
+     heading, verdict, card or border: the rows are the whole surface. */
+  position: absolute;
+  top: calc(100% + 14px);
+  right: 0;
+  left: 0;
   z-index: 1;
   display: flex;
-  width: 100%;
-  flex: 0 0 auto;
   flex-direction: column;
-  margin-top: 18px;
+  gap: 2px;
 }
 
-.recommendedAnalysisPanel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  border: 1px solid var(--dash-border-soft);
-  border-radius: 20px;
-  background: light-dark(#ffffff, #2a2c31);
-  box-shadow:
-    light-dark(
-      0 1px 2px rgba(30, 30, 32, 0.04),
-      0 1px 2px rgba(0, 0, 0, 0.22)
-    );
-  padding: 16px 14px 12px;
-}
-
-.recommendedAnalysisHeader {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 2px 4px 12px;
-  border-bottom: 1px solid var(--dash-border-soft);
-}
-
-.recommendedAnalysisTitle {
-  margin: 0;
-  color: var(--dash-text-heading);
-  font-size: 13px;
-  font-weight: 560;
-  letter-spacing: -0.025em;
-}
-
-.recommendedAnalysisVerdict {
-  margin: 0;
-  color: var(--dash-text-muted);
-  font-size: 13px;
-  letter-spacing: -0.02em;
-  line-height: 1.45;
-}
-
-.recommendedAnalysisList {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.recommendedAnalysisRow,
-.recommendedAnalysisSkeleton {
+.recommendedAnalysisRow {
   display: flex;
   min-width: 0;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: inherit;
   font: inherit;
-  padding: 10px 8px;
+  padding: 9px 12px 9px 10px;
   text-align: left;
-}
-
-.recommendedAnalysisRow {
   cursor: pointer;
   transition: background 150ms ease;
 }
 
-.recommendedAnalysisIndex {
+/* The bare 14px logo of the tool the sentence reads; empty when none fits, so the text still aligns. */
+.recommendedAnalysisTool {
+  display: grid;
+  width: 14px;
+  height: 14px;
   flex: 0 0 auto;
-  margin-top: 1px;
-  color: var(--dash-text-faint);
-  font-size: 11px;
-  font-weight: 520;
-  letter-spacing: 0.04em;
-  line-height: 1.35;
-  font-variant-numeric: tabular-nums;
+  place-items: center;
 }
 
-.recommendedAnalysisCopy {
-  display: flex;
+.recommendedAnalysisSentence {
+  display: -webkit-box;
+  overflow: hidden;
   min-width: 0;
   flex: 1 1 auto;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.recommendedAnalysisCardQuestion {
-  display: -webkit-box;
-  overflow: hidden;
   color: var(--dash-text-heading);
   font-size: 13px;
-  font-weight: 560;
-  letter-spacing: -0.025em;
-  line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.recommendedAnalysisCardWhy {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--dash-text-muted);
-  font-size: 12px;
+  font-weight: 500;
   letter-spacing: -0.02em;
-  line-height: 1.4;
+  line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -6995,7 +6824,6 @@
   flex: 0 0 auto;
   width: 14px;
   height: 14px;
-  margin-top: 3px;
   color: var(--dash-text-faint);
   fill: none;
   stroke: currentColor;
@@ -7019,17 +6847,6 @@
 .recommendedAnalysisRow:focus-visible {
   outline: 2px solid var(--dash-focus);
   outline-offset: 2px;
-}
-
-.recommendedAnalysisSkeletonBar {
-  display: block;
-  height: 10px;
-  border-radius: 6px;
-  background: var(--dash-surface-muted);
-}
-
-.recommendedAnalysisSkeletonBar:nth-child(2) {
-  width: 68%;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -18738,33 +18555,6 @@
   .archDictChipButton { transition: none; }
 }
 
-.chatHeroDashboardCta {
-  display: inline-flex;
-  height: var(--dash-control-height);
-  align-items: center;
-  gap: 8px;
-  margin: 14px auto 0;
-  padding: 0 14px;
-  border: 1px solid var(--dash-border-soft);
-  border-radius: 999px;
-  background: var(--dash-chat-surface);
-  color: var(--dash-text-heading);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 550;
-  letter-spacing: -0.02em;
-  transition: background 150ms ease, border-color 150ms ease, color 150ms ease, transform 160ms ease;
-}
-.chatHeroDashboardCta:hover { background: var(--dash-surface-hover); border-color: var(--dash-border-input); transform: translateY(-1px); }
-.chatHeroDashboardCta:active { transform: scale(.985); }
-.chatHeroDashboardCta:focus-visible { outline: 2px solid var(--dash-focus); outline-offset: 2px; }
-.chatHeroDashboardCta svg { width: 15px; height: 15px; }
-
-@media (prefers-reduced-motion: reduce) {
-  .chatHeroDashboardCta { transition: none; }
-}
-
 .view2 {
   flex-direction: column;
   --dash-content-inset: 14px;
@@ -18789,6 +18579,7 @@
   justify-content: space-between;
   gap: 10px;
   min-height: 40px;
+  overflow: visible;
   padding: 4px 14px;
 }
 
@@ -18820,7 +18611,362 @@
 }
 
 .view2NavRight {
+  gap: 12px;
   justify-content: flex-end;
+  overflow: visible;
+}
+
+.view2Tools {
+  display: flex;
+  position: relative;
+  z-index: 3;
+  align-items: center;
+  min-height: 30px;
+  overflow: visible;
+  padding: 3px 2px;
+}
+
+.view2ToolsTrack {
+  display: flex;
+  align-items: center;
+}
+
+.view2ToolTipWrap {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.view2Tool,
+.view2ToolConnect {
+  display: inline-flex;
+  margin: 0;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.view2Tool {
+  align-items: center;
+  padding: 0;
+  background: transparent;
+  border-radius: 999px;
+}
+
+.view2Tool:focus-visible,
+.view2ToolConnect:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
+.view2ToolMark,
+.view2ToolConnect {
+  background: light-dark(#ffffff, #2a2c31);
+  box-shadow:
+    0 0 0 1.5px var(--dash-sidebar),
+    0 0 0 1px light-dark(rgba(30, 30, 32, 0.08), rgba(255, 255, 255, 0.1));
+  transition: box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.view2Tools[data-expanded="true"] .view2ToolMark,
+.view2Tools[data-expanded="true"] .view2ToolConnect {
+  box-shadow:
+    0 0 0 1.5px var(--dash-sidebar),
+    0 1px 2px light-dark(rgba(30, 30, 32, 0.06), rgba(0, 0, 0, 0.28)),
+    0 6px 14px light-dark(rgba(30, 30, 32, 0.1), rgba(0, 0, 0, 0.34));
+}
+
+.view2ToolMark {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.view2ToolMark img {
+  display: block;
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+}
+
+.view2ToolMore {
+  color: var(--dash-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+
+.view2ToolConnect {
+  height: 24px;
+  align-items: center;
+  overflow: hidden;
+  border-radius: 999px;
+  color: var(--dash-text-muted);
+  padding: 0;
+}
+
+.view2ToolConnect:hover {
+  color: var(--dash-text-heading);
+}
+
+.view2ToolConnectIcon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+}
+
+.view2ToolConnectIcon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.view2ToolConnectLabel {
+  display: block;
+  overflow: hidden;
+  color: var(--dash-text-heading);
+  font-size: 12px;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+  line-height: 24px;
+  white-space: nowrap;
+}
+
+.view2ToolTip {
+  --tt-scale: 0.98;
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 8px);
+  left: 50%;
+  width: max-content;
+  max-width: min(220px, calc(100vw - 24px));
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 2px 6px 0 rgba(0, 0, 0, 0.05),
+    0 4px 42px 0 rgba(0, 0, 0, 0.06);
+  color: #2f2f2f;
+  font-size: 12px;
+  font-weight: 450;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) scale(var(--tt-scale));
+  transform-origin: 50% 0;
+  transition: opacity 50ms ease-out, transform 50ms ease-out;
+  white-space: nowrap;
+}
+
+.view2Tools[data-expanded="true"] .view2ToolTipWrap:hover .view2ToolTip,
+.view2Tools[data-expanded="true"] .view2ToolTipWrap:focus-within .view2ToolTip {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+  transition: opacity 150ms ease-out 80ms, transform 150ms ease-out 80ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  .view2ToolTip {
+    background: #2a2c31;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 2px 6px 0 rgba(0, 0, 0, 0.2),
+      0 4px 42px 0 rgba(0, 0, 0, 0.28);
+    color: #e8eaee;
+  }
+}
+
+[data-theme="dark"] .view2ToolTip {
+  background: #2a2c31;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 2px 6px 0 rgba(0, 0, 0, 0.2),
+    0 4px 42px 0 rgba(0, 0, 0, 0.28);
+  color: #e8eaee;
+}
+
+[data-theme="light"] .view2ToolTip {
+  background: #ffffff;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 2px 6px 0 rgba(0, 0, 0, 0.05),
+    0 4px 42px 0 rgba(0, 0, 0, 0.06);
+  color: #2f2f2f;
+}
+
+.view2Tools[data-menu-open="true"] .view2ToolTip {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.view2ToolsMenu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 70;
+  display: flex;
+  width: min(280px, calc(100vw - 28px));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--dash-border-quiet);
+  border-radius: 16px;
+  background: light-dark(#ffffff, #1d1f23);
+  box-shadow:
+    0 18px 40px light-dark(rgba(30, 30, 32, 0.13), rgba(0, 0, 0, 0.38)),
+    0 3px 8px light-dark(rgba(30, 30, 32, 0.08), rgba(0, 0, 0, 0.24));
+  transform-origin: top right;
+}
+
+.view2ToolsMenuClip {
+  overflow: hidden;
+}
+
+.view2ToolsMenuInner {
+  display: flex;
+  max-height: min(420px, 60vh);
+  flex-direction: column;
+  gap: 2px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.view2ToolsMenuSection {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.view2ToolsMenuSection + .view2ToolsMenuSection {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--dash-border-soft);
+}
+
+.view2ToolsMenuHeading {
+  margin: 0;
+  color: var(--dash-text-faint);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  padding: 4px 8px 5px;
+}
+
+.view2ToolsMenuRow {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dash-text-body);
+  cursor: pointer;
+  font: inherit;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.view2ToolsMenuRow:hover,
+.view2ToolsMenuRow:focus-visible {
+  background: var(--dash-surface-hover);
+  color: var(--dash-text-heading);
+}
+
+.view2ToolsMenuRow:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}
+
+.view2ToolsMenuRow[data-status="soon"] {
+  opacity: 0.72;
+}
+
+.view2ToolsMenuMark {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 999px;
+  background: light-dark(#ffffff, #2a2c31);
+  box-shadow: 0 0 0 1px light-dark(rgba(30, 30, 32, 0.08), rgba(255, 255, 255, 0.1));
+}
+
+.view2ToolsMenuMark img {
+  display: block;
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+
+.view2ToolsMenuName {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.view2ToolsMenuStatus {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--dash-text-faint);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.view2ToolsMenuStatus[data-tone="available"] {
+  color: var(--dash-text-muted);
+}
+
+.view2ToolsMenuStatus svg {
+  width: 13px;
+  height: 13px;
+}
+
+.view2ToolsMenuManage {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  margin-top: 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: 0 -1px 0 var(--dash-border-soft);
+  color: var(--dash-text-heading);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 560;
+  letter-spacing: -0.025em;
+  padding: 8px;
+  text-align: left;
+}
+
+.view2ToolsMenuManage:hover,
+.view2ToolsMenuManage:focus-visible {
+  background: var(--dash-surface-hover);
+}
+
+.view2ToolsMenuManage:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
 }
 
 .view2Brand {
@@ -19115,7 +19261,8 @@
 }
 
 @media (max-width: 760px) {
-  .view2NewAnalysisLabel {
+  .view2NewAnalysisLabel,
+  .view2ToolConnectLabel {
     display: none;
   }
 
@@ -19130,8 +19277,158 @@
   .view2ConversationChevron,
   .view2PagesMenuTrigger .view2PagesMenuChevron,
   .view2NewAnalysis,
+  .view2ToolMark,
+  .view2ToolConnect,
+  .view2ToolTip,
   .view2 .accountPopover,
   .view2 .accountPopoverOpen {
     transition: none;
+  }
+
+  .view2Tools[data-expanded="true"] .view2ToolTipWrap:hover .view2ToolTip,
+  .view2Tools[data-expanded="true"] .view2ToolTipWrap:focus-within .view2ToolTip {
+    transition: none;
+  }
+
+  .view2ToolsMenu,
+  .view2ToolsMenuClip,
+  .view2ToolsMenuRow {
+    transition: none;
+  }
+}
+
+/* ---- Dashboard mode (ADR 0129 rework) ---------------------------------- */
+/* Chat pushed left, the forming dashboard on the right — two floating cards
+   on a muted canvas. Reuses the takeaways panel slot with a wide width. */
+
+.dashboardToggle {
+  color: var(--dash-text-muted);
+}
+
+.dashboardToggle svg {
+  width: 13px;
+  height: 13px;
+}
+
+.dashboardToggleActive {
+  background: var(--dash-surface-active);
+  color: var(--dash-text-heading);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dash-text-heading), transparent 86%);
+}
+
+.chatShellDashboardOpen {
+  /* The chat card's 380px minimum wins over the panel's preferred size
+     (clamp() would apply the panel minimum last and starve the chat). */
+  --takeaways-panel-width: min(calc(100% - 392px), max(480px, 58%));
+  /* No inset of its own: the two cards share the exact footprint the
+     single content card has in normal chat mode. The split handle between
+     them supplies the only gap. The shell must not clip either: it inherits
+     the content card's larger radius, which would cut the cards' corners
+     and hide their border outline. */
+  gap: 0;
+  padding: 0;
+  overflow: visible;
+  border-radius: 0;
+  background: transparent;
+}
+
+.dashboardSplitHandle {
+  position: relative;
+  z-index: 10;
+  flex: 0 0 12px;
+  align-self: stretch;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.dashboardSplitHandle::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 44px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dash-text-muted), transparent 55%);
+  content: "";
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  transition: opacity 160ms ease;
+}
+
+.dashboardSplitHandle:hover::after,
+.dashboardSplitHandle:focus-visible::after,
+.dashboardSplitHandle[data-active="true"]::after {
+  opacity: 1;
+}
+
+.dashboardSplitHandle[data-active="true"]::after {
+  background: var(--dash-text-heading);
+}
+
+/* Narrow chat card: the composer keeps to a single row. The bar never
+   wraps its controls under the field, the input row gives up its wide
+   minimum, and the placeholder never wraps. */
+.chatShellDashboardOpen .chatComposerBar {
+  flex-wrap: nowrap;
+}
+
+.chatShellDashboardOpen .chatComposerBar .chatComposerInputRow {
+  flex: 1 1 4rem;
+  min-width: min(4rem, 100%);
+}
+
+@container composer (max-width: 480px) {
+  .chatShellDashboardOpen .chatComposerBar .composerIconButton[aria-label="Talk to Albert"] {
+    display: none;
+  }
+}
+
+.chatComposerBar textarea::placeholder {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Dashboard mode floats its two cards directly on the app frame: the outer
+   content card's chrome comes off so containers do not nest. */
+.contentDashboardMode {
+  overflow: visible;
+  /* Width 0, not just transparent: a transparent border still occupies the
+     pixel and would inset both cards inside the normal card's edge. */
+  border-width: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chatShellDashboardOpen .chatWorkspace {
+  overflow: hidden;
+  border: 1px solid var(--dash-border);
+  border-radius: 16px;
+  background: var(--dash-chat-workspace);
+  box-shadow:
+    0 1px 2px light-dark(rgba(24, 25, 27, 0.05), rgba(0, 0, 0, 0.25)),
+    0 12px 34px light-dark(rgba(24, 25, 27, 0.08), rgba(0, 0, 0, 0.3));
+  padding-right: clamp(12px, 1.6vw, 20px);
+  padding-left: clamp(12px, 1.6vw, 20px);
+}
+
+.chatShellDashboardOpen .takeawaysPanel {
+  overflow: hidden;
+  border: 1px solid var(--dash-border);
+  border-radius: 16px;
+  background: var(--dash-chat-workspace);
+  box-shadow:
+    0 1px 2px light-dark(rgba(24, 25, 27, 0.05), rgba(0, 0, 0, 0.25)),
+    0 12px 34px light-dark(rgba(24, 25, 27, 0.08), rgba(0, 0, 0, 0.3));
+}
+
+.chatShellDashboardOpen .takeawaysPanelOpen {
+  border-color: var(--dash-border);
+}
+
+@media (max-width: 880px) {
+  .chatShellDashboardOpen {
+    --takeaways-panel-width: min(calc(100% - 8px), 480px);
   }
 }

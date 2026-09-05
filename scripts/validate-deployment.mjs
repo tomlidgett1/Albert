@@ -15,6 +15,16 @@ const services = Object.freeze({
     memory: "4gb",
     exposure: "signed-public",
     source: "services/codex-runtime/src/http.ts",
+    healthPath: "/v1/omni/readyz",
+    cpuKind: "performance",
+  }),
+  "imessage-bridge.toml": Object.freeze({
+    runtime: "imessage-bridge",
+    command: "services/imessage-bridge.js",
+    port: 8797,
+    memory: "512mb",
+    exposure: "signed-public",
+    source: "services/imessage-bridge/src/bridge.ts",
   }),
   "cube.toml": Object.freeze({
     runtime: "cube",
@@ -167,7 +177,7 @@ for (const [file, expected] of Object.entries(services)) {
   );
   assert.equal(
     runtime.healthPath,
-    "/readyz",
+    expected.healthPath ?? "/readyz",
     `${expected.runtime} readiness path drifted.`,
   );
   assert.ok(
@@ -229,7 +239,7 @@ for (const [file, expected] of Object.entries(services)) {
   );
   assert.match(
     body,
-    /^\s*cpu_kind\s*=\s*"shared"$/mu,
+    new RegExp(`^\\s*cpu_kind\\s*=\\s*"${expected.cpuKind ?? "shared"}"$`, "mu"),
     `${file} must declare an explicit CPU class.`,
   );
   assert.match(
@@ -367,7 +377,7 @@ for (const [file, expected] of Object.entries(services)) {
     );
     assert.match(
       body,
-      /^\s*path\s*=\s*"\/readyz"$/mu,
+      new RegExp(`^\\s*path\\s*=\\s*"${escapeRegularExpression(runtime.healthPath)}"$`, "mu"),
       `${file} requires a readiness route.`,
     );
   }
@@ -458,9 +468,11 @@ assert.deepEqual(
   vercelManifest,
   {
     $schema: "https://openapi.vercel.sh/vercel.json",
-    framework: "nextjs",
-    buildCommand: "next build --webpack",
-    installCommand: "npm ci",
+  framework: "nextjs",
+  buildCommand: "next build --webpack",
+  installCommand: "npm ci",
+  regions: ["syd1"],
+  functions: { "app/api/omni-conversation/route.ts": { regions: ["syd1"] } },
   },
   "Vercel project configuration drifted.",
 );

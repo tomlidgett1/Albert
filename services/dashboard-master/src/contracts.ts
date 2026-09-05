@@ -34,6 +34,7 @@ export const dashboardEvidenceTableSchema = z.object({
     label: z.string().min(1).max(160),
     type: z.enum(["string", "number", "currency", "percent", "date", "datetime"]),
     currency: z.string().regex(/^[A-Z]{3}$/u).optional(),
+    percentScale: z.enum(["ratio", "percent"]).optional(),
   }).strict()).min(1).max(12),
   rows: z.array(z.record(z.string().max(160), traceCellSchema)).max(30),
   rowCount: z.number().int().min(0),

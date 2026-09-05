@@ -10,11 +10,10 @@ import {
 } from "@/packages/shared/src";
 import InsightsStyleTrace from "./InsightsStyleTrace";
 import { ModelRunControls } from "./ModelRunControls";
-import {
-  ConversationRuntimeTabs,
-  type ConversationRuntimeTab,
-} from "./conversation-runtime-tabs";
 import styles from "../dash.module.css";
+
+/** The analytical runtimes a conversation can run on. Omni is the product default. */
+export type ConversationRuntimeTab = "albert" | "codex" | "omni" | "compare";
 
 const COMPARE_DEFAULT_PREFERENCES: AgentRunPreferences = Object.freeze({
   model: "gpt-5.6-luna",
@@ -470,7 +469,7 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
           <h1 id="dash-title">Compare · {props.organisationName}</h1>
         </div>
         <div className={styles.compareTopActions}>
-          <ConversationRuntimeTabs value="compare" onChange={props.onSelectRuntime} />
+          <button type="button" onClick={() => props.onSelectRuntime("omni")}>Back to Omni</button>
           {hasRun && !isRunning ? (
             <button type="button" onClick={resetComparison}>New comparison</button>
           ) : null}

@@ -30,6 +30,7 @@ const traceColumnSchema = z.object({
   label: z.string().trim().min(1).max(160),
   type: z.enum(["string", "number", "currency", "percent", "date", "datetime"]),
   currency: z.string().regex(/^[A-Z]{3}$/u).optional(),
+  percentScale: z.enum(["ratio", "percent"]).optional(),
 }).strict();
 
 const boundedDiagnosticObjectSchema = z.record(z.string(), z.unknown()).refine(

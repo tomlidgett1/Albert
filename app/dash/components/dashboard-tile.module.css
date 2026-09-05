@@ -1,0 +1,262 @@
+/* Shared dashboard tile bodies — the one look for the live build preview and
+   the applied dashboard, modelled on Sigma's defaults: a KPI chart whose
+   value dominates with a directional comparison beneath it, and tables in
+   the "Spreadsheet" preset (light-grey header band, white cells, light-grey
+   horizontal and vertical gridlines, small spacing, no banding, figures
+   right-aligned). Pivots shade and freeze their row-header column. */
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.empty {
+  display: grid;
+  min-height: 72px;
+  flex: 1 1 auto;
+  place-items: center;
+  padding: 16px;
+  border-top: 1px solid var(--dash-border-soft);
+  color: var(--dash-text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ---- KPI --------------------------------------------------------------- */
+
+.kpi {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 16px 14px;
+  border-top: 1px solid var(--dash-border-soft);
+  container-type: inline-size;
+}
+
+.kpiValue {
+  color: var(--dash-text-heading);
+  font-size: clamp(26px, 9cqw + 6px, 40px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.kpiCompare {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpiDelta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  color: var(--dash-text-muted);
+  font-weight: 600;
+}
+
+.kpiCompare[data-tone="good"] .kpiDelta { color: var(--dash-success-text); }
+.kpiCompare[data-tone="bad"] .kpiDelta { color: var(--dash-danger-text); }
+
+.kpiArrow {
+  font-size: 10px;
+  transform: translateY(-1px);
+}
+
+.kpiCaption {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dash-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Chart ------------------------------------------------------------- */
+
+.chart {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  padding: 4px 8px 8px;
+  border-top: 1px solid var(--dash-border-soft);
+  overflow: hidden;
+}
+
+.chart > * {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+/* ---- Table (Spreadsheet preset) ----------------------------------------- */
+
+.tableScroll {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--dash-border-soft);
+}
+
+.tableScroll:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: -2px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.table th,
+.table td {
+  min-width: 96px;
+  padding: 6px 10px;
+  border-right: 1px solid var(--dash-border-soft);
+  border-bottom: 1px solid var(--dash-border-soft);
+  text-align: left;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.table th:last-child,
+.table td:last-child { border-right: 0; }
+
+.table th {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  color: var(--dash-text-heading);
+  background: var(--dash-surface-soft);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.table th:focus-within { z-index: 4; }
+
+.table td {
+  color: var(--dash-text-body);
+  background: var(--dash-surface);
+  font-variant-numeric: tabular-nums;
+}
+
+.table th[data-numeric="true"],
+.table td[data-numeric="true"] { text-align: right; }
+
+.table tbody tr:last-child td { border-bottom: 0; }
+
+.table th[data-selected="true"],
+.table td[data-selected="true"] {
+  background: color-mix(in srgb, var(--dash-info-surface) 70%, var(--dash-surface-soft));
+}
+
+.table td[data-selected="true"] { cursor: default; }
+
+/* Pivot: the metric column is a frozen, shaded row header. */
+.table[data-pivot="true"] th:first-child,
+.table[data-pivot="true"] td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  min-width: 150px;
+  color: var(--dash-text-heading);
+  background: var(--dash-surface-soft);
+  font-weight: 600;
+  box-shadow: 1px 0 0 var(--dash-border-soft);
+}
+
+.table[data-pivot="true"] th:first-child { z-index: 5; }
+
+.table[data-pivot="true"] tbody tr[data-total="true"] td {
+  background: var(--dash-surface-soft);
+  font-weight: 650;
+}
+
+.rowCount {
+  position: sticky;
+  left: 0;
+  padding: 5px 10px;
+  color: var(--dash-text-muted);
+  font-size: 11px;
+}
+
+/* Header-cell editing chrome shared by the editable workspace table. */
+.headerButton {
+  display: block;
+  width: calc(100% + 20px);
+  min-height: 26px;
+  margin: -6px -10px;
+  padding: 6px 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  text-overflow: ellipsis;
+  text-transform: inherit;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.headerButton:hover,
+.headerButton[aria-pressed="true"] {
+  color: var(--dash-text-strong);
+  background: var(--dash-surface-hover);
+}
+
+.headerButton:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: -2px;
+}
+
+.headerEditor {
+  position: relative;
+  z-index: 5;
+  min-width: 0;
+}
+
+.headerEditor > input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 96px;
+  height: 26px;
+  margin: -6px 0;
+  padding: 0 6px;
+  border: 1px solid var(--dash-border-input);
+  border-radius: 6px;
+  color: var(--dash-text-strong);
+  background: var(--dash-input-surface);
+  font: inherit;
+  font-weight: 600;
+}
+
+.headerEditor > input:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--dash-focus-ring);
+}

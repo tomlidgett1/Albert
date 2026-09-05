@@ -92,12 +92,16 @@ server.listen(config.port, config.listenHost, () => {
   })}\n`);
 });
 
+let shuttingDown = false;
 const shutdown = () => {
-  server.close(() => process.exit(0));
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const drained = handler.close();
+  server.close(() => { void drained.finally(() => process.exit(0)); });
   server.closeIdleConnections();
   // A running Codex turn (spawned CLI child) or a lingering connection must
   // not block replacement: force the exit after a short drain window.
-  setTimeout(() => process.exit(0), 5_000).unref();
+  setTimeout(() => process.exit(0), 25_000).unref();
 };
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);

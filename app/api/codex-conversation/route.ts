@@ -61,7 +61,6 @@ import {
 import { loadBusinessContext } from "@/services/control-plane/src/business-context-repository";
 import { createSupabaseAnalyticalQueryRecorder } from "@/services/control-plane/src/query-log-repository";
 import { loadLatestSalesBriefing } from "@/services/control-plane/src/swarm-repository";
-import { readSalesBriefingFile } from "@/services/swarm/src/sales-deep-store";
 import { salesBriefingContextBlock } from "@/services/swarm/src/sales-deep";
 import {
   loadSemanticMemory,
@@ -497,8 +496,7 @@ export async function POST(request: Request): Promise<Response> {
         }, correlationId);
         return [] as const;
       }),
-      loadLatestSalesBriefing().catch(() => null)
-        .then((briefing) => briefing ?? readSalesBriefingFile()),
+      loadLatestSalesBriefing().catch(() => null),
     ]);
     priorConversation = history.slice(-12).map(({ role, text }) => ({ role, text: text.slice(0, 8_000) }));
     activeConnectors = routing?.activeConnectors ?? [];

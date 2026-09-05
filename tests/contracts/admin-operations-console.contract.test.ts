@@ -90,7 +90,10 @@ test("fleet and tenant views cover the complete Section 19 operating path", asyn
 
 test("operator UI remains dash-native across dark mode, mobile and reduced motion", async () => {
   const styles = await readFile(stylesUrl, "utf8");
-  const operatorStyles = styles.slice(styles.indexOf("/* Section 19 operator console."));
+  const start = styles.indexOf("/* Section 19 operator console.");
+  const end = styles.indexOf("\n.view2 {", start);
+  assert.ok(start >= 0 && end > start, "the operator section is bounded before the separate view2 stylesheet");
+  const operatorStyles = styles.slice(start, end);
 
   assert.match(operatorStyles, /var\(--dash-control-height\)/);
   assert.match(operatorStyles, /var\(--dash-surface\)/);

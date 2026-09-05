@@ -193,6 +193,12 @@ test("bridge config locks haiku at max effort and validates its boundary", () =>
   const config = loadImessageBridgeConfig(bridgeEnv());
   assert.equal(config.model, "claude-haiku-4-5-20251001");
   assert.equal(config.effort, "max");
+  assert.equal(config.dailyBriefEnabled, true);
+  assert.equal(config.dailyBriefModel, "gpt-5.6-luna");
+  assert.equal(config.dailyBriefFromHour, 6);
+  assert.equal(config.dailyBriefPollMs, 300_000);
+  assert.throws(() => loadImessageBridgeConfig({ ...bridgeEnv(), ALBERT_DAILY_BRIEF_HOUR: "24" }));
+  assert.equal(loadImessageBridgeConfig({ ...bridgeEnv(), ALBERT_DAILY_BRIEF_ENABLED: "off" }).dailyBriefEnabled, false);
   assert.deepEqual([...config.allowedSenders], ["+61414187820"]);
   assert.throws(() => loadImessageBridgeConfig({ ...bridgeEnv(), ALBERT_IMESSAGE_ALLOWED_SENDERS: "0414187820" }));
   assert.throws(() => loadImessageBridgeConfig({ ...bridgeEnv(), LINQ_WEBHOOK_SIGNING_SECRET: "plain-secret" }));

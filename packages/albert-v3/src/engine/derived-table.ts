@@ -8,6 +8,7 @@ import type {
   TraceTableColumn,
   TraceTableDerivationV1,
 } from "../../../shared/src/index.js";
+import { canonicalColumnKey, columnKeysEquivalent, publicColumnKey } from "../cube/presentation.js";
 
 export type DerivedTableSource = Readonly<{
   resultId: string;
@@ -33,31 +34,48 @@ export function derivedTableDigest(derivation: TraceTableDerivationV1): string {
   return createHash("sha256").update(canonicalJson(derivation)).digest("hex");
 }
 
+/**
+ * A derivation references columns by the trace spelling it was sealed with;
+ * a refreshed source may spell the same member differently (dot keys, a
+ * bucketed time key). Resolve by exact key first, then by canonical
+ * identity, preferring the plain member over its bucket (ADR 0134).
+ */
+function resolveSourceColumn(source: DerivedTableSource, key: string): TraceTableColumn | null {
+  const exact = source.columns.find((column) => column.key === key);
+  if (exact) return exact;
+  const candidates = source.columns.filter((column) => columnKeysEquivalent(column.key, key));
+  if (candidates.length === 0) return null;
+  return candidates.find((column) => canonicalColumnKey(column.key) === publicColumnKey(column.key)) ?? candidates[0]!;
+}
+
 function sourceCell(
   reference: TraceDerivedSourceCell,
   sources: ReadonlyMap<string, DerivedTableSource>,
 ): TraceCell {
   const source = sources.get(reference.sourceResultId);
   if (!source) throw new Error(`Unknown derived-table source ${reference.sourceResultId}.`);
-  if (!source.columns.some((column) => column.key === reference.columnKey)) {
-    throw new Error(`Unknown derived-table source column ${reference.columnKey}.`);
-  }
+  const column = resolveSourceColumn(source, reference.columnKey);
+  if (!column) throw new Error(`Unknown derived-table source column ${reference.columnKey}.`);
   let row: Readonly<Record<string, TraceCell>> | undefined;
   if (reference.kind === "source") {
     row = source.rows[reference.rowIndex];
     if (!row) throw new Error(`Derived-table source row ${reference.rowIndex} is unavailable.`);
   } else {
-    if (!source.columns.some((column) => column.key === reference.matchColumnKey)) {
-      throw new Error(`Unknown derived-table match column ${reference.matchColumnKey}.`);
-    }
+    const matchColumn = resolveSourceColumn(source, reference.matchColumnKey);
+    if (!matchColumn) throw new Error(`Unknown derived-table match column ${reference.matchColumnKey}.`);
     const expected = sourceCell(reference.matchValue, sources);
-    row = source.rows.find((candidate) => {
-      const actual = candidate[reference.matchColumnKey] ?? null;
+    const matches = source.rows.filter((candidate) => {
+      const actual = candidate[matchColumn.key] ?? null;
       return actual === expected || (actual !== null && expected !== null && String(actual) === String(expected));
     });
-    if (!row) throw new Error(`No derived-table source row matches ${reference.matchColumnKey}.`);
+    if (matches.length > 1) throw new Error(`Ambiguous derived-table match for ${reference.matchColumnKey}.`);
+    row = matches[0];
+    // A sealed join matched every row when it was composed; a refreshed
+    // source over a rolling window may since have gained a day the other
+    // source lacks. That cell is blank, not a reason to fail the element.
+    if (!row) return null;
   }
-  return row[reference.columnKey] ?? null;
+  return row[column.key] ?? null;
 }
 
 function numericOperand(
@@ -101,7 +119,7 @@ function labelValue(
   const value = sourceCell(reference, sources);
   if (value === null) return "No value";
   const source = sources.get(reference.sourceResultId);
-  const column = source?.columns.find((candidate) => candidate.key === reference.columnKey);
+  const column = source ? resolveSourceColumn(source, reference.columnKey) : null;
   if ((column?.type === "date" || column?.type === "datetime") && typeof value === "string") {
     const instant = new Date(value.endsWith("Z") || /[+-]\d{2}:?\d{2}$/u.test(value) ? value : `${value}Z`);
     if (Number.isFinite(instant.getTime())) {

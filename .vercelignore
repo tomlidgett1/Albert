@@ -27,4 +27,7 @@ pnpm-workspace.yaml
 .next
 .venv
 dist
+evals
+outputs
+work
 *.log

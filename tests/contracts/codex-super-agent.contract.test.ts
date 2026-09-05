@@ -28,6 +28,7 @@ function read(path: string): string {
 
 const route = read("app/api/swarm/route.ts");
 const page = read("app/dash/page.tsx");
+const modelControls = read("app/dash/components/ModelRunControls.tsx");
 const panel = read("app/dash/components/SwarmPanel.tsx");
 const controller = read("app/dash/lib/swarm-run-controller.ts");
 const repository = read("services/control-plane/src/swarm-repository.ts");
@@ -107,7 +108,8 @@ test("the API, controller, and UI preserve the explicit mode and progress contra
   assert.match(route, /superAgent[\s\S]*?\? SUPER_AGENT_SOL_PLANNER/u);
   assert.match(repository, /kind: z\.enum\(\["question", "sales-deep", "super-agent"\]\)/u);
 
-  assert.match(page, /aria-label="Super agent"/u);
+  assert.match(page, /onSuperAgentChange:/u);
+  assert.match(modelControls, /aria-label="Super agent"/u);
   assert.match(page, /superAgentEnabledRef/u);
   assert.match(page, /setSuperAgentMode/u);
   assert.match(page, /SUPER_AGENT_PREFERENCES/u);

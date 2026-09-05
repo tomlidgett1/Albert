@@ -23,4 +23,7 @@ npm-debug.log*
 .albert-eval*.jsonl
 .claude
 .vercel
+.playwright
+.agents
+.codex
 dlt_xero_test

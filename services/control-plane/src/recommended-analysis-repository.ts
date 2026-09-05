@@ -14,6 +14,7 @@ import {
   type RecommendedQuestion,
 } from "../../recommended-analysis/src/playbook.js";
 import { fingerprintCorpus, type AnalysisCorpus } from "../../recommended-analysis/src/corpus.js";
+import { isRecommendedTool } from "../../recommended-analysis/src/tools.js";
 import { proactivePanelSchema } from "./proactive-repository.js";
 import { ControlPlaneError, requireUser } from "./web-repository.js";
 
@@ -56,6 +57,7 @@ const recommendationSchema = z.object({
   why: z.string().min(8).max(200),
   move: z.enum(ANALYTICAL_MOVES),
   domain: z.enum(ANALYSIS_DOMAINS),
+  tool: z.string().min(1).max(40).nullish(),
   fromTitle: z.string().min(1).max(120),
   fromConversationId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).nullable(),
 }).strict();
@@ -189,6 +191,20 @@ export async function loadProactiveSignal(
   });
 }
 
+/** A stored row keeps its tool only when it is one Albert knows; the route re-derives the rest from the domain. */
+function storedRecommendation(item: z.infer<typeof recommendationSchema>): RecommendedQuestion {
+  return Object.freeze({
+    id: item.id,
+    question: item.question,
+    why: item.why,
+    move: item.move,
+    domain: item.domain,
+    tool: isRecommendedTool(item.tool) ? item.tool : null,
+    fromTitle: item.fromTitle,
+    fromConversationId: item.fromConversationId,
+  });
+}
+
 export type RecommendedAnalysisCache = Readonly<{
   sourceFingerprint: string;
   sourceCount: number;
@@ -217,7 +233,7 @@ export async function loadRecommendedAnalysisCache(
     sourceFingerprint: parsed.data.sourceFingerprint,
     sourceCount: parsed.data.sourceCount,
     verdict: parsed.data.verdict,
-    recommendations: Object.freeze(parsed.data.recommendations.map((item) => Object.freeze(item))),
+    recommendations: Object.freeze(parsed.data.recommendations.map(storedRecommendation)),
     model: parsed.data.model,
     generatedAt: parsed.data.generatedAt,
   });
@@ -245,7 +261,7 @@ export async function saveRecommendedAnalysisCache(input: Readonly<{
     sourceFingerprint: parsed.data.sourceFingerprint,
     sourceCount: parsed.data.sourceCount,
     verdict: parsed.data.verdict,
-    recommendations: Object.freeze(parsed.data.recommendations.map((item) => Object.freeze(item))),
+    recommendations: Object.freeze(parsed.data.recommendations.map(storedRecommendation)),
     model: parsed.data.model,
     generatedAt: parsed.data.generatedAt,
   });

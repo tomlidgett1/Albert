@@ -13,6 +13,8 @@ import {
   OmniRuntimeServiceError,
   omniConversationRequestSchema,
   omniRuntimeServiceUrl,
+  omniPriorResults,
+  pairDerivedTableEvent,
   type OmniServiceTurn,
   type OmniTraceEventInput,
 } from "@/packages/albert-omni/src";
@@ -36,6 +38,7 @@ import {
   conversationNeedsTitle,
   failConversationTurn,
   loadConversationModelContext,
+  loadPriorTurnResults,
   renewConversationTurnLease,
 } from "@/services/conversation/src/artifact-store";
 import {
@@ -54,7 +57,6 @@ import {
 } from "@/services/conversation/src";
 import { loadBusinessContext } from "@/services/control-plane/src/business-context-repository";
 import { loadLatestSalesBriefing } from "@/services/control-plane/src/swarm-repository";
-import { readSalesBriefingFile } from "@/services/swarm/src/sales-deep-store";
 import { salesBriefingContextBlock } from "@/services/swarm/src/sales-deep";
 import { createSupabaseAnalyticalQueryRecorder } from "@/services/control-plane/src/query-log-repository";
 import {
@@ -232,6 +234,8 @@ export async function POST(request: Request): Promise<Response> {
       signal: request.signal,
       run: async (stream) => {
         const emit = createTraceEmitter({
+          persistenceAttempts: 4,
+          requireDurableTerminal: true,
           persist: (event) => appendConversationEvent({
             conversationId,
             turnId,
@@ -356,15 +360,19 @@ export async function POST(request: Request): Promise<Response> {
   let activeConnectors: readonly string[] = [];
   let connectorFreshness: readonly OmniServiceTurn["connectorFreshness"][number][] = [];
   let businessContext: string | undefined;
+  let priorResults: NonNullable<OmniServiceTurn["priorResults"]> = [];
   try {
-    const [history, routing, context, salesBriefing] = await Promise.all([
+    const [history, routing, context, salesBriefing, reusableResults] = await Promise.all([
       loadConversationModelContext(conversationId, auth.supabase),
       loadConnectorRouting(auth.supabase).catch(() => undefined),
       loadBusinessContext(auth.supabase).catch(() => null),
-      loadLatestSalesBriefing().catch(() => null)
-        .then((briefing) => briefing ?? readSalesBriefingFile()),
+      // A missing tenant briefing stays missing. A process-wide file cannot
+      // establish who owns its contents and must never enter an owner's turn.
+      loadLatestSalesBriefing().catch(() => null),
+      parsed.dashboardBuild ? Promise.resolve([]) : loadPriorTurnResults(conversationId, auth.supabase).catch(() => []),
     ]);
     priorConversation = history.slice(-12).map(({ role, text }) => ({ role, text: text.slice(0, 24_000) }));
+    priorResults = omniPriorResults(reusableResults);
     activeConnectors = routing?.activeConnectors ?? [];
     connectorFreshness = routing?.freshness ?? [];
     const existingContext = context?.rendered.slice(0, 12_000) ?? "";
@@ -415,6 +423,8 @@ export async function POST(request: Request): Promise<Response> {
         void renewConversationTurnLease({ supabase: auth.supabase, turnId }).catch(() => undefined);
       }, LEASE_RENEWAL_INTERVAL_MS);
       const emit = createTraceEmitter({
+        persistenceAttempts: 4,
+        requireDurableTerminal: true,
         persist: (event) => appendConversationEvent({
           conversationId,
           turnId,
@@ -461,6 +471,7 @@ export async function POST(request: Request): Promise<Response> {
           turnId,
           message: parsed.message,
           priorConversation: [...priorConversation],
+          priorResults,
           activeConnectors: [...activeConnectors],
           connectorFreshness: [...connectorFreshness],
           ...(businessContext ? { businessContext } : {}),
@@ -472,6 +483,10 @@ export async function POST(request: Request): Promise<Response> {
           effort: reasoningEffort,
           fastMode: preferences.fastMode,
           ...(parsed.dashboardBuild ? { dashboardBuild: true } : {}),
+          ...(parsed.dashboardBuild && parsed.dashboardEdit ? { dashboardEdit: true } : {}),
+          ...(parsed.dashboardBuild && parsed.dashboardEdit && parsed.dashboardEditTopic
+            ? { dashboardEditTopic: parsed.dashboardEditTopic }
+            : {}),
         };
         const bufferedRuntimeEvents: OmniTraceEventInput[] = [];
         let runtimeTraceReleased = false;
@@ -481,6 +496,7 @@ export async function POST(request: Request): Promise<Response> {
         // before the emitter stamps and persists; an unpairable reference is
         // stripped so a broken replay ref can never persist.
         const queryEventIdByResultId = new Map<string, string>();
+        const tableEventIdByResultId = new Map<string, string>();
         const deliverRuntimeEvent = async (event: OmniTraceEventInput) => {
           try {
             let outbound = event;
@@ -501,9 +517,26 @@ export async function POST(request: Request): Promise<Response> {
                 outbound = withoutReplay;
               }
             }
+            if (outbound.type === "table" && outbound.dashboardReplay?.kind === "derived_v1") {
+              // A remotely derived table arrives with placeholder source table
+              // event ids; pair them from the stamped trace and recompute the
+              // transform digest, or strip the recipe entirely.
+              const paired = pairDerivedTableEvent(outbound, tableEventIdByResultId);
+              if (paired) {
+                outbound = { ...outbound, ...paired };
+              } else {
+                const withoutReplay = { ...outbound };
+                delete (withoutReplay as { dashboardReplay?: unknown }).dashboardReplay;
+                delete (withoutReplay as { dashboardDerivation?: unknown }).dashboardDerivation;
+                outbound = withoutReplay;
+              }
+            }
             const stamped = await emit(outbound);
             if (stamped.type === "query" && stamped.resultId) {
               queryEventIdByResultId.set(stamped.resultId, stamped.id);
+            }
+            if (stamped.type === "table" && stamped.resultId) {
+              tableEventIdByResultId.set(stamped.resultId, stamped.id);
             }
           } catch (error) {
             logger.error("omni.trace_event_rejected", {

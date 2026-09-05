@@ -409,13 +409,16 @@ test("authenticated APIs are bounded, same-origin, rate-limited and conflict-awa
   assert.match(pinRoute, /DashboardRevisionConflict/u);
   assert.match(tileRoute, /DashboardRevisionConflict/u);
   assert.match(layoutRoute, /DashboardRevisionConflict/u);
-  assert.match(refreshRoute, /inBatches\(claims, 4/u);
+  assert.match(refreshRoute, /inBatches\(claims, 8/u);
   assert.match(migration, /date_trunc\('minute', now\(\)\)[\s\S]*% 5/u);
 });
 
 test("dashboard UI follows responsive, accessible and visible-only refresh contracts", () => {
-  assert.match(page, />Dashboard<\/span>/u);
+  assert.match(page, />Dashboards<\/span>/u);
   assert.match(page, /activeItem === "Dashboard"/u);
+  // Dashboards, plural (ADR 0134): the tab lists them; one opens by id.
+  assert.match(page, /<DashboardsWorkspace[\s\S]*onOpen=\{\(dashboardId\) => setDashboardViewId\(dashboardId\)\}/u);
+  assert.match(page, /<DashboardWorkspace[\s\S]*dashboardId=\{dashboardViewId\}/u);
   assert.match(trace, /dashboardReplay/u);
   assert.match(trace, /Add to Dashboard/u);
   assert.match(trace, /tablePinTooltip/u);
@@ -439,10 +442,28 @@ test("dashboard UI follows responsive, accessible and visible-only refresh contr
   assert.match(workspace, /const breakpoint: Breakpoint = width >= 1100/u);
   assert.match(workspace, /useContainerWidth\(\{[\s\S]*measureBeforeMount: true/u);
   assert.match(workspace, /requestAnimationFrame\(measureWidth\)/u);
-  assert.match(workspace, /Showing \{snapshot\.rows\.length\} of/u);
-  assert.match(workspace, /onDoubleClick=\{\(\) => openRename\(column\)\}/u);
-  assert.match(workspace, /aria-label=\{`\$\{presentation\?\.label \?\? column\.label\} column\. Click to select for formatting\. Double-click or press Enter to rename\.`\}/u);
+  const tileView = read("app/dash/components/DashboardTileView.tsx");
+  assert.match(tileView, /Showing \{rows\.length\} of/u);
+  // Sigma's column menu: a caret on every header, sort/filter/rename/format inside.
+  assert.match(workspace, /onDoubleClick=\{\(\) => onRename\(column\)\}/u);
+  assert.match(workspace, /aria-label=\{`\$\{label\} column\. Double-click or press Enter to rename\.`\}/u);
+  assert.match(workspace, /aria-label=\{`Column options for \$\{label\}`\}/u);
   assert.match(workspace, /event\.key === "Enter" \|\| event\.key === "F2"/u);
+  for (const item of ["Sort ascending", "Sort descending", "Clear sort", "Filter…", "Rename", "Format…"]) {
+    assert.ok(workspace.includes(`>${item}</button>`), item);
+  }
+  // Sigma's element toolbar: Filters, Properties, the Albert wand, More — and its menu.
+  assert.match(workspace, /aria-label=\{`Filters for \$\{tile\.title\}`\}/u);
+  assert.match(workspace, /aria-label=\{`Properties for \$\{tile\.title\}`\}/u);
+  assert.match(workspace, /aria-label=\{`Edit \$\{tile\.title\} with Albert`\}/u);
+  assert.match(workspace, /aria-label=\{`More options for \$\{tile\.title\}`\}/u);
+  for (const item of ["Keep only", "Exclude", "Add filter…", "Delete element", "Open source analysis"]) {
+    assert.ok(workspace.includes(item), item);
+  }
+  // Sort and filters are element query overrides that re-run the governed query.
+  assert.match(workspace, /queryOverrides: overrides/u);
+  assert.match(workspace, /if \(saved\) void refresh\(\[tileId\], true\)/u);
+  assert.match(workspace, /applyOverridesToRows\(columns, snapshot\.rows, tile\.queryOverrides\)/u);
   assert.match(workspace, /aria-haspopup="dialog"/u);
   assert.match(workspace, /aria-label="Value format"/u);
   assert.match(workspace, /aria-label="Decimal places"/u);
@@ -454,8 +475,11 @@ test("dashboard UI follows responsive, accessible and visible-only refresh contr
   assert.match(workspaceStyles, /\.tableScroll \{[\s\S]*max-width: 100%[\s\S]*overflow: auto/u);
   assert.match(workspace, /className=\{styles\.statusBadge\}[\s\S]*statusTooltip\(tile\)/u);
   assert.match(workspace, /Open source analysis for \$\{tile\.title\}/u);
-  assert.match(workspace, /dashboard-source-\$\{tile\.tileId\}/u);
+  assert.match(workspace, /dashboard-status-\$\{tile\.tileId\}/u);
   assert.match(workspaceStyles, /\.tooltipWrap:hover \.tooltip/u);
   assert.match(workspaceStyles, /top: calc\(100% \+ 8px\)/u);
   assert.match(workspaceStyles, /opacity 150ms ease-out 80ms/u);
+  // Every document call is addressed by dashboard id.
+  assert.match(workspace, /\/api\/dashboard\?dashboardId=\$\{encodeURIComponent\(dashboardId\)\}/u);
+  assert.match(workspace, /withDashboardId\(\{ \.\.\.values, expectedRevision: revisionRef\.current \}\)/u);
 });

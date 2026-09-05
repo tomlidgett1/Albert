@@ -70,9 +70,22 @@ export async function loadDashboardBuildArtifacts(input: Readonly<{
       caption: typeof event.caption === "string" ? event.caption : "Governed table",
       replayable: Boolean(
         replay
-        && replay.kind === "cube_v3"
-        && typeof replay.queryEventId === "string"
-        && replay.queryEventId.length > 0,
+        && (
+          (
+            replay.kind === "cube_v3"
+            && typeof replay.queryEventId === "string"
+            && replay.queryEventId.length > 0
+          )
+          || (
+            // Derived pivots: the relay paired every source table event and
+            // stamped the transform digest, so the pin RPC can re-verify.
+            replay.kind === "derived_v1"
+            && Array.isArray(replay.sourceTableEventIds)
+            && replay.sourceTableEventIds.length > 0
+            && typeof replay.transformDigest === "string"
+            && /^[0-9a-f]{64}$/u.test(replay.transformDigest)
+          )
+        ),
       ),
     });
   }

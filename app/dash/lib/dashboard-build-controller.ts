@@ -1,46 +1,59 @@
 "use client";
 
 /**
- * Natural-language dashboard build controller (ADR 0129): the browser-side
- * driver, same shape as the Proactive / Swarm / Dashboard Master fleets — the
- * open tab is the scheduler. One architect turn runs as a real omni
- * conversation with `dashboardBuild: true`; the live tasks and query counter
- * come straight off its SSE trace, and when the stream ends the composed plan
- * is applied server-side from the persisted trace.
+ * Natural-language dashboard build state (ADR 0129, reworked for dashboard
+ * mode; dashboards plural and element edits per ADR 0134). The chat pipeline
+ * owns the architect turn itself — the brief comes from /api/dashboard/build
+ * and streams through /api/omni-conversation with `dashboardBuild: true`, so
+ * the working trail lives in the conversation. This store tracks the build
+ * lifecycle around that turn: designing while the turn streams, applying once
+ * its composed plan is persisted, and the applied summary the workspace and
+ * panel read. `settledCount` bumps whenever a build settles so dashboard
+ * views re-fetch their document.
  */
 
-export type DashboardBuildTask = Readonly<{ id: string; label: string; completed: boolean }>;
+export type DashboardBuildPhase = "idle" | "designing" | "applying" | "applied" | "failed";
+
+export type DashboardBuildTarget = Readonly<{
+  /** The dashboard being built; null before a dashboard is known. */
+  dashboardId: string | null;
+  /** Set for an element edit: only this tile is rebuilt, in place. */
+  editTile?: Readonly<{ tileId: string; title: string }> | null;
+}>;
 
 export type DashboardBuildSnapshot = Readonly<{
+  phase: DashboardBuildPhase;
+  /** True while a build turn is streaming or its plan is being applied. */
   active: boolean;
-  phase: "idle" | "starting" | "designing" | "applying" | "completed" | "failed";
   instruction: string;
-  statusLine: string;
-  tasks: readonly DashboardBuildTask[];
-  queries: number;
-  plannedTiles: number;
+  dashboardId: string | null;
+  /** The element an element edit is rebuilding (null for a whole build). */
+  editTileId: string | null;
+  editTileTitle: string | null;
   conversationId: string | null;
-  summary: string | null;
+  turnId: string | null;
   appliedTitle: string | null;
   appliedTimeframe: string | null;
+  /** After an element edit applies: the replacement tile's id. */
+  appliedTileId: string | null;
   skipped: readonly string[];
   error: string | null;
-  /** Bumps when a build settles so the workspace re-fetches the dashboard. */
+  /** Bumps when a build settles so dashboard views re-fetch the document. */
   settledCount: number;
 }>;
 
 const IDLE: DashboardBuildSnapshot = Object.freeze({
-  active: false,
   phase: "idle",
+  active: false,
   instruction: "",
-  statusLine: "",
-  tasks: [],
-  queries: 0,
-  plannedTiles: 0,
+  dashboardId: null,
+  editTileId: null,
+  editTileTitle: null,
   conversationId: null,
-  summary: null,
+  turnId: null,
   appliedTitle: null,
   appliedTimeframe: null,
+  appliedTileId: null,
   skipped: [],
   error: null,
   settledCount: 0,
@@ -49,7 +62,6 @@ const IDLE: DashboardBuildSnapshot = Object.freeze({
 let snapshot: DashboardBuildSnapshot = IDLE;
 const listeners = new Set<() => void>();
 let currentRunToken = 0;
-let currentAbort: AbortController | null = null;
 
 function emit(next: Partial<DashboardBuildSnapshot>): void {
   snapshot = Object.freeze({ ...snapshot, ...next });
@@ -65,214 +77,134 @@ export function dashboardBuildSnapshot(): DashboardBuildSnapshot {
   return snapshot;
 }
 
-type ParsedSseBlock = Readonly<{ event: string; data: string }>;
-
-function parseSseBlock(block: string): ParsedSseBlock | null {
-  let event = "message";
-  const data: string[] = [];
-  for (const line of block.split("\n")) {
-    if (line.startsWith("event:")) event = line.slice(6).trim();
-    else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
-  }
-  if (data.length === 0) return null;
-  return { event, data: data.join("\n") };
-}
-
-async function postJson(
-  path: string,
-  body: unknown,
-  signal?: AbortSignal,
-): Promise<Record<string, unknown>> {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    ...(signal ? { signal } : {}),
-  });
-  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
-  if (!response.ok) {
-    throw new Error(typeof payload?.error === "string"
-      ? payload.error
-      : `The dashboard request failed (${response.status}).`);
-  }
-  return payload ?? {};
-}
-
-function consumeTraceEvent(event: Record<string, unknown>): void {
-  if (event.type === "tasks" && Array.isArray(event.items)) {
-    emit({
-      tasks: event.items.flatMap((item) => {
-        if (!item || typeof item !== "object" || Array.isArray(item)) return [];
-        const task = item as Record<string, unknown>;
-        if (typeof task.id !== "string" || typeof task.label !== "string") return [];
-        return [Object.freeze({ id: task.id, label: task.label, completed: task.completed === true })];
-      }),
-    });
-    return;
-  }
-  if (event.type === "query") {
-    emit({
-      queries: snapshot.queries + 1,
-      statusLine: typeof event.name === "string" && event.name
-        ? `Running: ${event.name.slice(0, 120)}`
-        : `Running query ${snapshot.queries + 1}…`,
-    });
-    return;
-  }
-  if (event.type === "research" && typeof event.label === "string") {
-    emit({ statusLine: event.label.slice(0, 160) });
-    return;
-  }
-  if (
-    event.type === "narrative"
-    && typeof event.text === "string"
-    && event.purpose !== "acknowledgement"
-    && event.purpose !== "reasoning_summary"
-  ) {
-    emit({ statusLine: event.text.slice(0, 160) });
-    return;
-  }
-  if (event.type === "dashboard_plan" && Array.isArray(event.tiles)) {
-    emit({
-      plannedTiles: event.tiles.length,
-      statusLine: `Dashboard composed: ${event.tiles.length} tiles`,
-    });
-    return;
-  }
-  if (event.type === "answer" && typeof event.text === "string") {
-    emit({ summary: event.text.slice(0, 2_000) });
-  }
-}
-
-export function startDashboardBuild(instruction: string): void {
-  const trimmed = instruction.trim();
-  if (snapshot.active || trimmed.length < 4) return;
-  const runToken = ++currentRunToken;
-  const abort = new AbortController();
-  currentAbort = abort;
-  snapshot = Object.freeze({
-    ...IDLE,
+/** A dashboard-mode send has started streaming its architect turn. */
+export function beginDashboardBuildTurn(instruction: string, target?: DashboardBuildTarget): number {
+  currentRunToken += 1;
+  emit({
+    phase: "designing",
     active: true,
-    phase: "starting" as const,
-    instruction: trimmed,
-    statusLine: "Preparing the brief…",
-    settledCount: snapshot.settledCount,
+    instruction: instruction.slice(0, 2_000),
+    dashboardId: target?.dashboardId ?? null,
+    editTileId: target?.editTile?.tileId ?? null,
+    editTileTitle: target?.editTile?.title ?? null,
+    conversationId: null,
+    turnId: null,
+    appliedTitle: null,
+    appliedTimeframe: null,
+    appliedTileId: null,
+    skipped: [],
+    error: null,
   });
-  for (const listener of listeners) listener();
+  return currentRunToken;
+}
 
+/** The streaming response returned its immutable turn identifiers. */
+export function attachDashboardBuildTurn(
+  runToken: number,
+  ids: Readonly<{ conversationId: string; turnId: string }>,
+): void {
+  if (runToken !== currentRunToken) return;
+  emit({ conversationId: ids.conversationId, turnId: ids.turnId });
+}
+
+/** The brief route resolved (or created) the dashboard the turn targets. */
+export function attachDashboardBuildDashboard(runToken: number, dashboardId: string): void {
+  if (runToken !== currentRunToken) return;
+  if (snapshot.dashboardId === dashboardId) return;
+  emit({ dashboardId });
+}
+
+/** The user stopped the turn or left the build; nothing is applied. */
+export function stopDashboardBuildTurn(runToken?: number): void {
+  if (runToken !== undefined && runToken !== currentRunToken) return;
+  currentRunToken += 1;
+  if (snapshot.phase === "idle") return;
+  emit({
+    phase: "idle",
+    active: false,
+    error: null,
+    editTileId: null,
+    editTileTitle: null,
+    settledCount: snapshot.settledCount + 1,
+  });
+}
+
+/** A build turn ended without a composed plan: surface why, apply nothing. */
+export function failDashboardBuildTurn(runToken: number, message: string): void {
+  if (runToken !== currentRunToken) return;
+  emit({
+    phase: "failed",
+    active: false,
+    error: message.slice(0, 300),
+    settledCount: snapshot.settledCount + 1,
+  });
+}
+
+/**
+ * A build turn finished with a composed `dashboard_plan`: apply it from the
+ * persisted trace. The server independently re-verifies every replay
+ * reference, so only replayable governed results become tiles. An element
+ * edit replaces its one tile in place; a whole build replaces the dashboard.
+ */
+export function applyDashboardBuildTurn(
+  runToken: number,
+  ids: Readonly<{ conversationId: string; turnId: string }>,
+): void {
+  if (runToken !== currentRunToken) return;
+  const dashboardId = snapshot.dashboardId;
+  const replaceTileId = snapshot.editTileId;
+  emit({ phase: "applying", active: true, conversationId: ids.conversationId, turnId: ids.turnId });
   void (async () => {
     try {
-      const brief = await postJson("/api/dashboard/build", { instruction: trimmed }, abort.signal);
-      const message = typeof brief.message === "string" ? brief.message : null;
-      if (!message) throw new Error("The build brief could not be composed.");
+      const response = await fetch("/api/dashboard/build/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...ids,
+          ...(dashboardId ? { dashboardId } : {}),
+          ...(replaceTileId ? { replaceTileId } : {}),
+        }),
+      });
+      const payload = await response.json().catch(() => null) as Readonly<{
+        applied?: Readonly<{
+          dashboardId?: unknown;
+          dashboardTitle?: unknown;
+          timeframe?: unknown;
+          skipped?: unknown;
+          newTileId?: unknown;
+        }>;
+        error?: string;
+      }> | null;
       if (runToken !== currentRunToken) return;
-
-      emit({ phase: "designing", statusLine: "Albert is designing your dashboard…" });
-      let response: Response | null = null;
-      for (let attempt = 0; ; attempt += 1) {
-        if (runToken !== currentRunToken) return;
-        response = await fetch("/api/omni-conversation", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            message,
-            preferences: brief.preferences ?? {},
-            dashboardBuild: true,
-          }),
-          signal: abort.signal,
-        });
-        if (response.ok || attempt >= 3) break;
-        const payload = await response.json().catch(() => null) as { error?: string } | null;
-        const detail = payload?.error || `The build could not be started (${response.status}).`;
-        const atCapacity = response.status === 429
-          || response.status === 503
-          || /at capacity|rate limit|try again/iu.test(detail);
-        if (!atCapacity) throw new Error(detail);
-        emit({ statusLine: `Albert is at capacity, retrying in 30s (attempt ${attempt + 1})` });
-        await new Promise((resolve) => setTimeout(resolve, 30_000));
-      }
-      if (!response || !response.body) throw new Error("The build could not be started.");
       if (!response.ok) {
-        const payload = await response.json().catch(() => null) as { error?: string } | null;
-        throw new Error(payload?.error || `The build could not be started (${response.status}).`);
+        throw new Error(payload?.error || `The dashboard could not be applied (${response.status}).`);
       }
-      const conversationId = response.headers.get("X-Albert-Conversation-Id");
-      const turnId = response.headers.get("X-Albert-Turn-Id");
-      if (!conversationId || !turnId) throw new Error("The build turn is missing its identifiers.");
-      emit({ conversationId });
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let sawPlan = false;
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (value) buffer += decoder.decode(value, { stream: true });
-        const normalized = buffer.replace(/\r\n/gu, "\n");
-        const blocks = normalized.split("\n\n");
-        buffer = done ? "" : (blocks.pop() ?? "");
-        for (const block of blocks) {
-          const parsed = parseSseBlock(block);
-          if (!parsed || parsed.event !== "trace") continue;
-          let event: Record<string, unknown>;
-          try {
-            event = JSON.parse(parsed.data) as Record<string, unknown>;
-          } catch {
-            continue;
-          }
-          if (event.type === "dashboard_plan") sawPlan = true;
-          if (runToken === currentRunToken) consumeTraceEvent(event);
-        }
-        if (done) break;
-      }
-      if (runToken !== currentRunToken) return;
-      if (!sawPlan) {
-        throw new Error(snapshot.summary
-          ? `Albert could not compose the dashboard: ${snapshot.summary.slice(0, 240)}`
-          : "The build finished without a composed dashboard.");
-      }
-
-      emit({ phase: "applying", statusLine: "Placing the tiles…" });
-      const applied = await postJson("/api/dashboard/build/apply", { conversationId, turnId }, abort.signal);
-      if (runToken !== currentRunToken) return;
-      const summaryPayload = (applied.applied ?? {}) as Record<string, unknown>;
+      const applied = payload?.applied ?? {};
       emit({
+        phase: "applied",
         active: false,
-        phase: "completed",
-        statusLine: "Dashboard ready.",
-        appliedTitle: typeof summaryPayload.dashboardTitle === "string" ? summaryPayload.dashboardTitle : null,
-        appliedTimeframe: typeof summaryPayload.timeframe === "string" ? summaryPayload.timeframe : null,
-        skipped: Array.isArray(summaryPayload.skipped)
-          ? summaryPayload.skipped.filter((entry): entry is string => typeof entry === "string")
+        dashboardId: typeof applied.dashboardId === "string" ? applied.dashboardId : dashboardId,
+        appliedTitle: typeof applied.dashboardTitle === "string" ? applied.dashboardTitle : null,
+        appliedTimeframe: typeof applied.timeframe === "string" ? applied.timeframe : null,
+        appliedTileId: typeof applied.newTileId === "string" ? applied.newTileId : null,
+        skipped: Array.isArray(applied.skipped)
+          ? applied.skipped.filter((entry): entry is string => typeof entry === "string")
           : [],
+        error: null,
+        editTileId: null,
+        editTileTitle: null,
         settledCount: snapshot.settledCount + 1,
       });
     } catch (error) {
       if (runToken !== currentRunToken) return;
-      const aborted = error instanceof DOMException && error.name === "AbortError";
       emit({
+        phase: "failed",
         active: false,
-        phase: aborted ? "idle" : "failed",
-        error: aborted
-          ? null
-          : (error instanceof Error ? error.message.slice(0, 300) : "The dashboard build failed."),
+        error: error instanceof Error ? error.message.slice(0, 300) : "The dashboard build could not be applied.",
         settledCount: snapshot.settledCount + 1,
       });
-    } finally {
-      if (currentAbort === abort) currentAbort = null;
     }
   })();
-}
-
-/**
- * Stops watching and applying. The architect turn itself keeps running
- * server-side (the conversation stays in history), but nothing is applied.
- */
-export function stopDashboardBuild(): void {
-  currentRunToken += 1;
-  currentAbort?.abort();
-  currentAbort = null;
-  emit({ active: false, phase: "idle", statusLine: "", tasks: [], error: null });
 }
 
 /** Clears a settled build's banner state. */
@@ -280,15 +212,13 @@ export function dismissDashboardBuildResult(): void {
   if (snapshot.active) return;
   emit({
     phase: "idle",
+    instruction: "",
     error: null,
-    summary: null,
+    editTileId: null,
+    editTileTitle: null,
     appliedTitle: null,
     appliedTimeframe: null,
+    appliedTileId: null,
     skipped: [],
-    tasks: [],
-    queries: 0,
-    plannedTiles: 0,
-    statusLine: "",
-    instruction: "",
   });
 }

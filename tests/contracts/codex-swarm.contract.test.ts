@@ -53,6 +53,7 @@ function read(path: string): string {
 }
 
 const page = read("app/dash/page.tsx");
+const modelControls = read("app/dash/components/ModelRunControls.tsx");
 const panel = read("app/dash/components/SwarmPanel.tsx");
 const controller = read("app/dash/lib/swarm-run-controller.ts");
 const route = read("app/api/swarm/route.ts");
@@ -74,8 +75,8 @@ const salesDeepStore = read("services/swarm/src/sales-deep-store.ts");
 
 test("dash wires a Swarm button, progress slide-out, and hidden child threads", () => {
   assert.match(page, /import SwarmPanel(?:, \{ SWARM_PANEL_DEFAULT_WIDTH \})? from "\.\/components\/SwarmPanel"/u);
-  assert.match(page, /aria-label="Swarm"/u);
-  assert.match(page, /swarmToggleLabel\}>Swarm<\/span>/u);
+  assert.match(page, /onSwarmChange:/u);
+  assert.match(modelControls, /aria-label="Swarm"/u);
   assert.match(page, /<SwarmPanel[\s\S]*?onClose=/u);
   assert.match(page, /startSwarmFleet\(/u);
   assert.match(page, /hydrateSwarmFromRun\(/u);
@@ -758,7 +759,8 @@ test("the sales-deep test fleet stays inside sales and writes a briefing", () =>
   assert.match(route, /SALES_DEEP_PREFERENCES/u);
   assert.match(synthesisRoute, /buildSalesBriefingMarkdown/u);
   assert.match(synthesisRoute, /writeSalesBriefingFile/u);
-  assert.match(codexRoute, /readSalesBriefingFile/u);
+  assert.match(codexRoute, /loadLatestSalesBriefing/u);
+  assert.doesNotMatch(codexRoute, /readSalesBriefingFile/u, "tenant context never falls back to a shared file");
   assert.match(salesDeepStore, /node:fs\/promises/u);
   assert.match(briefingMigration, /briefing_markdown/u);
   assert.match(briefingMigration, /albert_swarm_save_briefing/u);

@@ -15,6 +15,24 @@ import {
   toScheduledTask,
   type ScheduledRun,
 } from "../../scheduled/src/contracts.js";
+import {
+  alertEvaluationSchema,
+  alertEventSchema,
+  alertSettingsSchema,
+  alertTriggerRowSchema,
+  toAlertEvaluation,
+  toAlertEvent,
+  toAlertSettings,
+  toAlertTriggerRow,
+  type AlertEvaluation,
+  type AlertEvent,
+} from "../../alerts/src/contracts.js";
+import type {
+  AlertEvaluationClaim,
+  AlertEvaluationOutcome,
+  AlertRecordInput,
+  AlertsWork,
+} from "./alerts.js";
 import type { ImessageWorkspace } from "./contracts.js";
 import type {
   ScheduledRunClaim,
@@ -99,6 +117,20 @@ const freshnessSchema = z.array(z.object({
 const scheduledWorkSchema = z.object({
   due: z.array(scheduledTaskSchema),
   queued: z.array(scheduledRunSchema.extend({ task: scheduledTaskSchema })),
+}).passthrough();
+
+const alertsWorkSchema = z.object({
+  queued: alertEvaluationSchema.nullish(),
+  due: z.boolean(),
+  settings: alertSettingsSchema,
+  triggers: z.array(alertTriggerRowSchema),
+}).passthrough();
+
+/** The homepage brief row (migration 0164), as the daily look reads it back. */
+const storedRecommendedAnalysisSchema = z.object({
+  model: z.string(),
+  generatedAt: z.string(),
+  recommendations: z.array(z.unknown()).default([]),
 }).passthrough();
 
 function toSchedulerTask(raw: z.infer<typeof scheduledTaskSchema>): SchedulerTask {
@@ -427,6 +459,93 @@ export class OwnerControlPlane {
     }, () => undefined);
   }
 
+  /** Whether a check was requested or a scheduled evaluation is due (migration 0185), for the alerts loop. */
+  async alertsWork(): Promise<AlertsWork> {
+    return this.rpc("albert_alerts_work", undefined, (data) => {
+      const parsed = alertsWorkSchema.parse(singleton(data));
+      return Object.freeze({
+        queued: parsed.queued ? toAlertEvaluation(parsed.queued) : null,
+        due: parsed.due,
+        settings: toAlertSettings(parsed.settings),
+        triggers: Object.freeze(parsed.triggers.map(toAlertTriggerRow)),
+      });
+    });
+  }
+
+  async claimAlertEvaluation(claim: AlertEvaluationClaim): Promise<AlertEvaluation | null> {
+    return this.rpc("albert_alerts_evaluation_claim", {
+      p_evaluation_id: claim.evaluationId,
+      p_trigger: claim.trigger,
+      p_conversation_id: claim.conversationId,
+      p_turn_id: claim.turnId,
+    }, (data) => {
+      const value = singleton(data);
+      if (value == null) return null;
+      return toAlertEvaluation(alertEvaluationSchema.parse(value));
+    });
+  }
+
+  /** Records one trigger's reading and its events; returns the events that were new. */
+  async recordAlertResult(input: AlertRecordInput): Promise<readonly AlertEvent[]> {
+    return this.rpc("albert_alerts_record_result", {
+      p_evaluation_id: input.evaluationId,
+      p_trigger_key: input.triggerKey,
+      p_result: input.result,
+      p_events: input.events.map((event) => ({
+        dedupeKey: event.dedupeKey,
+        headline: event.headline,
+        body: event.body,
+        evidence: event.evidence ?? {},
+        recipients: [...event.recipients],
+      })),
+    }, (data) => Object.freeze(z.array(alertEventSchema).parse(data ?? []).map(toAlertEvent)));
+  }
+
+  async finishAlertEvent(input: Readonly<{ eventId: string; status: "sent" | "failed"; error?: string }>): Promise<void> {
+    return this.rpc("albert_alerts_event_finish", {
+      p_event_id: input.eventId,
+      p_status: input.status,
+      p_error: input.error ?? null,
+    }, () => undefined);
+  }
+
+  async finishAlertEvaluation(outcome: AlertEvaluationOutcome): Promise<void> {
+    return this.rpc("albert_alerts_evaluation_finish", {
+      p_evaluation_id: outcome.evaluationId,
+      p_status: outcome.status,
+      p_summary: outcome.summary,
+      p_error: outcome.error ?? null,
+      p_freshness_digest: outcome.freshnessDigest ?? null,
+    }, () => undefined);
+  }
+
+  /** The stored homepage brief, read as the owner: what the daily look last wrote and when. */
+  async recommendedAnalysis(): Promise<Readonly<{ model: string; generatedAt: string; itemCount: number }> | null> {
+    return this.rpc("albert_recommended_analysis", undefined, (data) => {
+      const value = singleton(data);
+      if (value == null) return null;
+      const parsed = storedRecommendedAnalysisSchema.parse(value);
+      return Object.freeze({ model: parsed.model, generatedAt: parsed.generatedAt, itemCount: parsed.recommendations.length });
+    });
+  }
+
+  /** Writes the homepage brief the daily look produced, on the owner's own row. */
+  async saveRecommendedAnalysis(input: Readonly<{
+    sourceFingerprint: string;
+    sourceCount: number;
+    verdict: string;
+    recommendations: readonly unknown[];
+    model: string;
+  }>): Promise<void> {
+    return this.rpc("albert_save_recommended_analysis", {
+      p_source_fingerprint: input.sourceFingerprint,
+      p_source_count: input.sourceCount,
+      p_recommendations: input.recommendations,
+      p_model: input.model,
+      p_verdict: input.verdict,
+    }, () => undefined);
+  }
+
   async businessContext(): Promise<string | undefined> {
     try {
       return await this.rpc("albert_business_context", undefined, (data) => {
@@ -455,7 +574,7 @@ export class OwnerControlPlane {
     const byConnectorDomain = new Map<string, ConnectorFreshnessEntry>();
     for (const connection of active) {
       for (const readiness of connection.readiness) {
-        const key = `${connection.connector_key} ${readiness.domain}`;
+        const key = `${connection.connector_key} ${readiness.domain}`;
         const existing = byConnectorDomain.get(key);
         const candidate = readiness.data_ready_through ?? null;
         if (!existing || (candidate !== null && (existing.dataThrough === null || candidate > existing.dataThrough))) {

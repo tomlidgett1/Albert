@@ -45,14 +45,17 @@ test("Codex route and runtime reuse Cube semantics without importing the V3 agen
   assert.match(route, /X-Albert-Model", preferences\.model/u);
 });
 
-test("Codex service has no database or Cube signing credential", async () => {
+test("the service admits only the isolated Omni job database and no analytical or Cube signing credential", async () => {
   const sources = await Promise.all([
     read("services/codex-runtime/src/config.ts"),
     read("services/codex-runtime/src/http.ts"),
     read("services/codex-runtime/src/main.ts"),
   ]);
   const joined = sources.join("\n");
-  assert.doesNotMatch(joined, /CUBEJS_API_SECRET|DATABASE_URL|SUPABASE_SERVICE_ROLE_KEY/u);
+  assert.doesNotMatch(joined.replaceAll("ALBERT_OMNI_JOB_DATABASE_URL", "OMNI_JOB_STORE"), /CUBEJS_API_SECRET|DATABASE_URL|SUPABASE_SERVICE_ROLE_KEY/u);
+  assert.match(joined, /dedicated runtime identity/u);
+  const childEnvironment = await read("packages/albert-codex/src/app-server.ts");
+  assert.doesNotMatch(childEnvironment, /ALBERT_OMNI_JOB_DATABASE_URL/u);
   assert.match(joined, /CUBE_API_URL/u);
   assert.match(joined, /codexServiceTurnSchema/u);
 });

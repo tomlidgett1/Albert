@@ -60,11 +60,16 @@ import ConnectionsWorkspace, {
   type ConnectionsWorkspaceData,
 } from "./components/ConnectionsWorkspace";
 import DictationWaveform from "./components/DictationWaveform";
-import KeyInsightsPanel from "./components/KeyInsightsPanel";
 import { ModelRunControls } from "./components/ModelRunControls";
-import { ConversationRuntimeTabs, type ConversationRuntimeTab } from "./components/conversation-runtime-tabs";
+import DiscoverWorkspace from "./components/DiscoverWorkspace";
+import ScheduledWorkspace from "./components/ScheduledWorkspace";
+import AlertsWorkspace from "./components/AlertsWorkspace";
+import { ALERTS_CONVERSATION_TITLE_PREFIX } from "@/services/alerts/src/contracts";
+import { DAILY_BRIEF_CONVERSATION_TITLE_PREFIX } from "@/services/recommended-analysis/src/daily-brief";
+import { ChatSurfaceTabs, type ChatSurface } from "./components/ChatSurfaceTabs";
+import { View2ConnectedTools } from "./components/View2ConnectedTools";
 import { CollapsibleUserQuestion } from "./components/CollapsibleUserQuestion";
-import RuntimeComparisonWorkspace from "./components/runtime-comparison-workspace";
+import RuntimeComparisonWorkspace, { type ConversationRuntimeTab } from "./components/runtime-comparison-workspace";
 import OrganizationWorkspace from "./components/OrganizationWorkspace";
 import BusinessContextWorkspace from "./components/BusinessContextWorkspace";
 import SemanticMemoryWorkspace from "./components/SemanticMemoryWorkspace";
@@ -83,10 +88,33 @@ import TenantDeletionWorkspace, {
   parseTenantDeletionReceipt,
   type TenantDeletionReceipt,
 } from "./components/TenantDeletionWorkspace";
-import DashboardWorkspace from "./components/DashboardWorkspace";
+import DashboardWorkspace, { type DashboardElementRef } from "./components/DashboardWorkspace";
+import DashboardsWorkspace from "./components/DashboardsWorkspace";
+import DashboardBuildPanel from "./components/DashboardBuildPanel";
+import {
+  applyDashboardBuildTurn,
+  attachDashboardBuildDashboard,
+  attachDashboardBuildTurn,
+  beginDashboardBuildTurn,
+  dashboardBuildSnapshot,
+  failDashboardBuildTurn,
+  stopDashboardBuildTurn,
+  subscribeDashboardBuild,
+} from "./lib/dashboard-build-controller";
+import { isDashboardBuildTurn } from "./lib/dashboard-build-view";
+import {
+  dashboardBriefDisplayText,
+  parseDashboardBriefMessage,
+} from "@/services/dashboard-build/src/contracts";
 import ProactiveWorkspace from "./components/ProactiveWorkspace";
 import DashboardMasterWorkspace from "./components/DashboardMasterWorkspace";
 import SwarmPanel, { SWARM_PANEL_DEFAULT_WIDTH } from "./components/SwarmPanel";
+
+/** Dashboard mode split: the chat card never drops below this width. */
+const DASHBOARD_CHAT_MIN_WIDTH = 380;
+const DASHBOARD_PANEL_MIN_WIDTH = 480;
+/** The split handle between the two cards (the shell itself has no inset). */
+const DASHBOARD_SPLIT_CHROME = 12;
 import RecommendedAnalysis from "./components/RecommendedAnalysis";
 import {
   hydrateSwarmFromRun,
@@ -101,7 +129,6 @@ import TestChartWorkspace from "./components/TestChartWorkspace";
 import NewTestWorkspace from "./components/NewTestWorkspace";
 import AgentsWorkspace from "./components/AgentsWorkspace";
 import QueryLogsWorkspace from "./components/QueryLogsWorkspace";
-import { deriveKeyInsights, latestInsightActivity } from "./components/key-insights";
 import { reloadPublishedNivoChartDesign } from "./lib/nivo-chart-design-store";
 import { latestReasoningSummary } from "./lib/reasoning-summary";
 import styles from "./dash.module.css";
@@ -444,6 +471,12 @@ type ChatMessage = {
   animateReveal?: boolean;
   /** When false, hide thinking/answer trail until the user bubble has pinned. */
   trailVisible?: boolean;
+  /** This turn ran in dashboard-architect mode (dashboard mode send). */
+  dashboardBuild?: boolean;
+  /** The dashboard a build turn targeted (ADR 0134); reopening re-enters it. */
+  dashboardId?: string;
+  /** The element an element-edit turn rebuilt. */
+  dashboardEditTileId?: string;
 };
 
 function buildStoppedTraceEvent(
@@ -921,6 +954,8 @@ export default function DashPage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
   const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("omni");
+  /** Chat is the conversation; Discover the grid of questions worth asking; Scheduled the reports Albert texts on a timer. */
+  const [chatSurface, setChatSurface] = useState<ChatSurface>("chat");
   const [specialistAgentId, setSpecialistAgentId] = useState<SpecialistAgentId>("general");
   const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_OMNI_PREFERENCES);
   const [codexSolPlannerEnabled, setCodexSolPlannerEnabled] = useState(DEFAULT_CODEX_SOL_PLANNER);
@@ -935,7 +970,6 @@ export default function DashPage() {
       return false;
     }
   });
-  const [takeawaysOpen, setTakeawaysOpen] = useState(false);
   const [reasoningPanelOpen, setReasoningPanelOpen] = useState(false);
   const [swarmEnabled, setSwarmEnabled] = useState(false);
   const [superAgentEnabled, setSuperAgentEnabled] = useState(false);
@@ -959,6 +993,72 @@ export default function DashPage() {
     const resolved = typeof next === "function" ? next(superAgentEnabledRef.current) : next;
     superAgentEnabledRef.current = resolved;
     setSuperAgentEnabled(resolved);
+  }, []);
+  // Dashboard mode (ADR 0129 rework): sends route through the dashboard
+  // architect on Omni, the chat shows the working, and the build panel shows
+  // the dashboard forming in real time.
+  const [dashboardModeEnabled, setDashboardModeEnabled] = useState(false);
+  const dashboardModeEnabledRef = useRef(false);
+  const [dashboardPanelOpen, setDashboardPanelOpen] = useState(false);
+  // Dashboards, plural (ADR 0134): the dashboard this mode is building, the
+  // dashboard open in the Dashboards tab, and a reload key for the list.
+  const [dashboardModeDashboardId, setDashboardModeDashboardId] = useState<string | null>(null);
+  const dashboardModeDashboardIdRef = useRef<string | null>(null);
+  const setDashboardModeDashboard = useCallback((dashboardId: string | null) => {
+    dashboardModeDashboardIdRef.current = dashboardId;
+    setDashboardModeDashboardId(dashboardId);
+  }, []);
+  const [dashboardViewId, setDashboardViewId] = useState<string | null>(null);
+  const [dashboardsReloadKey, setDashboardsReloadKey] = useState(0);
+  const [creatingDashboard, setCreatingDashboard] = useState(false);
+  const dashboardBuild = useSyncExternalStore(subscribeDashboardBuild, dashboardBuildSnapshot, dashboardBuildSnapshot);
+  useEffect(() => {
+    // A settled build changes the list's titles and element counts.
+    if (dashboardBuild.settledCount > 0) setDashboardsReloadKey((key) => key + 1);
+  }, [dashboardBuild.settledCount]);
+  // The split between the chat card and the dashboard card is draggable and
+  // remembered per browser; null keeps the stylesheet's proportional default.
+  const [dashboardPanelWidth, setDashboardPanelWidth] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const stored = Number(window.localStorage.getItem("albert:dashboard-mode:panel-width"));
+      return Number.isFinite(stored) && stored >= DASHBOARD_PANEL_MIN_WIDTH ? Math.round(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [dashboardPanelResizing, setDashboardPanelResizing] = useState(false);
+  const chatShellRef = useRef<HTMLDivElement>(null);
+  const dashboardSplitDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+  const clampDashboardPanelWidth = useCallback((width: number) => {
+    const shellWidth = chatShellRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+    const maxWidth = Math.max(
+      DASHBOARD_PANEL_MIN_WIDTH,
+      shellWidth - DASHBOARD_SPLIT_CHROME - DASHBOARD_CHAT_MIN_WIDTH,
+    );
+    return Math.round(Math.min(maxWidth, Math.max(DASHBOARD_PANEL_MIN_WIDTH, width)));
+  }, []);
+  const applyDashboardPanelWidth = useCallback((width: number) => {
+    setDashboardPanelWidth(clampDashboardPanelWidth(width));
+  }, [clampDashboardPanelWidth]);
+  useEffect(() => {
+    if (dashboardPanelWidth === null) return;
+    try {
+      window.localStorage.setItem("albert:dashboard-mode:panel-width", String(dashboardPanelWidth));
+    } catch {
+      // Ignore private-mode storage failures.
+    }
+  }, [dashboardPanelWidth]);
+  const currentDashboardPanelWidth = useCallback(() => {
+    if (dashboardPanelWidth !== null) return dashboardPanelWidth;
+    const aside = document.getElementById("analysis-takeaways");
+    return Math.round(aside?.getBoundingClientRect().width ?? DASHBOARD_PANEL_MIN_WIDTH);
+  }, [dashboardPanelWidth]);
+  const setDashboardMode = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === "function" ? next(dashboardModeEnabledRef.current) : next;
+    // Send routing reads the ref synchronously, like Swarm's.
+    dashboardModeEnabledRef.current = resolved;
+    setDashboardModeEnabled(resolved);
   }, []);
   const swarmSnapshot = useSyncExternalStore(subscribeSwarmRun, swarmRunSnapshot, swarmRunSnapshot);
   // First-seen timestamps for the synthesized swarm trace events, per run.
@@ -1140,16 +1240,6 @@ export default function DashPage() {
     && chatMessages.length === 0
     && !openingConversationId
     && !conversationSkelActive;
-  const keyInsightTurns = chatMessages
-    .filter((message) => message.role === "assistant")
-    .map((message) => ({
-      id: message.id,
-      events: message.events ?? [],
-      streaming: Boolean(message.isStreaming),
-    }));
-  const keyInsights = deriveKeyInsights(keyInsightTurns);
-  const keyInsightsStreaming = keyInsightTurns.some((turn) => turn.streaming);
-  const keyInsightActivity = latestInsightActivity(keyInsightTurns);
   const reasoningTurns = chatMessages.flatMap((message, index) => {
     if (message.role !== "assistant" || message.runtime !== "codex") return [];
     const question = [...chatMessages.slice(0, index)]
@@ -1182,7 +1272,14 @@ export default function DashPage() {
       streaming: Boolean(message.isStreaming),
     }];
   });
-  const sidePanelOpen = takeawaysOpen || reasoningPanelOpen || swarmPanelOpen;
+  // The viewed conversation's most recent dashboard-architect turn feeds the
+  // build panel: its trace is the live view while it streams, and the marker
+  // by which a reopened build conversation re-enters dashboard mode.
+  const dashboardTurnMessage = useMemo(() => [...chatMessages].reverse().find((message) => (
+    message.role === "assistant"
+    && (message.dashboardBuild === true || isDashboardBuildTurn(message.events ?? []))
+  )), [chatMessages]);
+  const sidePanelOpen = reasoningPanelOpen || swarmPanelOpen || dashboardPanelOpen;
   const chatBusy = isChatResponding
     || (
       swarmSnapshot.active
@@ -1226,7 +1323,10 @@ export default function DashPage() {
     const singleLineHeight = showHeroComposer ? 34 : 28;
     const maxHeight = 168;
     textarea.style.height = "0px";
-    const contentHeight = textarea.scrollHeight;
+    // An empty field measures its wrapped placeholder as content, which
+    // would grow the box and flip the bar into its multiline layout inside a
+    // narrow card; the empty field is always exactly one line.
+    const contentHeight = textarea.value === "" ? singleLineHeight : textarea.scrollHeight;
     const nextHeight = Math.min(Math.max(contentHeight, singleLineHeight), maxHeight);
     textarea.style.height = `${nextHeight}px`;
     // Prefer real wrapping / newlines over scrollHeight noise so the empty
@@ -1406,6 +1506,11 @@ export default function DashPage() {
       if (proactiveConversationIds.has(conversation.conversationId)) return false;
       if (swarmConversationIds.has(conversation.conversationId)) return false;
       if (dashboardMasterConversationIds.has(conversation.conversationId)) return false;
+      // Alert checks run their turn leases in a standing conversation; it is
+      // bookkeeping, not an analysis, so it stays out of history.
+      if (conversation.title.startsWith(ALERTS_CONVERSATION_TITLE_PREFIX)) return false;
+      // The daily look runs its turn in a standing conversation for the same reason.
+      if (conversation.title.startsWith(DAILY_BRIEF_CONVERSATION_TITLE_PREFIX)) return false;
       if (!needle) return true;
       return conversation.title.toLowerCase().includes(needle)
         || conversation.lastMessage.toLowerCase().includes(needle)
@@ -1453,6 +1558,8 @@ export default function DashPage() {
       && !proactiveConversationIds.has(conversation.conversationId)
       && !swarmConversationIds.has(conversation.conversationId)
       && !dashboardMasterConversationIds.has(conversation.conversationId)
+      && !conversation.title.startsWith(ALERTS_CONVERSATION_TITLE_PREFIX)
+      && !conversation.title.startsWith(DAILY_BRIEF_CONVERSATION_TITLE_PREFIX)
     ));
   const chatTitle = useMemo(() => {
     if (activeConversationId) {
@@ -1469,13 +1576,15 @@ export default function DashPage() {
       ? "About your business"
       : activeItem === "DashboardMaster"
         ? "Dashboard Master"
-        : activeItem;
+        : activeItem === "Dashboard"
+          ? "Dashboards"
+          : activeItem;
   const view2Pages = useMemo(() => ([
     { id: "Chat" as const, label: "Chat", icon: "chat" as const, show: true },
     { id: "Agents" as const, label: "Agents", icon: "agents" as const, show: true },
     { id: "Proactive" as const, label: "Proactive", icon: "radar" as const, show: true },
     { id: "DashboardMaster" as const, label: "Master", icon: "target" as const, show: true },
-    { id: "Dashboard" as const, label: "Dashboard", icon: "dashboard" as const, show: true },
+    { id: "Dashboard" as const, label: "Dashboards", icon: "dashboard" as const, show: true },
     { id: "My Data" as const, label: "My Data", icon: "database" as const, show: true },
     { id: "New test" as const, label: "New test", icon: "chat" as const, show: true },
     { id: "Logs" as const, label: "Logs", icon: "logs" as const, show: canViewQueryLogs },
@@ -1871,7 +1980,15 @@ export default function DashPage() {
         || !Array.isArray(turn.events)
       ) continue;
       messageId += 1;
-      restored.push({ id: messageId, role: "user", text: turn.user_message, suppressEnter: true });
+      const brief = parseDashboardBriefMessage(turn.user_message);
+      restored.push({
+        id: messageId,
+        role: "user",
+        text: dashboardBriefDisplayText(turn.user_message),
+        suppressEnter: true,
+        ...(brief?.dashboardId ? { dashboardId: brief.dashboardId } : {}),
+        ...(brief?.kind === "edit" && brief.tileId ? { dashboardEditTileId: brief.tileId } : {}),
+      });
       const events = turn.events
         .map(parseTraceEvent)
         .filter((event): event is TraceEvent => event !== null)
@@ -1895,6 +2012,9 @@ export default function DashPage() {
         conversationId,
         turnId: turn.turn_id,
         suppressEnter: true,
+        ...(brief ? { dashboardBuild: true } : {}),
+        ...(brief?.dashboardId ? { dashboardId: brief.dashboardId } : {}),
+        ...(brief?.kind === "edit" && brief.tileId ? { dashboardEditTileId: brief.tileId } : {}),
       });
       restoredPreferences = normalizeAgentPreferences(turn.runtime_profile);
     }
@@ -1979,6 +2099,28 @@ export default function DashPage() {
     activeChatRuntimeRef.current = cached.runtime;
     setSpecialistAgentId(cached.specialistAgentId);
     specialistAgentIdRef.current = cached.specialistAgentId;
+    // A build conversation reopens straight into dashboard mode — chat left,
+    // dashboard right — and an ordinary conversation drops back out of it.
+    const hasDashboardTurn = cached.messages.some((message) => (
+      message.role === "assistant"
+      && (message.dashboardBuild === true || isDashboardBuildTurn(message.events ?? []))
+    ));
+    if (hasDashboardTurn) {
+      // The dashboard the conversation built travels on its messages (parsed
+      // from the persisted brief), so the mode reopens on the same one.
+      const targeted = [...cached.messages].reverse().find((message) => typeof message.dashboardId === "string");
+      setDashboardModeDashboard(targeted?.dashboardId ?? null);
+      setSwarmMode(false);
+      setSuperAgentMode(false);
+      setDashboardMode(true);
+      setReasoningPanelOpen(false);
+      setSwarmPanelOpen(false);
+      setDashboardPanelOpen(true);
+    } else if (dashboardModeEnabledRef.current) {
+      setDashboardMode(false);
+      setDashboardModeDashboard(null);
+      setDashboardPanelOpen(false);
+    }
     const baseMessages = (live ? cached.messages : finalizeStreamingMessages(cached.messages)).map((message) => ({
       ...message,
       suppressEnter: true,
@@ -2023,7 +2165,7 @@ export default function DashPage() {
           : item
       )));
     }
-  }, [clearConversationUnread]);
+  }, [clearConversationUnread, setDashboardMode, setDashboardModeDashboard, setSuperAgentMode, setSwarmMode]);
 
   const prefetchConversation = useCallback(async (conversationId: string) => {
     if (conversationCacheRef.current.has(conversationId)) return;
@@ -2113,8 +2255,8 @@ export default function DashPage() {
       });
       if (run.status === "running" || run.status === "synthesising" || run.synthesis) {
         setSwarmPanelOpen(true);
-        setTakeawaysOpen(false);
         setReasoningPanelOpen(false);
+        setDashboardPanelOpen(false);
       }
       const settled = run.agents.every((agent) => (
         agent.status === "completed" || agent.status === "failed" || agent.status === "stopped"
@@ -2186,6 +2328,7 @@ export default function DashPage() {
     setChatClarification(null);
     setClarifyDraft("");
     setActiveItem("Chat");
+    setChatSurface("chat");
     setActiveConversationId(conversationId);
     activeConversationIdRef.current = conversationId;
     viewingKeyRef.current = conversationId;
@@ -2219,7 +2362,6 @@ export default function DashPage() {
     if (liveTurnsRef.current.has(conversationId)) {
       if (swarmRunSnapshot().parentConversationId === conversationId) {
         setSwarmPanelOpen(true);
-        setTakeawaysOpen(false);
         setReasoningPanelOpen(false);
       } else {
         hydrateSwarmConversation(conversationId);
@@ -2767,6 +2909,8 @@ export default function DashPage() {
       /** Voice narration listens to the turn without owning the chat UI. */
       observer?: VoiceTurnObserver;
       swarmKind?: "sales-deep" | "super-agent";
+      /** An element edit (ADR 0134): the dashboard-mode send rebuilds this one tile. */
+      dashboardEdit?: DashboardElementRef;
     }>,
   ) => {
     const text = (suggestedText ?? chatDraft).trim();
@@ -2829,7 +2973,18 @@ export default function DashPage() {
       : null;
     const runPreferences = options?.preferencesOverride ?? agentPreferencesRef.current;
     const runSpecialistAgentId = specialistAgentIdRef.current;
-    const runRuntime = swarmEnabledRef.current && !superAgentEnabledRef.current && activeChatRuntimeRef.current === "omni"
+    // Dashboard mode routes the send through the dashboard architect on Omni.
+    // Swarm and Super agent win if somehow both are set (toggles are exclusive).
+    const runDashboardBuild = dashboardModeEnabledRef.current
+      && !swarmEnabledRef.current
+      && !superAgentEnabledRef.current
+      && !options?.forceRuntime
+      && !options?.swarmKind;
+    const runDashboardTargetId = runDashboardBuild ? dashboardModeDashboardIdRef.current : null;
+    const runDashboardEdit = runDashboardBuild ? options?.dashboardEdit ?? null : null;
+    const runRuntime = runDashboardBuild
+      ? "omni"
+      : swarmEnabledRef.current && !superAgentEnabledRef.current && activeChatRuntimeRef.current === "omni"
       ? "omni"
       : swarmEnabledRef.current || superAgentEnabledRef.current
       ? "codex"
@@ -2867,7 +3022,15 @@ export default function DashPage() {
       const finalized = finalizeStreamingMessages(base, "Stopped.");
       return [
         ...finalized,
-        { id: userId, role: "user" as const, text, suppressEnter: firstFlight },
+        {
+          id: userId,
+          role: "user" as const,
+          // An element edit reads as one in the trail, as it does on reload.
+          text: runDashboardEdit ? `Edit “${runDashboardEdit.title}”: ${text}` : text,
+          suppressEnter: firstFlight,
+          ...(runDashboardTargetId ? { dashboardId: runDashboardTargetId } : {}),
+          ...(runDashboardEdit ? { dashboardEditTileId: runDashboardEdit.tileId } : {}),
+        },
         {
           id: assistantId,
           role: "assistant" as const,
@@ -2877,6 +3040,9 @@ export default function DashPage() {
           runtime: runRuntime,
           suppressEnter: firstFlight,
           trailVisible: Boolean(reduceMotion) || !firstFlight,
+          ...(runDashboardBuild ? { dashboardBuild: true } : {}),
+          ...(runDashboardTargetId ? { dashboardId: runDashboardTargetId } : {}),
+          ...(runDashboardEdit ? { dashboardEditTileId: runDashboardEdit.tileId } : {}),
         },
       ];
     })();
@@ -2968,8 +3134,16 @@ export default function DashPage() {
       }
     };
 
+    // Everything patched onto the assistant row so far. The terminal commits
+    // below fold this in: they read the conversation cache synchronously,
+    // and when a response arrives in one chunk React has not yet flushed the
+    // functional updaters that wrote the turn identifiers (and runtime) —
+    // without this the final plain setState would drop them, which silently
+    // disables every per-turn affordance (Add to dashboard, source links).
+    const assistantPatches: Partial<ChatMessage> = {};
     const updateAssistant = (patch: Partial<ChatMessage>) => {
       if (liveTurnsRef.current.get(turnKey)?.controller !== controller) return;
+      Object.assign(assistantPatches, patch);
       const cacheKey = trackedConversationId && ulidPattern.test(trackedConversationId)
         ? trackedConversationId
         : turnKey;
@@ -2995,6 +3169,7 @@ export default function DashPage() {
     };
 
     let swarmFleetStarted = false;
+    let dashboardRunToken: number | null = null;
     try {
       if (swarmEnabledRef.current || superAgentEnabledRef.current) {
         const swarmKind = options?.swarmKind
@@ -3135,18 +3310,70 @@ export default function DashPage() {
         });
         swarmFleetStarted = true;
         setSwarmPanelOpen(true);
-        setTakeawaysOpen(false);
         setReasoningPanelOpen(false);
         return;
       }
+      // Dashboard mode: compose the architect brief server-side — the owner's
+      // ask plus the current tiles for refinement context — then run it as a
+      // real Omni turn with dashboardBuild so the working streams into this
+      // chat while the build panel shows the tiles landing.
+      let requestMessage = text;
+      let requestPreferences = runPreferences;
+      let dashboardEditTopic: string | null = null;
+      if (runDashboardBuild) {
+        dashboardRunToken = beginDashboardBuildTurn(text, {
+          dashboardId: runDashboardTargetId,
+          editTile: runDashboardEdit,
+        });
+        setDashboardPanelOpen(true);
+        setReasoningPanelOpen(false);
+        setSwarmPanelOpen(false);
+        const briefRequest = {
+          instruction: text,
+          ...(runDashboardTargetId ? { dashboardId: runDashboardTargetId } : {}),
+          ...(runDashboardEdit ? { tileId: runDashboardEdit.tileId } : {}),
+        };
+        debug.request("/api/dashboard/build", briefRequest);
+        const briefResponse = await fetch("/api/dashboard/build", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(briefRequest),
+          signal: controller.signal,
+        });
+        const briefPayload = await briefResponse.json().catch(() => null) as {
+          message?: string;
+          preferences?: AgentRunPreferences;
+          dashboardId?: string;
+          editTopic?: string;
+          error?: string;
+        } | null;
+        if (!briefResponse.ok || typeof briefPayload?.message !== "string") {
+          throw new Error(briefPayload?.error || "The dashboard build could not be started.");
+        }
+        requestMessage = briefPayload.message;
+        if (briefPayload.preferences) requestPreferences = briefPayload.preferences;
+        if (typeof briefPayload.editTopic === "string") dashboardEditTopic = briefPayload.editTopic;
+        // An unnamed build lands on the dashboard the server resolved (or
+        // created); the mode follows it so the panel shows that document.
+        if (typeof briefPayload.dashboardId === "string" && ulidPattern.test(briefPayload.dashboardId)) {
+          attachDashboardBuildDashboard(dashboardRunToken, briefPayload.dashboardId);
+          if (dashboardModeDashboardIdRef.current !== briefPayload.dashboardId) {
+            setDashboardModeDashboard(briefPayload.dashboardId);
+          }
+        }
+      }
       const requestBody = {
-        message: text,
-        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "omni" || runRuntime === "xero_mcp" ? { preferences: runPreferences } : {}),
+        message: requestMessage,
+        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "omni" || runRuntime === "xero_mcp" ? { preferences: requestPreferences } : {}),
         ...(runRuntime === "codex" ? { solPlanner: runSolPlanner } : {}),
         ...(runRuntime === "codex" ? { proMode: runProMode } : {}),
         ...(requestConversationId ? { conversationId: requestConversationId } : {}),
         ...(requestConversationId && replaceTurnId ? { replaceTurnId } : {}),
         ...(runRuntime === "v3" ? { specialistAgentId: runSpecialistAgentId } : {}),
+        ...(runDashboardBuild ? { dashboardBuild: true } : {}),
+        // An element edit runs the lean edit mode with its topic inlined (ADR 0134).
+        ...(runDashboardBuild && runDashboardEdit ? { dashboardEdit: true } : {}),
+        ...(runDashboardBuild && runDashboardEdit && dashboardEditTopic ? { dashboardEditTopic } : {}),
         confirmedOption,
       };
       const endpoint = runRuntime === "codex"
@@ -3213,7 +3440,7 @@ export default function DashPage() {
         await response.body?.cancel("runtime_lock_mismatch");
         throw new Error("The conversation runtime did not match the selected method.");
       }
-      if ((runtime === "codex" || runtime === "omni") && response.headers.get("X-Albert-Model") !== runPreferences.model) {
+      if ((runtime === "codex" || runtime === "omni") && response.headers.get("X-Albert-Model") !== requestPreferences.model) {
         await response.body?.cancel("codex_model_mismatch");
         throw new Error("The conversation did not use the selected model.");
       }
@@ -3288,6 +3515,16 @@ export default function DashPage() {
       if (responseTurnId && ulidPattern.test(responseTurnId)) {
         const live = liveTurnsRef.current.get(turnKey);
         if (live) liveTurnsRef.current.set(turnKey, { ...live, turnId: responseTurnId });
+      }
+      if (
+        dashboardRunToken !== null
+        && responseConversationId && ulidPattern.test(responseConversationId)
+        && responseTurnId && ulidPattern.test(responseTurnId)
+      ) {
+        attachDashboardBuildTurn(dashboardRunToken, {
+          conversationId: responseConversationId,
+          turnId: responseTurnId,
+        });
       }
       if (runtime !== "fixture" && isViewingThisTurn()) {
         setActiveChatRuntime(runtime);
@@ -3388,6 +3625,7 @@ export default function DashPage() {
       }
       if (controller.signal.aborted) {
         debug.finish("stopped");
+        if (dashboardRunToken !== null) stopDashboardBuildTurn(dashboardRunToken);
         const stoppedEvent = buildStoppedTraceEvent(
           assistantId,
           "Stopped.",
@@ -3401,6 +3639,7 @@ export default function DashPage() {
           message.id === assistantId
             ? {
               ...message,
+              ...assistantPatches,
               isStreaming: false,
               events: receivedEvents.length > 0 ? [...receivedEvents, stoppedEvent] : [stoppedEvent],
             }
@@ -3424,9 +3663,33 @@ export default function DashPage() {
       const current = conversationCacheRef.current.get(cacheKey)?.messages ?? initialMessages;
       commitMessages(current.map((message) => (
         message.id === assistantId
-          ? { ...message, isStreaming: false, events: [...receivedEvents] }
+          ? { ...message, ...assistantPatches, isStreaming: false, events: [...receivedEvents] }
           : message
       )));
+      if (dashboardRunToken !== null) {
+        // A composed plan makes the turn a dashboard: apply it from the
+        // persisted trace. Without one, surface why the architect stopped.
+        const sawPlan = receivedEvents.some((event) => event.type === "dashboard_plan");
+        const settledTurnId = liveTurnsRef.current.get(turnKey)?.turnId;
+        if (
+          sawPlan
+          && trackedConversationId && ulidPattern.test(trackedConversationId)
+          && settledTurnId && ulidPattern.test(settledTurnId)
+        ) {
+          applyDashboardBuildTurn(dashboardRunToken, {
+            conversationId: trackedConversationId,
+            turnId: settledTurnId,
+          });
+        } else {
+          const failure = [...receivedEvents]
+            .reverse()
+            .find((event) => event.type === "error") as { message?: string } | undefined;
+          failDashboardBuildTurn(
+            dashboardRunToken,
+            failure?.message ?? "The build finished without a composed dashboard.",
+          );
+        }
+      }
       void loadConversationSummaries();
     } catch (error) {
       debug.failed(error);
@@ -3439,6 +3702,7 @@ export default function DashPage() {
         : turnKey;
       const current = conversationCacheRef.current.get(cacheKey)?.messages ?? initialMessages;
       if (controller.signal.aborted) {
+        if (dashboardRunToken !== null) stopDashboardBuildTurn(dashboardRunToken);
         const stoppedEvent = buildStoppedTraceEvent(
           assistantId,
           "Stopped.",
@@ -3448,6 +3712,7 @@ export default function DashPage() {
           message.id === assistantId
             ? {
               ...message,
+              ...assistantPatches,
               isStreaming: false,
               events: receivedEvents.length > 0 ? [...receivedEvents, stoppedEvent] : [stoppedEvent],
             }
@@ -3457,6 +3722,7 @@ export default function DashPage() {
       }
       const message = describeChatFailure(error, { runtime: runRuntime, phase: "start" });
       observerFailure = message;
+      if (dashboardRunToken !== null) failDashboardBuildTurn(dashboardRunToken, message);
       const errorEvent: TraceEvent = {
         id: `trace_error_${assistantId}`,
         sequence: receivedEvents.length + 1,
@@ -3468,7 +3734,7 @@ export default function DashPage() {
       };
       commitMessages(current.map((entry) => (
         entry.id === assistantId
-          ? { ...entry, isStreaming: false, events: [...receivedEvents, errorEvent] }
+          ? { ...entry, ...assistantPatches, isStreaming: false, events: [...receivedEvents, errorEvent] }
           : entry
       )));
     } finally {
@@ -3824,7 +4090,6 @@ export default function DashPage() {
     if (conversationId) {
       conversationCacheRef.current.delete(conversationId);
     }
-    setTakeawaysOpen(false);
     setReasoningPanelOpen(false);
 
     void sendChatMessage(pending.text, undefined, {
@@ -3999,6 +4264,7 @@ export default function DashPage() {
       composerExpandTimerRef.current = undefined;
     }
     setActiveItem("Chat");
+    setChatSurface("chat");
     setChatMessages([]);
     setActiveConversationId(undefined);
     activeConversationIdRef.current = undefined;
@@ -4012,9 +4278,11 @@ export default function DashPage() {
     setChatDraft("");
     setIsChatResponding(false);
     setComposerExpanded(false);
-    setTakeawaysOpen(false);
     setReasoningPanelOpen(false);
     setSwarmPanelOpen(false);
+    setDashboardPanelOpen(false);
+    setDashboardMode(false);
+    setDashboardModeDashboard(null);
     // Swarm runs on Codex and Omni; Super agent stays Codex-only.
     if (runtime !== "codex" && runtime !== "omni") {
       setSwarmMode(false);
@@ -4067,6 +4335,113 @@ export default function DashPage() {
     resetChat("omni", "general");
     window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
   };
+  /**
+   * Enter dashboard mode: chat on the left, the forming dashboard on the
+   * right. `dashboardId` names the dashboard being built (ADR 0134); without
+   * one the first send lands on the member's most recent dashboard.
+   */
+  const enterDashboardMode = (options?: Readonly<{ freshChat?: boolean; dashboardId?: string | null }>) => {
+    if (options?.freshChat || activeChatRuntimeRef.current !== "omni") {
+      startOmniChat();
+    } else {
+      setActiveItem("Chat");
+    }
+    setDashboardModeDashboard(options?.dashboardId ?? (options?.freshChat ? null : dashboardModeDashboardIdRef.current));
+    setSwarmMode(false);
+    setSuperAgentMode(false);
+    setDashboardMode(true);
+    setReasoningPanelOpen(false);
+    setSwarmPanelOpen(false);
+    setDashboardPanelOpen(true);
+    window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+  };
+  const leaveDashboardMode = () => {
+    setDashboardMode(false);
+    setDashboardModeDashboard(null);
+    setDashboardPanelOpen(false);
+  };
+  /** "New dashboard": a blank document, then dashboard mode on it. */
+  const createDashboardAndBuild = async () => {
+    if (creatingDashboard) return;
+    setCreatingDashboard(true);
+    try {
+      const response = await fetch("/api/dashboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const payload = await response.json().catch(() => null) as { dashboard?: { dashboardId?: string }; error?: string } | null;
+      const dashboardId = payload?.dashboard?.dashboardId;
+      if (!response.ok || typeof dashboardId !== "string") {
+        throw new Error(payload?.error ?? "The dashboard could not be created.");
+      }
+      setDashboardsReloadKey((key) => key + 1);
+      enterDashboardMode({ freshChat: true, dashboardId });
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setCreatingDashboard(false);
+    }
+  };
+  /**
+   * The Albert wand on one element (ADR 0134): rebuild that tile from a
+   * sentence. Runs as a dashboard-mode send scoped to the tile — in the
+   * conversation already building this dashboard when the mode is open on
+   * it, otherwise in a fresh one — so the working streams into the chat and
+   * the tile reworks in place.
+   */
+  const editDashboardElement = (dashboardId: string, tile: DashboardElementRef, instruction: string) => {
+    const sameDashboardOpen = dashboardModeEnabledRef.current
+      && dashboardModeDashboardIdRef.current === dashboardId
+      && activeItem === "Chat";
+    if (!sameDashboardOpen) {
+      enterDashboardMode({ freshChat: true, dashboardId });
+      void sendChatMessage(instruction, undefined, {
+        conversationId: null,
+        priorMessageCount: 0,
+        allowWhileResponding: true,
+        dashboardEdit: tile,
+      });
+      return;
+    }
+    void sendChatMessage(instruction, undefined, { allowWhileResponding: true, dashboardEdit: tile });
+  };
+  const handleSuperAgentChange = (enabled: boolean) => {
+    if (!enabled) {
+      setSuperAgentMode(false);
+      return;
+    }
+    if (activeChatRuntime !== "codex") startCodexChat();
+    setSwarmMode(false);
+    leaveDashboardMode();
+    setAgentPreferences(SUPER_AGENT_PREFERENCES);
+    agentPreferencesRef.current = SUPER_AGENT_PREFERENCES;
+    setCodexProModeEnabled(SUPER_AGENT_PRO_MODE);
+    codexProModeEnabledRef.current = SUPER_AGENT_PRO_MODE;
+    setCodexSolPlannerEnabled(SUPER_AGENT_SOL_PLANNER);
+    codexSolPlannerEnabledRef.current = SUPER_AGENT_SOL_PLANNER;
+    setSuperAgentMode(true);
+  };
+  const handleSwarmChange = (enabled: boolean) => {
+    if (!enabled) {
+      setSwarmMode(false);
+      return;
+    }
+    if (activeChatRuntime !== "codex" && activeChatRuntime !== "omni") startCodexChat();
+    setSuperAgentMode(false);
+    leaveDashboardMode();
+    setSwarmMode(true);
+  };
+  const runModeControlProps = {
+    superAgentEnabled,
+    onSuperAgentChange: handleSuperAgentChange,
+    swarmEnabled,
+    onSwarmChange: handleSwarmChange,
+  } as const;
+  /** The raw debugger lives in the composer's run settings, not the header. */
+  const developerControlProps = rawDebugAvailable
+    ? { rawDebugOpen, onRawDebugChange: setRawDebugOpen } as const
+    : {};
   const startSalesDeepSwarm = () => {
     if (swarmRunSnapshot().active) return;
     const url = new URL(window.location.href);
@@ -4107,6 +4482,28 @@ export default function DashPage() {
   };
   const startNewChatRef = useRef(startNewChat);
   startNewChatRef.current = startNewChat;
+  const selectConversationRuntimeRef = useRef(selectConversationRuntime);
+  selectConversationRuntimeRef.current = selectConversationRuntime;
+
+  // Omni is the only harness the chat offers. `?runtime=albert|codex|compare`
+  // remains as an internal entry to the other runtimes for verification.
+  useEffect(() => {
+    const requested = new URL(window.location.href).searchParams.get("runtime");
+    if (requested !== "albert" && requested !== "codex" && requested !== "compare") return;
+    const task = window.setTimeout(() => selectConversationRuntimeRef.current(requested), 0);
+    return () => window.clearTimeout(task);
+  }, []);
+
+  /** A Discover card starts a fresh Omni analysis with the card's question. */
+  const askFromDiscover = (prompt: string) => {
+    startOmniChat();
+    setChatSurface("chat");
+    void sendChatMessage(prompt, undefined, {
+      conversationId: null,
+      priorMessageCount: 0,
+      allowWhileResponding: true,
+    });
+  };
 
   useEffect(() => {
     const openNewChat = (event: KeyboardEvent) => {
@@ -4343,6 +4740,7 @@ export default function DashPage() {
                               onSolPlannerChange={setCodexSolPlannerEnabled}
                               proModeEnabled={codexProModeEnabled}
                               onProModeChange={setCodexProModeEnabled}
+                              {...runModeControlProps}
                               popoverPlacement="below"
                               popoverAlign="shell-start"
                             />
@@ -4352,6 +4750,7 @@ export default function DashPage() {
                               onChange={setAgentPreferences}
                               allowedModelIds={OMNI_MODEL_IDS}
                               allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
+                              {...runModeControlProps}
                               popoverPlacement="below"
                               popoverAlign="shell-start"
                             />
@@ -4366,6 +4765,7 @@ export default function DashPage() {
                               value={agentPreferences}
                               onChange={setAgentPreferences}
                               allowedModelIds={V3_MODEL_IDS}
+                              {...runModeControlProps}
                               popoverPlacement="below"
                               popoverAlign="shell-start"
                             />
@@ -4412,7 +4812,11 @@ export default function DashPage() {
                     <OmniTrace
                       events={message.events ?? []}
                       streaming={message.isStreaming}
+                      dashboardMode={message.dashboardBuild === true || isDashboardBuildTurn(message.events ?? [])}
                       onFollowUp={(prompt) => void sendChatMessage(prompt)}
+                      onAddToDashboard={message.conversationId && message.turnId
+                        ? (table) => pinTableToDashboard(message.conversationId!, message.turnId!, table)
+                        : undefined}
                     />
                   ) : (
                     <InsightsStyleTrace
@@ -4687,6 +5091,7 @@ export default function DashPage() {
                             key={conversation.conversationId}
                             type="button"
                             role="option"
+                            aria-selected={isActive}
                             aria-current={isActive ? "true" : undefined}
                             onClick={() => {
                               setView2HistoryOpen(false);
@@ -4707,6 +5112,10 @@ export default function DashPage() {
           </div>
 
           <div className={styles.view2NavRight}>
+            <View2ConnectedTools
+              providers={connectionsData.providers}
+              onOpenConnections={() => selectView2Page("Connections")}
+            />
             <button
               className={styles.view2NewAnalysis}
               type="button"
@@ -4914,12 +5323,15 @@ export default function DashPage() {
           <button
             className={styles.sidebarAction}
             type="button"
-            aria-label="Dashboard"
+            aria-label="Dashboards"
             aria-current={activeItem === "Dashboard" ? "page" : undefined}
-            onClick={() => setActiveItem("Dashboard")}
+            onClick={() => {
+              setDashboardViewId(null);
+              setActiveItem("Dashboard");
+            }}
           >
             <Icon name="dashboard" />
-            <span className={styles.sidebarActionLabel}>Dashboard</span>
+            <span className={styles.sidebarActionLabel}>Dashboards</span>
           </button>
           <button
             className={styles.sidebarAction}
@@ -5365,7 +5777,10 @@ export default function DashPage() {
       </aside>
       )}
 
-      <section className={styles.content} aria-labelledby="dash-title">
+      <section
+        className={`${styles.content} ${activeItem === "Chat" && dashboardPanelOpen ? styles.contentDashboardMode : ""}`}
+        aria-labelledby="dash-title"
+      >
         {isView2 && activeItem !== "Chat" ? (
           <h1 id="dash-title" className="sr-only">{pageHeading}</h1>
         ) : null}
@@ -5386,11 +5801,30 @@ export default function DashPage() {
           />
         ) : activeItem === "Chat" ? (
           <div
-            className={`${styles.chatShell} ${sidePanelOpen ? styles.chatShellTakeawaysOpen : ""} ${swarmPanelResizing ? styles.chatShellTakeawaysResizing : ""}`}
-            style={swarmPanelOpen ? { ["--takeaways-panel-width" as string]: `${swarmPanelWidth}px` } : undefined}
+            ref={chatShellRef}
+            className={`${styles.chatShell} ${sidePanelOpen ? styles.chatShellTakeawaysOpen : ""} ${dashboardPanelOpen ? styles.chatShellDashboardOpen : ""} ${swarmPanelResizing || dashboardPanelResizing ? styles.chatShellTakeawaysResizing : ""}`}
+            style={dashboardPanelOpen && dashboardPanelWidth !== null
+              ? { ["--takeaways-panel-width" as string]: `${dashboardPanelWidth}px` }
+              : swarmPanelOpen && !dashboardPanelOpen
+                ? { ["--takeaways-panel-width" as string]: `${swarmPanelWidth}px` }
+                : undefined}
           >
-          <div className={styles.chatWorkspace} ref={chatWorkspaceRef}>
+          <div
+            className={styles.chatWorkspace}
+            ref={chatWorkspaceRef}
+            data-chat-runtime={activeChatRuntime}
+            data-chat-surface={chatSurface}
+          >
             <header className={styles.chatTopBar}>
+              <ChatSurfaceTabs
+                value={chatSurface}
+                onChange={setChatSurface}
+                panelIds={{
+                  discover: "chat-surface-panel-discover",
+                  scheduled: "chat-surface-panel-scheduled",
+                  alerts: "chat-surface-panel-alerts",
+                }}
+              />
               <div className={styles.chatTopIdentity}>
                 {isCustomerAgent ? (
                   <>
@@ -5418,10 +5852,6 @@ export default function DashPage() {
                 </AnimatePresence>
               </div>
               <div className={styles.chatTopActions}>
-                <ConversationRuntimeTabs
-                  value={activeChatRuntime === "codex" ? "codex" : activeChatRuntime === "omni" ? "omni" : "albert"}
-                  onChange={selectConversationRuntime}
-                />
                 {chatMessages.length > 0 ? (
                   <button
                     className={`${styles.chatTakeawaysToggle} ${chatDetailedMode ? styles.chatTakeawaysToggleActive : ""}`}
@@ -5445,8 +5875,8 @@ export default function DashPage() {
                     onClick={() => {
                       setReasoningPanelOpen((open) => {
                         if (!open) {
-                          setTakeawaysOpen(false);
                           setSwarmPanelOpen(false);
+                          setDashboardPanelOpen(false);
                         }
                         return !open;
                       });
@@ -5456,16 +5886,24 @@ export default function DashPage() {
                     <span>Reasoning</span>
                   </button>
                 ) : null}
-                {rawDebugAvailable ? (
+                {dashboardModeEnabled || dashboardTurnMessage ? (
                   <button
-                    className={`${styles.chatTakeawaysToggle} ${rawDebugOpen ? styles.chatTakeawaysToggleActive : ""}`}
+                    className={`${styles.chatTakeawaysToggle} ${dashboardPanelOpen ? styles.chatTakeawaysToggleActive : ""}`}
                     type="button"
-                    aria-label="Raw debugger"
-                    aria-pressed={rawDebugOpen}
-                    title="Development inspector: request, response headers, SSE frames, and trace events"
-                    onClick={() => setRawDebugOpen((current) => !current)}
+                    aria-label={dashboardPanelOpen ? "Hide dashboard preview" : "Show dashboard preview"}
+                    aria-pressed={dashboardPanelOpen}
+                    title={dashboardPanelOpen ? "Hide dashboard preview" : "Show dashboard preview"}
+                    onClick={() => {
+                      setDashboardPanelOpen((open) => {
+                        if (!open) {
+                          setReasoningPanelOpen(false);
+                          setSwarmPanelOpen(false);
+                        }
+                        return !open;
+                      });
+                    }}
                   >
-                    <Icon name="terminal" />
+                    <Icon name="dashboard" />
                   </button>
                 ) : null}
                 {swarmSnapshot.runId || swarmEnabled ? (
@@ -5480,8 +5918,8 @@ export default function DashPage() {
                     onClick={() => {
                       setSwarmPanelOpen((open) => {
                         if (!open) {
-                          setTakeawaysOpen(false);
                           setReasoningPanelOpen(false);
+                          setDashboardPanelOpen(false);
                         }
                         return !open;
                       });
@@ -5490,24 +5928,33 @@ export default function DashPage() {
                     <Icon name={swarmSnapshot.kind === "super-agent" ? "sparkles" : "agents"} />
                   </button>
                 ) : null}
-                {!takeawaysOpen && !reasoningPanelOpen && !swarmPanelOpen ? (
-                  <button
-                    className={styles.chatTakeawaysToggle}
-                    type="button"
-                    aria-label={`Expand key insights${keyInsights.length > 0 ? `, ${keyInsights.length} available` : ""}`}
-                    aria-pressed={false}
-                    aria-controls="analysis-takeaways"
-                    onClick={() => {
-                      setSwarmPanelOpen(false);
-                      setReasoningPanelOpen(false);
-                      setTakeawaysOpen(true);
-                    }}
-                  >
-                    <Icon name="sidebarRight" />
-                  </button>
-                ) : null}
               </div>
             </header>
+            {chatSurface === "alerts" ? (
+              <AlertsWorkspace
+                organisationName={accountOrganisation.name}
+                reduceMotion={Boolean(reduceMotion)}
+                panelId="chat-surface-panel-alerts"
+                labelledBy="chat-surface-tab-alerts"
+              />
+            ) : chatSurface === "scheduled" ? (
+              <ScheduledWorkspace
+                organisationName={accountOrganisation.name}
+                onOpenConversation={(conversationId) => void openSavedConversation(conversationId)}
+                reduceMotion={Boolean(reduceMotion)}
+                panelId="chat-surface-panel-scheduled"
+                labelledBy="chat-surface-tab-scheduled"
+              />
+            ) : chatSurface === "discover" ? (
+              <DiscoverWorkspace
+                organisationName={accountOrganisation.name}
+                onAsk={askFromDiscover}
+                onOpenConnections={() => setActiveItem("Connections")}
+                reduceMotion={Boolean(reduceMotion)}
+                panelId="chat-surface-panel-discover"
+                labelledBy="chat-surface-tab-discover"
+              />
+            ) : (<>
             {conversationSkelActive ? (
               <div
                 ref={conversationSkelHostRef}
@@ -5673,16 +6120,6 @@ export default function DashPage() {
                         </div>
                       </>
                     ) : null}
-                    {activeChatRuntime === "codex" || activeChatRuntime === "omni" ? (
-                      <button
-                        className={styles.chatHeroDashboardCta}
-                        type="button"
-                        onClick={() => setActiveItem("Dashboard")}
-                      >
-                        <Icon name="dashboard" />
-                        <span>Build a dashboard</span>
-                      </button>
-                    ) : null}
                   </motion.div>
                 ) : null}
               </AnimatePresence>
@@ -5834,7 +6271,9 @@ export default function DashPage() {
                   <textarea
                     ref={chatTextareaRef}
                     aria-label={
-                      superAgentEnabled
+                      dashboardModeEnabled
+                        ? "Describe the dashboard you want"
+                        : superAgentEnabled
                         ? "Ask a question for the 45-minute Super agent"
                         : swarmEnabled
                         ? "Ask a harder question for Swarm"
@@ -5849,7 +6288,11 @@ export default function DashPage() {
                           : "Ask me anything"
                     }
                     placeholder={
-                      superAgentEnabled
+                      dashboardModeEnabled
+                        ? chatMessages.length > 0
+                          ? "Ask for changes…"
+                          : "Describe your dashboard…"
+                      : superAgentEnabled
                         ? chatMessages.length > 0
                           ? "Ask another deep follow-up. Super agent will loop through the evidence…"
                           : "Ask a big question. Super agent will investigate for up to 45 minutes…"
@@ -5908,70 +6351,23 @@ export default function DashPage() {
                     <Icon name="voice" />
                   </button>
                 ) : null}
-                {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" ? (
+                {canManageConnections && voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" ? (
                   <button
-                    className={`${styles.superAgentToggle} ${superAgentEnabled ? styles.superAgentToggleActive : ""}`}
+                    className={`${styles.swarmToggle} ${styles.dashboardToggle} ${dashboardModeEnabled ? styles.dashboardToggleActive : ""}`}
                     type="button"
-                    aria-pressed={superAgentEnabled}
-                    aria-label="Super agent"
-                    title="Run the next question through five sequential deep passes for up to 45 minutes"
+                    aria-pressed={dashboardModeEnabled}
+                    aria-label="Dashboard mode"
+                    title="Describe a dashboard and watch Albert design, prove and place every tile live"
                     onClick={() => {
-                      if (activeChatRuntime !== "codex") {
-                        startCodexChat();
-                        setSwarmMode(false);
-                        setAgentPreferences(SUPER_AGENT_PREFERENCES);
-                        agentPreferencesRef.current = SUPER_AGENT_PREFERENCES;
-                        setCodexProModeEnabled(SUPER_AGENT_PRO_MODE);
-                        codexProModeEnabledRef.current = SUPER_AGENT_PRO_MODE;
-                        setCodexSolPlannerEnabled(SUPER_AGENT_SOL_PLANNER);
-                        codexSolPlannerEnabledRef.current = SUPER_AGENT_SOL_PLANNER;
-                        setSuperAgentMode(true);
+                      if (dashboardModeEnabled) {
+                        leaveDashboardMode();
                         return;
                       }
-                      setSuperAgentMode((current) => {
-                        const next = !current;
-                        if (next) {
-                          setSwarmMode(false);
-                          setAgentPreferences(SUPER_AGENT_PREFERENCES);
-                          agentPreferencesRef.current = SUPER_AGENT_PREFERENCES;
-                          setCodexProModeEnabled(SUPER_AGENT_PRO_MODE);
-                          codexProModeEnabledRef.current = SUPER_AGENT_PRO_MODE;
-                          setCodexSolPlannerEnabled(SUPER_AGENT_SOL_PLANNER);
-                          codexSolPlannerEnabledRef.current = SUPER_AGENT_SOL_PLANNER;
-                        }
-                        return next;
-                      });
+                      enterDashboardMode();
                     }}
                   >
-                    <Icon name="sparkles" />
-                    <span className={styles.superAgentToggleLabel}>Super agent</span>
-                  </button>
-                ) : null}
-                {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" ? (
-                  <button
-                    className={`${styles.swarmToggle} ${swarmEnabled ? styles.swarmToggleActive : ""}`}
-                    type="button"
-                    aria-pressed={swarmEnabled}
-                    aria-label="Swarm"
-                    title="Split a hard question across specialists, then combine their findings"
-                    onClick={() => {
-                      // Swarm runs on Codex and Omni alike; only the other
-                      // runtimes need switching to a swarm-capable harness.
-                      if (activeChatRuntime !== "codex" && activeChatRuntime !== "omni") {
-                        startCodexChat();
-                        setSuperAgentMode(false);
-                        setSwarmMode(true);
-                        return;
-                      }
-                      setSwarmMode((current) => {
-                        const next = !current;
-                        if (next) setSuperAgentMode(false);
-                        return next;
-                      });
-                    }}
-                  >
-                    <Icon name="agents" />
-                    <span className={styles.swarmToggleLabel}>Swarm</span>
+                    <Icon name="dashboard" />
+                    <span className={styles.swarmToggleLabel}>Dashboard</span>
                   </button>
                 ) : null}
                 {voice.status !== "connecting" && voice.status !== "live" && dictation.status === "idle" && (
@@ -5985,6 +6381,8 @@ export default function DashPage() {
                       onSolPlannerChange={setCodexSolPlannerEnabled}
                       proModeEnabled={codexProModeEnabled}
                       onProModeChange={setCodexProModeEnabled}
+                      {...runModeControlProps}
+                      {...developerControlProps}
                     />
                   ) : activeChatRuntime === "omni" ? (
                     <ModelRunControls
@@ -5992,6 +6390,8 @@ export default function DashPage() {
                       onChange={setAgentPreferences}
                       allowedModelIds={OMNI_MODEL_IDS}
                       allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
+                      {...runModeControlProps}
+                      {...developerControlProps}
                     />
                   ) : activeChatRuntime === "anthropic" ? (
                     <span className={styles.chatRuntimeIndicator}>Claude Opus 5</span>
@@ -6004,6 +6404,8 @@ export default function DashPage() {
                       value={agentPreferences}
                       onChange={setAgentPreferences}
                       allowedModelIds={V3_MODEL_IDS}
+                      {...runModeControlProps}
+                      {...developerControlProps}
                     />
                   )
                 )}
@@ -6143,18 +6545,95 @@ export default function DashPage() {
                 ease: [0.22, 1, 0.36, 1],
               }}
             />
+            </>)}
           </div>
 
+          {dashboardPanelOpen ? (
+            <div
+              className={styles.dashboardSplitHandle}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the dashboard panel. Drag, or use the arrow keys."
+              aria-valuenow={dashboardPanelWidth ?? undefined}
+              tabIndex={0}
+              data-active={dashboardPanelResizing ? "true" : undefined}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                dashboardSplitDragRef.current = {
+                  pointerId: event.pointerId,
+                  startX: event.clientX,
+                  startWidth: currentDashboardPanelWidth(),
+                };
+                setDashboardPanelResizing(true);
+              }}
+              onPointerMove={(event) => {
+                const drag = dashboardSplitDragRef.current;
+                if (!drag || drag.pointerId !== event.pointerId) return;
+                // The panel sits on the right: dragging left widens it.
+                applyDashboardPanelWidth(drag.startWidth + (drag.startX - event.clientX));
+              }}
+              onPointerUp={(event) => {
+                const drag = dashboardSplitDragRef.current;
+                if (!drag || drag.pointerId !== event.pointerId) return;
+                dashboardSplitDragRef.current = null;
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                }
+                // Let the final width commit before transitions come back, or
+                // the last few pixels of the drag animate after release.
+                window.requestAnimationFrame(() => setDashboardPanelResizing(false));
+              }}
+              onPointerCancel={() => {
+                dashboardSplitDragRef.current = null;
+                window.requestAnimationFrame(() => setDashboardPanelResizing(false));
+              }}
+              onKeyDown={(event) => {
+                const step = event.shiftKey ? 40 : 16;
+                if (event.key === "ArrowLeft") {
+                  event.preventDefault();
+                  applyDashboardPanelWidth(currentDashboardPanelWidth() + step);
+                } else if (event.key === "ArrowRight") {
+                  event.preventDefault();
+                  applyDashboardPanelWidth(currentDashboardPanelWidth() - step);
+                } else if (event.key === "Home") {
+                  event.preventDefault();
+                  applyDashboardPanelWidth(Number.MAX_SAFE_INTEGER);
+                } else if (event.key === "End") {
+                  event.preventDefault();
+                  applyDashboardPanelWidth(DASHBOARD_PANEL_MIN_WIDTH);
+                }
+              }}
+              onDoubleClick={() => setDashboardPanelWidth(null)}
+              title="Drag to resize · double-click to reset"
+            />
+          ) : null}
           <aside
             id="analysis-takeaways"
-            className={`${styles.takeawaysPanel} ${sidePanelOpen ? styles.takeawaysPanelOpen : ""}`}
-            aria-label={swarmPanelOpen
+            className={`${styles.takeawaysPanel} ${sidePanelOpen ? styles.takeawaysPanelOpen : ""} ${dashboardPanelOpen ? styles.dashboardPanel : ""}`}
+            aria-label={dashboardPanelOpen
+              ? "Dashboard preview"
+              : swarmPanelOpen
               ? (swarmSnapshot.kind === "super-agent" ? "Super agent" : "Swarm")
-              : reasoningPanelOpen ? "Reasoning" : "Key insights"}
+              : "Reasoning"}
             aria-hidden={!sidePanelOpen}
             inert={!sidePanelOpen || undefined}
           >
-            {swarmPanelOpen ? (
+            {dashboardPanelOpen ? (
+              <DashboardBuildPanel
+                dashboardId={dashboardModeDashboardId ?? dashboardTurnMessage?.dashboardId ?? null}
+                events={dashboardTurnMessage?.events ?? []}
+                streaming={Boolean(dashboardTurnMessage?.isStreaming)}
+                buildTurn={dashboardTurnMessage?.dashboardBuild === true}
+                onClose={() => setDashboardPanelOpen(false)}
+                onOpenSource={(conversationId) => void openSavedConversation(conversationId)}
+                onEditWithAlbert={(tile, instruction) => {
+                  const targetId = dashboardModeDashboardId ?? dashboardTurnMessage?.dashboardId ?? null;
+                  if (targetId) editDashboardElement(targetId, tile, instruction);
+                }}
+              />
+            ) : swarmPanelOpen ? (
               <SwarmPanel
                 onClose={() => setSwarmPanelOpen(false)}
                 width={swarmPanelWidth}
@@ -6212,28 +6691,7 @@ export default function DashPage() {
                   )}
                 </div>
               </div>
-            ) : (
-              <div className={styles.takeawaysPanelInner}>
-                <div className={styles.takeawaysHeader}>
-                  <h2>Key Insights</h2>
-                  <button
-                    className={styles.takeawaysClose}
-                    type="button"
-                    aria-label="Collapse key insights"
-                    onClick={() => setTakeawaysOpen(false)}
-                  >
-                    <Icon name="chevron" />
-                  </button>
-                </div>
-                <div className={styles.takeawaysBody}>
-                  <KeyInsightsPanel
-                    insights={keyInsights}
-                    streaming={keyInsightsStreaming}
-                    activity={keyInsightActivity}
-                  />
-                </div>
-              </div>
-            )}
+            ) : null}
           </aside>
 
           </div>
@@ -6252,7 +6710,23 @@ export default function DashPage() {
             onDashboardConversationIds={(ids) => setDashboardMasterConversationIds(new Set(ids))}
           />
         ) : activeItem === "Dashboard" ? (
-          <DashboardWorkspace onOpenSource={(conversationId) => void openSavedConversation(conversationId)} />
+          dashboardViewId ? (
+            <DashboardWorkspace
+              key={dashboardViewId}
+              dashboardId={dashboardViewId}
+              onBack={() => setDashboardViewId(null)}
+              onOpenSource={(conversationId) => void openSavedConversation(conversationId)}
+              onStartBuild={() => enterDashboardMode({ freshChat: true, dashboardId: dashboardViewId })}
+              onEditWithAlbert={(tile, instruction) => editDashboardElement(dashboardViewId, tile, instruction)}
+            />
+          ) : (
+            <DashboardsWorkspace
+              reloadKey={dashboardsReloadKey}
+              creating={creatingDashboard}
+              onOpen={(dashboardId) => setDashboardViewId(dashboardId)}
+              onCreate={() => void createDashboardAndBuild()}
+            />
+          )
         ) : activeItem === "My Data" ? (
           <MyDataWorkspace />
         ) : activeItem === "Test chart" ? (

@@ -131,6 +131,9 @@ test("the migration history contains no unreviewed literal-only lifecycle vocabu
     // 0178 reuses the reviewed run-lifecycle vocabulary of 0158/0168
     // (running/completed/failed/abandoned) for the daily dashboard session.
     "control-plane/0178_m6_dashboard_master.sql",
+    // 0183 declared the scheduled-run lifecycle (queued/running/sent/failed/
+    // missed) literally; 0184 moves it to a described lookup (asserted below).
+    "control-plane/0183_m8_scheduled_tasks.sql",
     "analytical/0081_m2_reconciliation_and_connector_stream_health.sql",
   ]);
 });
@@ -194,6 +197,30 @@ test("control-plane lifecycle statuses are lookup-backed without changing existi
     /CREATE TABLE IF NOT EXISTS control_plane\.deletion_request_status_lookup/iu,
     "the receipt must reuse the deletion request lifecycle rather than duplicate it",
   );
+});
+
+test("scheduled-run lifecycle moves to a described lookup without changing existing rows", async () => {
+  const sql = await readFile(new URL(
+    "infra/migrations/control-plane/0184_m8_scheduled_run_status_lookup.sql",
+    root,
+  ), "utf8");
+
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\s*$/u);
+  assert.doesNotMatch(sql, /CREATE\s+TYPE[\s\S]*AS\s+ENUM/iu);
+  assert.match(
+    sql,
+    /CREATE TABLE IF NOT EXISTS control_plane\.scheduled_run_status_lookup \(\s*status text PRIMARY KEY,\s*description text NOT NULL/u,
+    "the scheduled-run vocabulary must be described",
+  );
+  assert.match(sql, /REVOKE ALL ON TABLE control_plane\.scheduled_run_status_lookup FROM authenticated/u);
+  assertLookupBackedStatus(sql, {
+    table: "control_plane.scheduled_task_runs",
+    lookup: "control_plane.scheduled_run_status_lookup",
+    lookupColumn: "status",
+    foreignKey: "scheduled_task_runs_status_fkey",
+    legacyCheck: "scheduled_task_runs_status_check",
+    statuses: ["queued", "running", "sent", "failed", "missed"],
+  });
 });
 
 test("Shopify control lifecycles are independently lookup-backed at creation", async () => {

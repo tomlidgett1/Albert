@@ -4,6 +4,7 @@ import {
   installAppApiRoutes,
   installSupabaseBrowserAuthRoutes,
 } from "./support/app-fixtures";
+import { selectDiscoverCards } from "../../services/discover/src/library";
 
 async function openDashboard(page: Parameters<typeof installAppApiRoutes>[0]) {
   const capture = await installAppApiRoutes(page);
@@ -14,27 +15,52 @@ async function openDashboard(page: Parameters<typeof installAppApiRoutes>[0]) {
   return capture;
 }
 
-function analysisRuntimeTrigger(
+type AnalysisRuntime = "Albert" | "Codex" | "Omni" | "Compare";
+
+/** `?runtime=` values the dash accepts. */
+const RUNTIME_PARAMS: Record<AnalysisRuntime, string> = {
+  Albert: "albert",
+  Codex: "codex",
+  Omni: "omni",
+  Compare: "compare",
+};
+
+/** The `data-chat-runtime` stamp on the chat workspace (Albert is the v3 engine). */
+const RUNTIME_STAMPS: Record<Exclude<AnalysisRuntime, "Compare">, string> = {
+  Albert: "v3",
+  Codex: "codex",
+  Omni: "omni",
+};
+
+/** The chat workspace stamps its runtime; Compare replaces the workspace with its own header. */
+async function expectAnalysisRuntime(
   page: Parameters<typeof installAppApiRoutes>[0],
-  runtime?: "Albert" | "Codex" | "Omni" | "Compare",
+  runtime: AnalysisRuntime,
 ) {
-  return runtime
-    ? page.getByRole("button", { name: `Analysis runtime: ${runtime}` })
-    : page.getByRole("button", { name: /Analysis runtime:/u });
+  if (runtime === "Compare") {
+    // The Compare title is hidden on compact screens; the shared composer is not.
+    await expect(page.getByRole("textbox", { name: "Ask both Albert and Codex" })).toBeVisible();
+    return;
+  }
+  await expect(page.locator(`[data-chat-runtime="${RUNTIME_STAMPS[runtime]}"]`)).toBeVisible();
 }
 
+/**
+ * The chat offers only Omni (ADR 0130). Albert, Codex and Compare stay
+ * reachable for verification through the internal `?runtime=` entry.
+ */
 async function selectAnalysisRuntime(
   page: Parameters<typeof installAppApiRoutes>[0],
-  runtime: "Albert" | "Codex" | "Omni" | "Compare",
+  runtime: AnalysisRuntime,
 ) {
-  const trigger = analysisRuntimeTrigger(page);
-  if (await trigger.getAttribute("aria-expanded") !== "true") {
-    await trigger.click();
+  const url = new URL(page.url());
+  if (runtime === "Omni") url.searchParams.delete("runtime");
+  else url.searchParams.set("runtime", RUNTIME_PARAMS[runtime]);
+  await page.goto(`${url.pathname}${url.search}`);
+  if (runtime !== "Compare") {
+    await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
   }
-  const option = runtime === "Codex"
-    ? page.getByRole("menuitemradio", { name: /Codex/u })
-    : page.getByRole("menuitemradio", { name: runtime, exact: true });
-  await option.click();
+  await expectAnalysisRuntime(page, runtime);
 }
 
 async function openAlbertChat(page: Parameters<typeof installAppApiRoutes>[0]) {
@@ -215,8 +241,9 @@ test("homepage recommends next questions from previous conversation results", as
   await page.goto("/dash");
   const recommended = page.getByRole("region", { name: "What to look at next" });
   await expect(recommended).toBeVisible();
-  await expect(recommended.getByRole("heading", { name: "What to look at next" })).toBeVisible();
-  await expect(recommended.getByText("You've looked at sales and customers recently.")).toBeVisible();
+  // Bare rows: no heading, verdict or card around them.
+  await expect(recommended.getByRole("heading")).toHaveCount(0);
+  await expect(recommended.getByText("You've looked at sales and customers recently.")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Recent analysis" })).toHaveCount(0);
   await expect(recommended.getByRole("button", {
     name: "Ask: Which products dragged Wednesday's sales last week?",
@@ -225,13 +252,23 @@ test("homepage recommends next questions from previous conversation results", as
     name: "Ask: What is dragging parts margin: mix, discounting, or cost?",
   })).toBeVisible();
   await expect(recommended.getByText("Did last week's takings reach the bank", { exact: false })).toBeVisible();
+  // One sentence per row, with the logo of the tool it reads at the left.
+  const cashRow = recommended.getByRole("button", { name: "Ask: Did last week's takings reach the bank, and what is still outstanding?" });
+  await expect(cashRow.locator("img")).toHaveAttribute("src", /logos\/xero\.svg/u);
+  await expect(recommended.getByText("You reviewed sales, but not whether that cash actually landed.")).toHaveCount(0);
 
   await recommended.getByRole("button", {
     name: "Ask: Which products dragged Wednesday's sales last week?",
   }).click();
   await expect(page.getByRole("region", { name: "What to look at next" })).toHaveCount(0);
-  await expect.poll(() => capture.conversationPayloads.length + capture.codexConversationPayloads.length).toBeGreaterThan(0);
-  const sent = [...capture.conversationPayloads, ...capture.codexConversationPayloads][0] as {
+  // The recommendation is asked on whichever harness the chat runs (Omni by default).
+  const sentPayloads = () => [
+    ...capture.omniConversationPayloads,
+    ...capture.conversationPayloads,
+    ...capture.codexConversationPayloads,
+  ];
+  await expect.poll(() => sentPayloads().length).toBeGreaterThan(0);
+  const sent = sentPayloads()[0] as {
     message?: string;
   };
   expect(sent.message).toBe("Which products dragged Wednesday's sales last week?");
@@ -261,7 +298,7 @@ test("the Agents workspace stays visible while saved Customer Agent conversation
   await expect(page.getByRole("button", { name: "Agents", exact: true })).toBeVisible();
   // The Dashboard tab is a visible destination since the natural-language
   // builder landed (ADR 0129); Test chart stays internal.
-  await expect(page.getByRole("button", { name: "Dashboard", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Dashboards", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Test chart", exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Customer review", exact: true }).click();
@@ -298,9 +335,12 @@ test("saved Customer Agent conversations restore their specialist context", asyn
   );
 });
 
-test("Omni is the default harness and Albert remains available", async ({ page }) => {
+test("Omni is the default harness and Albert remains reachable", async ({ page }) => {
   const capture = await openDashboard(page);
-  await expect(analysisRuntimeTrigger(page, "Omni")).toBeVisible();
+  await expectAnalysisRuntime(page, "Omni");
+  await expect(page.getByRole("button", { name: /Analysis runtime/u })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Discover" })).toHaveAttribute("aria-selected", "false");
   await expect(page.getByRole("heading", { name: "Ask about your business", level: 2 })).toBeVisible();
   await expect(page.getByRole("button", { name: "Suggested investigations" })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "Ask Omni about your business" })).toHaveAttribute(
@@ -310,9 +350,11 @@ test("Omni is the default harness and Albert remains available", async ({ page }
   const omniSettings = page.getByTestId("model-run-controls-trigger");
   await expect(omniSettings).toHaveAttribute(
     "aria-label",
-    "Run settings: Claude Haiku 4.5, Standard speed, max reasoning",
+    "Run settings: Claude Haiku 4.5, Standard speed, max reasoning, Super agent off, Swarm off",
   );
   await omniSettings.click();
+  await expect(page.getByRole("switch", { name: "Super agent" })).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByRole("switch", { name: "Swarm" })).toHaveAttribute("aria-checked", "false");
   await expect(page.getByRole("radio", { name: "Claude Haiku 4.5" })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("radio", { name: "GPT 5.6 Luna" })).toBeVisible();
   await expect(page.getByRole("radio", { name: "GPT 5.6 Terra" })).toBeVisible();
@@ -336,7 +378,6 @@ test("Omni is the default harness and Albert remains available", async ({ page }
   expect(capture.conversationPayloads).toHaveLength(0);
 
   await selectAnalysisRuntime(page, "Albert");
-  await expect(analysisRuntimeTrigger(page, "Albert")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Ask me anything", level: 2 })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Ask me anything" })).toHaveAttribute(
     "placeholder",
@@ -413,6 +454,8 @@ test("Swarm selection atomically routes an immediate Pro and Sol send", async ({
 
   const prompt = "We need to pay out 1500AUD per month to owners. What can we do to make this in extra GP per month.";
   await page.getByRole("textbox", { name: "Ask Codex about your business" }).fill(prompt);
+  await settings.click();
+  await expect(page.getByRole("switch", { name: "Swarm" })).toBeVisible();
   await page.evaluate(() => {
     const swarm = document.querySelector<HTMLButtonElement>('button[aria-label="Swarm"]');
     const send = document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]');
@@ -438,6 +481,8 @@ test("Super agent atomically sends the profitability test with its fixed deep pr
   await openCodexChat(page);
   const prompt = "How can we improve profitability?";
   await page.getByRole("textbox", { name: "Ask Codex about your business" }).fill(prompt);
+  await page.getByTestId("model-run-controls-trigger").click();
+  await expect(page.getByRole("switch", { name: "Super agent" })).toBeVisible();
   await page.evaluate(() => {
     const superAgent = document.querySelector<HTMLButtonElement>('button[aria-label="Super agent"]');
     const send = document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]');
@@ -469,7 +514,7 @@ test("Codex model controls allow a reviewed OpenAI model change", async ({ page 
   await page.keyboard.press("Escape");
   await expect(settings).toHaveAttribute(
     "aria-label",
-    "Run settings: GPT 5.6 Terra, Fast mode, max reasoning, Pro reasoning off, Sol planner on",
+    "Run settings: GPT 5.6 Terra, Fast mode, max reasoning, Super agent off, Swarm off, Pro reasoning off, Sol planner on",
   );
   await page.getByRole("textbox", { name: "Ask Codex about your business" }).fill("Show customer health");
   await page.getByRole("button", { name: "Send message" }).click();
@@ -488,7 +533,7 @@ test("saved Codex conversations restore the Codex runtime tab", async ({ page })
   await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
   await page.getByRole("button", { name: "Codex business review", exact: true }).click();
 
-  await expect(analysisRuntimeTrigger(page, "Codex")).toBeVisible();
+  await expectAnalysisRuntime(page, "Codex");
   await expect(page.getByRole("textbox", { name: "Ask Codex about your business" })).toHaveAttribute(
     "placeholder",
     "Ask Codex a follow-up…",
@@ -598,15 +643,7 @@ test("Compare launches Albert and Codex concurrently with the exact same prompt 
   const capture = await installAppApiRoutes(page, { v3DelayMs: 650, codexDelayMs: 650 });
   await page.goto("/dash");
   await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
-  await analysisRuntimeTrigger(page, "Omni").click();
-  const omniOption = page.getByRole("menuitemradio", { name: "Omni", exact: true });
-  await expect(omniOption).toHaveAttribute("aria-checked", "true");
-  await expect(omniOption).toBeFocused();
-  await page.keyboard.press("ArrowDown");
-  const compareOption = page.getByRole("menuitemradio", { name: "Compare", exact: true });
-  await expect(compareOption).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(analysisRuntimeTrigger(page, "Compare")).toBeVisible();
+  await selectAnalysisRuntime(page, "Compare");
 
   await expect(page.getByRole("heading", { name: "Ask once. Watch both analyse.", level: 2 })).toBeVisible();
   await expect(page.getByText("Independent prompts and tool sets", { exact: true })).toBeVisible();
@@ -1135,8 +1172,7 @@ test("mobile layout has no page overflow and reduced motion disables analytical 
 test("Omni harness renders tasks, research steps, query cards and the answer", async ({ page }) => {
   const capture = await installAppApiRoutes(page);
   await page.goto("/dash");
-  await selectAnalysisRuntime(page, "Omni");
-  await expect(analysisRuntimeTrigger(page, "Omni")).toBeVisible();
+  await expectAnalysisRuntime(page, "Omni");
 
   const composer = page.getByRole("textbox", { name: "Ask Omni about your business" });
   await expect(composer).toHaveAttribute(
@@ -1220,39 +1256,146 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
   await page.screenshot({ path: ".playwright/omni-harness-turn.png", fullPage: true });
 });
 
-test("Build dashboard turns natural language into live governed tiles", async ({ page }) => {
+test("Dashboard mode builds a live dashboard from the chat", async ({ page }) => {
   const capture = await installAppApiRoutes(page);
   await page.goto("/dash");
 
-  // The main-UI entry point: the chat home carries a Build a dashboard CTA.
-  await page.getByRole("button", { name: "Build a dashboard" }).click();
+  // The composer toggle enters dashboard mode: the chat stays on the left and
+  // the dashboard preview card opens on the right.
+  await page.getByRole("button", { name: "Dashboard mode" }).click();
+  const panel = page.getByRole("complementary", { name: "Dashboard preview" });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "Describe what you want to watch" })).toBeVisible();
 
-  // The empty dashboard is the builder hero: describe it in natural language.
-  const input = page.getByRole("textbox", { name: "Describe the dashboard you want" });
-  await input.fill("I need a dashboard that shows top level metrics");
-  await page.getByRole("button", { name: "Build dashboard" }).click();
+  // The composer is the build input; the ask streams as a dashboard turn.
+  const composer = page.getByRole("textbox", { name: "Describe the dashboard you want" });
+  await composer.fill("I need a dashboard that shows top level metrics");
+  await composer.press("Enter");
 
-  // The hand-over banner names the composed dashboard once the build settles
-  // (the fixture stream completes near-instantly, so the transient progress
-  // card is asserted implicitly by the applied outcome, not by racing it).
-  await expect(page.getByText("Ashburton at a glance")).toBeVisible();
-
-  // The applied dashboard renders KPI cards with governed values and
-  // like-for-like deltas, the chart tile, and the detail table.
-  await expect(page.getByText("$41,230.55")).toBeVisible();
-  await expect(page.getByText("▲ 12.1%")).toBeVisible();
-  await expect(page.getByText("▼ 26.7%")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Revenue by week" })).toBeVisible();
+  // The chat keeps the owner's own words as the visible question (the
+  // sidebar titles the conversation with the same words), and the working
+  // (task checklist + governed queries) streams into the trail.
   await expect(
-    page.getByRole("region", { name: "Revenue by week" }).locator("svg").first(),
-  ).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByRole("region", { name: "Top products by revenue" })).toBeVisible();
-  await expect(page.getByRole("cell", { name: "Gravel bike hire" })).toBeVisible();
+    page.locator("p", { hasText: "I need a dashboard that shows top level metrics" }),
+  ).toBeVisible();
+  await expect(page.getByText("Choose the standing questions")).toBeVisible();
 
-  await expect(page.getByText("Last 30 days vs the previous 30")).toBeVisible();
+  // The applied dashboard forms in the panel: live badge, the name on the
+  // document, KPI value with its like-for-like delta, the chart tile, and
+  // the detail table.
+  await expect(panel.getByText("Live")).toBeVisible();
+  await expect(panel.getByRole("textbox", { name: "Dashboard name" })).toHaveValue("Ashburton at a glance");
+  // Role queries skip the aria-hidden crossfade overlay, so these target the
+  // real workspace tiles.
+  const revenueTile = panel.getByRole("region", { name: "Revenue", exact: true });
+  await expect(revenueTile.getByText("$41,230.55")).toBeVisible();
+  await expect(revenueTile.getByText("12.1%")).toBeVisible();
+  await expect(revenueTile.getByText("vs previous 30 days")).toBeVisible();
+  await expect(panel.getByRole("region", { name: "Revenue by week" })).toBeVisible();
+  await expect(
+    panel.getByRole("region", { name: "Revenue by week" }).locator("svg").first(),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(panel.getByRole("region", { name: "Top products by revenue" })).toBeVisible();
+  await expect(panel.getByRole("cell", { name: "Gravel bike hire" })).toBeVisible();
+
+  // The panel hosts the real workspace: the dashboard is renameable inline,
+  // refreshable, and its tiles carry the move/resize affordances.
+  const nameInput = panel.getByRole("textbox", { name: "Dashboard name" });
+  await expect(nameInput).toHaveValue("Ashburton at a glance");
+  await nameInput.fill("Ops cockpit");
+  await nameInput.press("Enter");
+  await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "rename"
+  )).length).toBe(1);
+  const renameCall = capture.dashboardBuildPayloads.find((entry) => (
+    (entry as { endpoint?: string }).endpoint === "rename"
+  )) as { body?: { title?: string } } | undefined;
+  expect(renameCall?.body?.title).toBe("Ops cockpit");
+  // Every document call is addressed to the dashboard the build landed on.
+  expect((renameCall?.body as { dashboardId?: string } | undefined)?.dashboardId).toBe("01J00000000000000000DBRD01");
+  await expect(panel.getByRole("button", { name: "Refresh data" })).toBeEnabled();
+  await expect(
+    panel.getByRole("button", { name: /Move or resize Revenue\b/u }).first(),
+  ).toBeVisible();
+
+  // Visual acceptance of the split view: chat card left, dashboard card right.
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.waitForTimeout(1_500);
+  await page.screenshot({ path: ".playwright/dashboard-mode-split.png" });
+
+  // The two cards share the exact footprint the single content card has in
+  // normal chat mode (an 8px inset in the classic view): no nested inset.
+  const edges = await page.evaluate(() => {
+    const chat = document.querySelector("section[aria-labelledby='dash-title'] > div > div");
+    const aside = document.getElementById("analysis-takeaways");
+    if (!chat || !aside) return null;
+    const c = chat.getBoundingClientRect();
+    const a = aside.getBoundingClientRect();
+    return {
+      chatTop: Math.round(c.top), chatBottom: Math.round(window.innerHeight - c.bottom),
+      asideTop: Math.round(a.top), asideBottom: Math.round(window.innerHeight - a.bottom),
+      asideRight: Math.round(window.innerWidth - a.right), asideWidth: Math.round(a.width),
+    };
+  });
+  expect(edges).not.toBeNull();
+  expect(edges!.chatTop).toBe(8);
+  expect(edges!.chatBottom).toBe(8);
+  expect(edges!.asideTop).toBe(8);
+  expect(edges!.asideBottom).toBe(8);
+  expect(edges!.asideRight).toBe(8);
+
+  // The split is draggable: dragging the separator left widens the dashboard
+  // card, the keyboard nudges it, and a double-click restores the default.
+  const separator = page.getByRole("separator", { name: /Resize the dashboard panel/u });
+  const separatorBox = await separator.boundingBox();
+  expect(separatorBox).not.toBeNull();
+  const grabX = separatorBox!.x + separatorBox!.width / 2;
+  const grabY = separatorBox!.y + separatorBox!.height / 2;
+  await page.mouse.move(grabX, grabY);
+  await page.mouse.down();
+  await page.mouse.move(grabX - 120, grabY, { steps: 6 });
+  await page.mouse.up();
+  // The panel width transitions once the drag releases; let it settle.
+  await page.waitForTimeout(900);
+  const widened = await panel.evaluate((node) => Math.round(node.getBoundingClientRect().width));
+  expect(widened).toBeGreaterThanOrEqual(edges!.asideWidth + 100);
+  await separator.focus();
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(900);
+  const nudged = await panel.evaluate((node) => Math.round(node.getBoundingClientRect().width));
+  expect(nudged).toBe(widened - 16);
+  await separator.dblclick();
+  await page.waitForTimeout(800);
+  const reset = await panel.evaluate((node) => Math.round(node.getBoundingClientRect().width));
+  expect(Math.abs(reset - edges!.asideWidth)).toBeLessThanOrEqual(2);
+
+  // A narrow chat card keeps the composer on one row: the empty field never
+  // grows from its placeholder and the controls do not wrap under it.
+  await page.setViewportSize({ width: 1180, height: 900 });
+  await page.waitForTimeout(900);
+  const composerMetrics = await page.evaluate(() => {
+    const textarea = document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Ask for changes to your dashboard'], textarea[aria-label='Describe the dashboard you want']");
+    const bar = textarea?.closest("form");
+    if (!textarea || !bar) return null;
+    const send = bar.querySelector("button[aria-label='Send message']");
+    return {
+      textareaHeight: Math.round(textarea.getBoundingClientRect().height),
+      sendOnSameRow: send ? Math.abs(send.getBoundingClientRect().top - textarea.getBoundingClientRect().top) < 24 : false,
+    };
+  });
+  expect(composerMetrics).not.toBeNull();
+  expect(composerMetrics!.textareaHeight).toBeLessThanOrEqual(30);
+  expect(composerMetrics!.sendOnSameRow).toBe(true);
+  await page.screenshot({ path: ".playwright/dashboard-mode-narrow.png" });
+  await page.setViewportSize({ width: 1600, height: 1000 });
 
   // The build ran on the Omni harness in dashboard-architect mode with the
   // server-composed brief carrying the owner's words.
+  const briefCall = capture.dashboardBuildPayloads.find((entry) => (
+    (entry as Record<string, unknown>).endpoint === "build"
+  )) as Record<string, unknown> | undefined;
+  expect((briefCall?.body as Record<string, unknown>).instruction)
+    .toBe("I need a dashboard that shows top level metrics");
   const buildPayload = capture.omniConversationPayloads.find((payload) => (
     (payload as Record<string, unknown>).dashboardBuild === true
   )) as Record<string, unknown> | undefined;
@@ -1265,18 +1408,341 @@ test("Build dashboard turns natural language into live governed tiles", async ({
   expect((applyCall?.body as Record<string, unknown>).conversationId).toBe("01J00000000000000000DBCV01");
   expect((applyCall?.body as Record<string, unknown>).turnId).toBe("01J00000000000000000DBTN01");
 
+  // The apply named the dashboard it landed on.
+  expect((applyCall?.body as Record<string, unknown>).dashboardId).toBe("01J00000000000000000DBRD01");
+
+  // The Dashboards tab lists the built dashboard; opening it shows the same
+  // applied document as governed tiles, with the chart tile actually drawn
+  // inside its box (the axis title only exists once Vega has painted; a bare
+  // `svg` locator would match header icons).
+  await page.getByRole("button", { name: "Dashboards", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Dashboards" })).toBeVisible();
+  const dashboardRow = page.getByRole("list", { name: "Your dashboards" }).getByRole("button", { name: /^Ops cockpit/u });
+  await expect(dashboardRow).toBeVisible();
+  await expect(dashboardRow).toContainText("5 elements");
+  await dashboardRow.click();
+  await expect(page.getByRole("region", { name: "Revenue", exact: true }).getByText("$41,230.55")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Refunds", exact: true }).getByText("26.7%")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Revenue by week" })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Revenue by week" }).getByText("Gross takings"),
+  ).toBeVisible({ timeout: 20_000 });
+
+  await page.waitForTimeout(500);
+  // The composed pivot renders as a pivot: a frozen, shaded metric column
+  // with the periods across the top and the figures right-aligned.
+  const pivot = page.getByRole("region", { name: "Weekly scorecard", exact: true });
+  await expect(pivot).toBeVisible();
+  const pivotTable = pivot.locator("table[data-pivot='true']");
+  await expect(pivotTable).toBeVisible();
+  await expect(pivotTable.locator("thead th").first()).toHaveText("Metric");
+  await expect(pivotTable.locator("tbody tr").first().locator("td").first()).toHaveText("Sales");
+  await expect(pivotTable.locator("tbody tr").nth(2).locator("td").nth(3)).toHaveText("246");
+  const pivotMetrics = await pivotTable.locator("tbody tr").first().locator("td").first().evaluate((cell) => {
+    const style = getComputedStyle(cell);
+    return { position: style.position, weight: Number(style.fontWeight) };
+  });
+  expect(pivotMetrics.position).toBe("sticky");
+  expect(pivotMetrics.weight).toBeGreaterThanOrEqual(600);
+  const valueCellAlign = await pivotTable.locator("tbody tr").first().locator("td").nth(1)
+    .evaluate((cell) => getComputedStyle(cell).textAlign);
+  expect(valueCellAlign).toBe("right");
+
   await page.screenshot({ path: ".playwright/dashboard-build.png", fullPage: true });
+});
+
+test("Dashboards lists every dashboard, renames and deletes from the row menu, and starts a new one blank", async ({ page }) => {
+  const capture = await installAppApiRoutes(page, { dashboardApplied: true });
+  await page.goto("/dash");
+
+  // The tab is the list: one heading, one line, one button, quiet rows.
+  await page.getByRole("button", { name: "Dashboards", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Dashboards" })).toBeVisible();
+  const list = page.getByRole("list", { name: "Your dashboards" });
+  const row = list.getByRole("button", { name: /^Ashburton at a glance/u });
+  await expect(row).toContainText("5 elements");
+  await page.screenshot({ path: ".playwright/dashboards-list.png" });
+
+  // Rename from the row's More menu, inline.
+  await list.getByRole("button", { name: "More options for Ashburton at a glance" }).click();
+  await page.getByRole("menuitem", { name: "Rename" }).click();
+  const rename = page.getByRole("textbox", { name: "Dashboard name" });
+  await rename.fill("Shop floor");
+  await rename.press("Enter");
+  await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "rename"
+  )).length).toBe(1);
+  const renameCall = capture.dashboardBuildPayloads.find((entry) => (
+    (entry as { endpoint?: string }).endpoint === "rename"
+  )) as { body?: { title?: string; dashboardId?: string } } | undefined;
+  expect(renameCall?.body?.title).toBe("Shop floor");
+  expect(renameCall?.body?.dashboardId).toBe("01J00000000000000000DBRD01");
+
+  // Open a dashboard from the list and come back.
+  await list.getByRole("button", { name: /^(Shop floor|Ashburton at a glance)/u }).click();
+  await expect(page.getByRole("region", { name: "Revenue", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Dashboards" }).nth(1).click();
+  await expect(page.getByRole("heading", { name: "Dashboards" })).toBeVisible();
+
+  // "New dashboard" creates a blank document and opens dashboard mode on it:
+  // the chat builds it in natural language, the right card waits for the ask.
+  await page.getByRole("button", { name: "New dashboard" }).click();
+  await expect.poll(() => capture.dashboardBuildPayloads.some((entry) => (
+    (entry as { endpoint?: string }).endpoint === "create"
+  ))).toBe(true);
+  const panel = page.getByRole("complementary", { name: "Dashboard preview" });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "Describe what you want to watch" })).toBeVisible();
+  const composer = page.getByRole("textbox", { name: "Describe the dashboard you want" });
+  await expect(composer).toBeFocused();
+  await composer.fill("Cash and customers for the last quarter");
+  await composer.press("Enter");
+  // The brief names the new dashboard, so the build lands on it.
+  await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "build"
+  )).length).toBe(1);
+  const briefCall = capture.dashboardBuildPayloads.find((entry) => (
+    (entry as { endpoint?: string }).endpoint === "build"
+  )) as { body?: { dashboardId?: string } } | undefined;
+  expect(briefCall?.body?.dashboardId).toBe("01J00000000000000000DBRD02");
+
+  // Delete from the row menu, with a confirmation, straight from the list.
+  await page.getByRole("button", { name: "Dashboards", exact: true }).click();
+  await list.getByRole("button", { name: /More options for/u }).first().click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect.poll(() => capture.dashboardBuildPayloads.some((entry) => (
+    (entry as { endpoint?: string }).endpoint === "delete"
+  ))).toBe(true);
+});
+
+test("Element sort and filters are query overrides that re-run the governed query", async ({ page }) => {
+  const capture = await installAppApiRoutes(page, { dashboardApplied: true });
+  await page.goto("/dash");
+  await page.getByRole("button", { name: "Dashboards", exact: true }).click();
+  await page.getByRole("list", { name: "Your dashboards" }).getByRole("button", { name: /^Ashburton at a glance/u }).click();
+  const products = page.getByRole("region", { name: "Top products by revenue" });
+  await expect(products).toBeVisible();
+
+  // Sigma's column menu: the caret on a header sorts the column.
+  await products.getByRole("button", { name: "Column options for Gross takings" }).click();
+  await page.getByRole("menuitem", { name: "Sort ascending" }).click();
+  await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "tile"
+  )).length).toBe(1);
+  const sortCall = capture.dashboardBuildPayloads.find((entry) => (
+    (entry as { endpoint?: string }).endpoint === "tile"
+  )) as { tileId?: string; body?: { queryOverrides?: unknown; dashboardId?: string } } | undefined;
+  expect(sortCall?.tileId).toBe("01J00000000000000000DBT401");
+  expect(sortCall?.body?.queryOverrides).toEqual({ order: [{ column: "sales_analytics_gross_takings", direction: "asc" }] });
+  expect(sortCall?.body?.dashboardId).toBe("01J00000000000000000DBRD01");
+  // The rows re-sort on screen at once, and the governed query re-runs.
+  await expect(products.locator("tbody tr").first().locator("td").first()).toHaveText("Helmets");
+  await expect.poll(() => capture.dashboardBuildPayloads.some((entry) => (
+    (entry as { endpoint?: string; body?: { tileIds?: string[]; force?: boolean } }).endpoint === "refresh"
+    && (entry as { body?: { tileIds?: string[] } }).body?.tileIds?.[0] === "01J00000000000000000DBT401"
+  ))).toBe(true);
+
+  // Filters: a list filter on a text column, built from the values on screen.
+  await products.getByRole("button", { name: "Filters for Top products by revenue" }).click();
+  await page.getByRole("button", { name: "Add filter…" }).click();
+  await page.getByRole("combobox", { name: "Column" }).selectOption("sales_analytics_product");
+  await page.getByRole("checkbox", { name: "Gravel bike hire" }).check();
+  await page.getByRole("button", { name: "Apply" }).click();
+  await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "tile"
+  )).length).toBe(2);
+  const filterCall = capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "tile"
+  ))[1] as { body?: { queryOverrides?: { filters?: unknown; order?: unknown } } } | undefined;
+  expect(filterCall?.body?.queryOverrides?.filters).toEqual([
+    { column: "sales_analytics_product", operator: "equals", values: ["Gravel bike hire"] },
+  ]);
+  expect(filterCall?.body?.queryOverrides?.order).toEqual([{ column: "sales_analytics_gross_takings", direction: "asc" }]);
+  await expect(products.locator("tbody tr")).toHaveCount(1);
+  await expect(products.getByRole("cell", { name: "Gravel bike hire" })).toBeVisible();
+  // The filter card reads back in words and can be removed.
+  await expect(page.getByRole("dialog", { name: "Filters for Top products by revenue" })).toContainText("Product is Gravel bike hire");
+  await page.getByRole("button", { name: "Remove filter on Product" }).click();
+  await expect(products.locator("tbody tr")).toHaveCount(3);
+  await page.keyboard.press("Escape");
+
+  // A right-clicked value keeps only that value.
+  await products.getByRole("cell", { name: "Helmets" }).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Keep only" }).click();
+  await expect(products.locator("tbody tr")).toHaveCount(1);
+  await expect(products.getByRole("cell", { name: "Helmets" })).toBeVisible();
+  await page.screenshot({ path: ".playwright/dashboard-element-filters.png" });
+});
+
+test("Element properties requery the governed query in place and author the column contract", async ({ page }) => {
+  const capture = await installAppApiRoutes(page, { dashboardApplied: true });
+  await page.goto("/dash");
+  await page.getByRole("button", { name: "Dashboards", exact: true }).click();
+  await page.getByRole("list", { name: "Your dashboards" }).getByRole("button", { name: /^Ashburton at a glance/u }).click();
+  const chart = page.getByRole("region", { name: "Revenue by week" });
+  await expect(chart).toBeVisible();
+
+  // Sigma's Properties: Truncate date is one deterministic requery. The
+  // element keeps its chart while the server re-mints the recipe.
+  await chart.getByRole("button", { name: "Properties for Revenue by week" }).click();
+  const properties = page.getByRole("dialog", { name: "Properties for Revenue by week" });
+  await expect(properties.getByRole("combobox", { name: "Truncate date" })).toHaveValue("week");
+  await expect(properties.getByRole("combobox", { name: "Date range" })).toHaveValue("last 12 weeks");
+  await properties.getByRole("combobox", { name: "Truncate date" }).selectOption("month");
+  await expect(chart.getByRole("progressbar", { name: "Updating Revenue by week" })).toBeVisible();
+  await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "query"
+  )).length).toBe(1);
+  const requery = capture.dashboardBuildPayloads.find((entry) => (
+    (entry as { endpoint?: string }).endpoint === "query"
+  )) as { tileId?: string; body?: { edits?: unknown; recipeVersion?: number; dashboardId?: string } } | undefined;
+  expect(requery?.tileId).toBe("01J00000000000000000DBT301");
+  expect(requery?.body?.edits).toEqual([{ op: "set_granularity", dimension: "sales_analytics.completed_at", granularity: "month" }]);
+  expect(requery?.body?.recipeVersion).toBe(1);
+  expect(requery?.body?.dashboardId).toBe("01J00000000000000000DBRD01");
+  await expect(chart.getByRole("progressbar")).toHaveCount(0);
+  // The new recipe's fields are re-read for the next edit.
+  await expect(properties.getByRole("combobox", { name: "Truncate date" })).toHaveValue("month");
+  await page.keyboard.press("Escape");
+
+  // A table element: column order and visibility are authored state, not
+  // result-set order; the column menu deletes a column from the query.
+  const products = page.getByRole("region", { name: "Top products by revenue" });
+  await products.getByRole("button", { name: "Properties for Top products by revenue" }).click();
+  const tableProperties = page.getByRole("dialog", { name: "Properties for Top products by revenue" });
+  await tableProperties.getByRole("button", { name: "Move Gross takings up" }).click();
+  await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "tile"
+  )).length).toBe(1);
+  const orderCall = capture.dashboardBuildPayloads.find((entry) => (
+    (entry as { endpoint?: string }).endpoint === "tile"
+  )) as { body?: { columnOrder?: unknown } } | undefined;
+  expect(orderCall?.body?.columnOrder).toEqual(["sales_analytics_gross_takings", "sales_analytics_product"]);
+  await expect(products.locator("thead th").first()).toContainText("Gross takings");
+  await tableProperties.getByRole("button", { name: "Hide Product" }).click();
+  await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "tile"
+  )).length).toBe(2);
+  const hideCall = capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "tile"
+  ))[1] as { body?: { columnPresentation?: unknown } } | undefined;
+  expect(hideCall?.body?.columnPresentation).toEqual({ sales_analytics_product: { hidden: true } });
+  await expect(products.locator("thead th")).toHaveCount(1);
+  await tableProperties.getByRole("button", { name: "Show Product" }).click();
+  await expect(products.locator("thead th")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+
+  await products.getByRole("button", { name: "Column options for Gross takings" }).click();
+  await page.getByRole("menuitem", { name: "Delete column" }).click();
+  await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "query"
+  )).length).toBe(2);
+  const removeCall = capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "query"
+  ))[1] as { tileId?: string; body?: { edits?: unknown } } | undefined;
+  expect(removeCall?.tileId).toBe("01J00000000000000000DBT401");
+  expect(removeCall?.body?.edits).toEqual([{ op: "remove_measure", member: "sales_analytics.gross_takings" }]);
+  await page.screenshot({ path: ".playwright/dashboard-element-properties.png" });
+});
+
+test("The Albert wand reworks one element in place", async ({ page }) => {
+  const capture = await installAppApiRoutes(page, { dashboardApplied: true });
+  await page.goto("/dash");
+  await page.getByRole("button", { name: "Dashboards", exact: true }).click();
+  await page.getByRole("list", { name: "Your dashboards" }).getByRole("button", { name: /^Ashburton at a glance/u }).click();
+  const trend = page.getByRole("region", { name: "Revenue by week" });
+  await expect(trend).toBeVisible();
+
+  // The wand on the element: one sentence, sent as a scoped edit.
+  await trend.getByRole("button", { name: "Edit Revenue by week with Albert" }).click();
+  const ask = page.getByRole("textbox", { name: /What should change about/u });
+  await ask.fill("make it daily for the last 30 days");
+  await page.getByRole("dialog", { name: "Edit Revenue by week with Albert" })
+    .getByRole("button", { name: "Edit with Albert" }).click();
+
+  // The edit runs as a dashboard-mode turn scoped to the tile: the brief
+  // names the element, the runtime composes one replacement, and the apply
+  // replaces that tile in its slot.
+  await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "build"
+  )).length).toBe(1);
+  const briefCall = capture.dashboardBuildPayloads.find((entry) => (
+    (entry as { endpoint?: string }).endpoint === "build"
+  )) as { body?: { instruction?: string; dashboardId?: string; tileId?: string } } | undefined;
+  expect(briefCall?.body?.instruction).toBe("make it daily for the last 30 days");
+  expect(briefCall?.body?.dashboardId).toBe("01J00000000000000000DBRD01");
+  expect(briefCall?.body?.tileId).toBe("01J00000000000000000DBT301");
+  const panel = page.getByRole("complementary", { name: "Dashboard preview" });
+  await expect(panel).toBeVisible();
+  // The chat shows the owner's words as an edit of that element.
+  await expect(page.locator("p", { hasText: "Edit “Revenue by week”: make it daily for the last 30 days" })).toBeVisible();
+  await expect.poll(() => capture.dashboardBuildPayloads.filter((entry) => (
+    (entry as { endpoint?: string }).endpoint === "apply"
+  )).length).toBe(1);
+  const applyCall = capture.dashboardBuildPayloads.find((entry) => (
+    (entry as { endpoint?: string }).endpoint === "apply"
+  )) as { body?: { replaceTileId?: string; dashboardId?: string; conversationId?: string } } | undefined;
+  expect(applyCall?.body?.replaceTileId).toBe("01J00000000000000000DBT301");
+  expect(applyCall?.body?.dashboardId).toBe("01J00000000000000000DBRD01");
+  expect(applyCall?.body?.conversationId).toBe("01J00000000000000000DBCV02");
+  // The replacement sits where the old element was; nothing else moved.
+  await expect(panel.getByRole("region", { name: "Revenue by day" })).toBeVisible();
+  await expect(panel.getByRole("region", { name: "Revenue by week" })).toHaveCount(0);
+  await expect(panel.getByRole("region", { name: "Revenue", exact: true })).toBeVisible();
+  await expect(panel.getByRole("region", { name: "Top products by revenue" })).toBeVisible();
+  await page.screenshot({ path: ".playwright/dashboard-element-edit.png" });
+});
+
+test("Omni renders a composed pivot as an open pivot card and pins it", async ({ page }) => {
+  const capture = await installAppApiRoutes(page);
+  await page.goto("/dash");
+  await expectAnalysisRuntime(page, "Omni");
+  const composer = page.getByRole("textbox", { name: "Ask Omni about your business" });
+  await composer.fill("Show me sales and gross profit by week for the last 2 weeks.");
+  await composer.press("Enter");
+
+  // The composed pivot is the product of the turn: its card opens expanded,
+  // drawn by the dashboard pivot renderer, not as a collapsed query.
+  const pivotCard = page.getByRole("region", { name: "Pivot: Weekly scorecard" });
+  await expect(pivotCard).toBeVisible();
+  await expect(pivotCard.getByRole("button", { name: /Weekly scorecard/u })).toHaveAttribute("aria-expanded", "true");
+  const pivotTable = pivotCard.locator("table[data-pivot='true']");
+  await expect(pivotTable).toBeVisible();
+  await expect(pivotTable.locator("thead th").first()).toHaveText("Metric");
+  await expect(pivotTable.locator("tbody tr").nth(1).locator("td").first()).toHaveText("Gross profit");
+  // Row units carry into the cells: currency down the Sales row.
+  await expect(pivotTable.locator("tbody tr").first().locator("td").nth(2)).toHaveText("$8,379.02");
+  const metricCell = await pivotTable.locator("tbody tr").first().locator("td").first()
+    .evaluate((cell) => getComputedStyle(cell).position);
+  expect(metricCell).toBe("sticky");
+
+  // The plain evidence query stays collapsed, as before.
+  await expect(page.getByRole("region", { name: "Query: Weekly revenue" }).getByRole("button", { name: /Weekly revenue/u }))
+    .toHaveAttribute("aria-expanded", "false");
+
+  // One click pins the pivot to the dashboard through the governed pin route.
+  await pivotCard.getByRole("button", { name: "Add to dashboard" }).click();
+  await expect(pivotCard.getByRole("button", { name: "Added to dashboard" })).toBeVisible();
+  const pin = capture.dashboardBuildPayloads.find((entry) => (
+    (entry as Record<string, unknown>).endpoint === "pin"
+  )) as Record<string, unknown> | undefined;
+  expect(pin).toBeTruthy();
+  expect((pin?.body as Record<string, unknown>).tableEventId).toBe("omni_fx_pivot_table");
+  expect((pin?.body as Record<string, unknown>).resultId).toBe("01J0000000000000000000OMP1");
+  await page.screenshot({ path: ".playwright/omni-pivot-card.png" });
 });
 
 test("Swarm on the Omni tab keeps the omni harness end to end", async ({ page }) => {
   const capture = await installAppApiRoutes(page);
   await page.goto("/dash");
-  await selectAnalysisRuntime(page, "Omni");
-  await expect(analysisRuntimeTrigger(page, "Omni")).toBeVisible();
+  await expectAnalysisRuntime(page, "Omni");
 
   // Toggling Swarm must not yank the conversation over to Codex.
-  await page.getByRole("button", { name: "Swarm", exact: true }).click();
-  await expect(analysisRuntimeTrigger(page, "Omni")).toBeVisible();
+  await page.getByTestId("model-run-controls-trigger").click();
+  await page.getByRole("switch", { name: "Swarm" }).click();
+  await page.keyboard.press("Escape");
+  await expectAnalysisRuntime(page, "Omni");
 
   const composer = page.getByRole("textbox", { name: "Ask a harder question for Swarm" });
   await composer.fill("Where is the business leaking money across sales, costs and labour?");
@@ -1295,7 +1761,174 @@ test("Swarm on the Omni tab keeps the omni harness end to end", async ({ page })
 
   // The panel tracks the omni worker and the conversation stays on Omni.
   await expect(page.getByRole("heading", { name: "Sales trajectory" }).or(page.getByText("Sales trajectory")).first()).toBeVisible();
-  await expect(analysisRuntimeTrigger(page, "Omni")).toBeVisible();
+  await expectAnalysisRuntime(page, "Omni");
+});
+
+test("Discover lists questions drawn from the connected tools and sends one to Omni", async ({ page }) => {
+  const capture = await openDashboard(page);
+  await page.getByRole("tab", { name: "Discover" }).click();
+  await expect(page.getByRole("tab", { name: "Discover" })).toHaveAttribute("aria-selected", "true");
+  const panel = page.getByTestId("discover-workspace");
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What’s possible with your data", level: 2 })).toBeVisible();
+  // The header states its purpose in one line; the connected tools are the logo stack beside it.
+  await expect(panel.locator("header")).toContainText("Pick one and Albert investigates.");
+  await expect(panel.locator("header img")).toHaveCount(2);
+  await expect(page.getByRole("textbox", { name: "Ask Omni about your business" })).toHaveCount(0);
+
+  const expected = selectDiscoverCards(["xero", "deputy"]);
+  const cards = page.getByTestId("discover-card");
+  await expect(cards).toHaveCount(expected.length);
+  await expect(cards.first()).toHaveAttribute("aria-label", `Ask: ${expected[0]!.prompt}`);
+  await expect(cards.first().locator("img")).toHaveCount(expected[0]!.tools.length);
+  await expectNoWcagViolations(page, "Discover grid");
+
+  await page.getByRole("button", { name: "Cash & accounts", exact: true }).click();
+  await expect(cards.first()).toHaveAttribute("data-domain", "cash");
+  await expect(cards).toHaveCount(expected.filter((card) => card.domain === "cash").length);
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  await expect(cards).toHaveCount(expected.length);
+
+  await cards.first().click();
+  await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+  await expectAnalysisRuntime(page, "Omni");
+  await expect.poll(() => capture.omniConversationPayloads.length).toBe(1);
+  expect(capture.omniConversationPayloads[0]).toMatchObject({ message: expected[0]!.prompt });
+  expect(capture.omniConversationPayloads[0]).not.toHaveProperty("dashboardBuild");
+  await expect(page.getByText(expected[0]!.prompt, { exact: true })).toBeVisible();
+  expect(capture.discoverPayloads).toHaveLength(1);
+
+  // An ordinary answer whose tables carry pinning replay references must not
+  // read as a dashboard build: no design narration, no dashboard preview.
+  await expect(page.getByText(/Revenue held steady across the last 12 complete weeks/u)).toBeVisible();
+  await expect(page.getByText(/Composing the dashboard|Creating element|Reading your data model|Planning the dashboard/u)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /dashboard preview/u })).toHaveCount(0);
+});
+
+test("Scheduled turns a description into a schedule, edits it in place and runs it on demand", async ({ page }) => {
+  const capture = await openDashboard(page);
+  await page.getByRole("tab", { name: "Scheduled" }).click();
+  await expect(page.getByRole("tab", { name: "Scheduled" })).toHaveAttribute("aria-selected", "true");
+  const panel = page.getByTestId("scheduled-workspace");
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reports on your schedule", level: 2 })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Ask Omni about your business" })).toHaveCount(0);
+
+  // The standing schedule lists with its cadence, zone, destination and last run.
+  const tasks = page.getByTestId("scheduled-task");
+  await expect(tasks).toHaveCount(1);
+  await expect(tasks.first()).toContainText("Every day at 9:00 am · Australia/Melbourne · to Tom · +61 414 187 820");
+  await expect(tasks.first().getByTestId("scheduled-next")).toContainText(/Next .*9:00 am/u);
+  await expect(tasks.first().getByTestId("scheduled-last-run")).toContainText(/Sent .*9:00 am/u);
+  await expectNoWcagViolations(page, "Scheduled list");
+
+  // Describe a report; the deterministic reading sets the time and days.
+  await page.getByRole("textbox", { name: "Describe a report and when to send it" })
+    .fill("Every Monday at 8:30am text me last week's sales vs the week before");
+  await page.getByRole("button", { name: "Create schedule" }).click();
+  await expect(page.getByTestId("scheduled-created")).toContainText("Scheduled.");
+  await expect(tasks).toHaveCount(2);
+  const created = tasks.nth(1);
+  await expect(created).toContainText("Mondays at 8:30 am · Australia/Melbourne");
+  await expect(created.getByRole("textbox", { name: /^Question for/u })).toHaveValue("Last week's sales vs the week before.");
+  const createPayload = capture.scheduledPayloads.find((entry) => (entry as { body?: { action?: string } }).body?.action === "create");
+  expect(createPayload).toMatchObject({
+    method: "POST",
+    body: { action: "create", text: "Every Monday at 8:30am text me last week's sales vs the week before" },
+  });
+
+  // Time, days, zone and number are all editable in place; each change saves.
+  await created.getByLabel(/^Time for/u).fill("09:15");
+  await expect(created).toContainText("Mondays at 9:15 am");
+  await created.getByRole("button", { name: "Friday", exact: true }).click();
+  await expect(created).toContainText("Mon and Fri at 9:15 am");
+  await created.getByLabel(/^Time zone for/u).selectOption("Australia/Brisbane");
+  await expect(created).toContainText("Australia/Brisbane");
+  await created.getByLabel(/^Send .* to$/u).selectOption("+61400000002");
+  await expect(created).toContainText("to Sam · +61 400 000 002");
+  const updates = capture.scheduledPayloads
+    .map((entry) => (entry as { body?: Record<string, unknown> }).body)
+    .filter((body) => body?.action === "update");
+  expect(updates).toEqual(expect.arrayContaining([
+    expect.objectContaining({ timeOfDay: "09:15" }),
+    expect.objectContaining({ days: ["mon", "fri"] }),
+    expect.objectContaining({ timezone: "Australia/Brisbane" }),
+    expect.objectContaining({ phone: "+61400000002" }),
+  ]));
+
+  // Run now queues a manual run; the tab polls until the bridge reports it sent.
+  await created.getByRole("button", { name: "Run now" }).click();
+  await expect(created.getByRole("button", { name: /Sending/u })).toBeVisible();
+  await expect(created.getByTestId("scheduled-last-run")).toContainText(/Sent /u, { timeout: 15_000 });
+  await expect(created.getByRole("button", { name: "Run now" })).toBeEnabled();
+  expect(capture.scheduledPayloads.some((entry) => (entry as { body?: { action?: string } }).body?.action === "run")).toBe(true);
+
+  // Pausing clears the next run; the schedule stays listed.
+  await created.getByRole("switch", { name: /schedule on$/u }).click();
+  await expect(created.getByTestId("scheduled-next")).toHaveText("Paused");
+
+  // A run's analysis opens as an ordinary conversation in Chat.
+  await tasks.first().getByRole("button", { name: "View analysis" }).click();
+  await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("Alerts lists the ten triggers with their readings, switches recipients and runs a check on demand", async ({ page }) => {
+  const capture = await openDashboard(page);
+  await page.getByRole("tab", { name: "Alerts" }).click();
+  await expect(page.getByRole("tab", { name: "Alerts" })).toHaveAttribute("aria-selected", "true");
+  const panel = page.getByTestId("alerts-workspace");
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Alerts", level: 2 })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Ask Omni about your business" })).toHaveCount(0);
+
+  // Ten catalogue triggers, each a title, a few words, who it goes to and
+  // when it last fired; the status line carries the last check and how far
+  // each tool's data reaches.
+  const cards = page.getByTestId("alerts-trigger");
+  await expect(cards).toHaveCount(10);
+  await expect(page.getByTestId("alerts-status")).toContainText("Lightspeed to");
+  await expect(page.getByTestId("alerts-status")).toContainText("Xero to");
+  const trading = cards.filter({ has: page.getByRole("heading", { name: "Trading day", level: 3 }) });
+  await expect(trading).toContainText("Record days, dead days, quiet months.");
+  await expect(trading).not.toContainText("best day in 12 months");
+  await expect(trading.getByTestId("alerts-last-fired")).toContainText("Last fired");
+  await expect(trading.getByRole("button", { name: /^You /u })).toHaveAttribute("aria-pressed", "true");
+  await expect(trading.getByRole("button", { name: /^Sam /u })).toHaveAttribute("aria-pressed", "false");
+  const aged = cards.filter({ has: page.getByRole("heading", { name: "Bike on the floor a year", level: 3 }) });
+  await expect(aged.getByRole("switch")).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByTestId("alerts-events")).toContainText("Biggest day in a year");
+  await expectNoWcagViolations(page, "Alerts list");
+
+  // Adding a recipient and flipping a switch each save in place.
+  await trading.getByRole("button", { name: /^Sam /u }).click();
+  await expect(trading.getByRole("button", { name: /^Sam /u })).toHaveAttribute("aria-pressed", "true");
+  await aged.getByRole("switch").click();
+  await expect(aged.getByRole("switch")).toHaveAttribute("aria-checked", "true");
+  const updates = capture.alertsPayloads
+    .map((entry) => (entry as { body?: Record<string, unknown> }).body)
+    .filter((body) => body?.action === "update");
+  expect(updates).toEqual(expect.arrayContaining([
+    expect.objectContaining({ triggerKey: "trading_day", recipients: ["+61414187820", "+61400000002"] }),
+    expect.objectContaining({ triggerKey: "aged_bike", enabled: true }),
+  ]));
+
+  // Check now queues an evaluation; the tab polls until the bridge reports it finished.
+  await page.getByTestId("alerts-check").click();
+  await expect(page.getByTestId("alerts-status")).toContainText(/Check queued|Checking/u);
+  await expect(page.getByTestId("alerts-status")).toContainText(/^Checked /u, { timeout: 15_000 });
+  await expect(page.getByTestId("alerts-check")).toBeEnabled();
+  expect(capture.alertsPayloads.some((entry) => (entry as { body?: { action?: string } }).body?.action === "check")).toBe(true);
+});
+
+test("the raw debugger opens from the composer's run settings", async ({ page }) => {
+  await openDashboard(page);
+  await expect(page.getByRole("button", { name: "Raw debugger" })).toHaveCount(0);
+  await page.getByTestId("model-run-controls-trigger").click();
+  const toggle = page.getByRole("switch", { name: "Raw debugger" });
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByText("Raw debugger", { exact: true }).last()).toBeVisible();
 });
 
 test("Dashboard Master runs a session through the omni harness and renders the report", async ({ page }) => {

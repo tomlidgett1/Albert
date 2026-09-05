@@ -1,4 +1,9 @@
 import { verifyInternalRequest } from "../../../packages/security/src/index.js";
+import { randomUUID } from "node:crypto";
+import { FileOmniJobStore, PostgresOmniJobStore, omniRequestHash, type OmniJobSnapshot, type OmniJobStore, type StoredOmniJob } from "./omni-job-store.js";
+import type { OmniTurnCheckpoint } from "../../../packages/albert-omni/src/checkpoint.js";
+import { omniBuildFingerprint } from "../../../packages/albert-omni/src/build-fingerprint.mjs";
+import { ALBERT_OMNI_MODEL_IDS } from "../../../packages/albert-omni/src/contracts.js";
 import {
   assertCodexChatGPTLogin,
   assertPinnedCodexVersion,
@@ -17,7 +22,7 @@ import {
 } from "../../../packages/albert-codex/src/semantic-runtime.js";
 import { omniServiceTurnSchema, type OmniServiceTurn, type OmniSemanticTurnResult } from "../../../packages/albert-omni/src/contracts.js";
 import { runOmniSemanticTurn } from "../../../packages/albert-omni/src/runtime.js";
-import { isAlbertModelId, providerForModel } from "../../../packages/shared/src/agent-runtime.js";
+import { providerForModel } from "../../../packages/shared/src/agent-runtime.js";
 import type { AnalyticalQueryRecorder } from "../../../packages/shared/src/query-audit.js";
 import type { CodexRuntimeConfig } from "./config.js";
 
@@ -47,6 +52,13 @@ type CodexBackgroundJob = {
   eventBytes: number;
   result?: CodexSemanticTurnResult | OmniSemanticTurnResult;
   failure?: Readonly<{ code: string; message: string }>;
+  durable?: StoredOmniJob;
+  omniTurn?: OmniServiceTurn;
+  checkpoint?: OmniTurnCheckpoint;
+  deadlineAt?: number;
+  writes?: Promise<void>;
+  writeError?: Error;
+  completion?: Promise<void>;
 };
 
 /** Capacity means waiting, never failure: jobs beyond the concurrency cap
@@ -178,14 +190,47 @@ export class CodexRuntimeHttpHandler {
   private readonly requestIds = new Map<string, number>();
   private readonly jobs = new Map<string, CodexBackgroundJob>();
   private readonly waitingJobs: Array<Readonly<{ job: CodexBackgroundJob; begin: () => void }>> = [];
+  private readonly workerId = randomUUID();
+  private readonly omniStore: OmniJobStore | undefined;
+  private readonly heartbeat: ReturnType<typeof setInterval>;
+  private readonly reaper: ReturnType<typeof setInterval>;
+  private closing = false;
+  private readonly omniBuildHash = omniBuildFingerprint();
+  private readonly omniSubmissions = new Map<string, { hash: string; promise: Promise<void> }>();
 
-  constructor(private readonly config: CodexRuntimeConfig) {
-    const reaper = setInterval(() => this.reapAbandonedJobs(), 30_000);
-    (reaper as { unref?: () => void }).unref?.();
+  constructor(private readonly config: CodexRuntimeConfig, store?: OmniJobStore) {
+    this.omniStore = store ?? (config.omniJobDatabaseUrl ? new PostgresOmniJobStore(config.omniJobDatabaseUrl, config.signingSecret)
+      : config.omniJobDirectory ? new FileOmniJobStore(config.omniJobDirectory, config.signingSecret) : undefined);
+    this.reaper = setInterval(() => this.reapAbandonedJobs(), 30_000);
+    this.reaper.unref?.();
+    this.heartbeat = setInterval(() => {
+      for (const job of this.jobs.values()) {
+        if (!job.durable || job.result || job.failure) continue;
+        void this.omniStore!.renew(job.id, this.workerId).then((renewed) => {
+          if (!renewed) job.abort.abort(new Error("The durable job lease was lost."));
+        }).catch(() => job.abort.abort(new Error("The durable job lease could not be renewed.")));
+      }
+    }, 20_000);
+    this.heartbeat.unref?.();
+  }
+
+  async close(): Promise<void> {
+    this.closing = true;
+    clearInterval(this.heartbeat);
+    clearInterval(this.reaper);
+    for (const job of this.jobs.values()) if (job.durable && !job.result && !job.failure) job.abort.abort(new Error("The runtime is restarting from its saved checkpoint."));
+    await Promise.all([...this.jobs.values()].map((job) => job.completion?.catch(() => undefined)));
+    await Promise.all([...this.jobs.values()].map((job) => job.writes?.catch(() => undefined)));
+    await Promise.all([...this.jobs.values()].filter((job) => job.durable && !job.result && !job.failure).map((job) => this.omniStore!.release(job.id, this.workerId).catch(() => undefined)));
+    await this.omniStore?.close();
   }
 
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/v1/omni/readyz") {
+      const ready = Boolean(this.config.omniOpenAi || this.config.omniAnthropic) && (!this.config.omniDurabilityRequired || Boolean(this.omniStore));
+      return Response.json({ ready, releaseSha: this.config.releaseSha, buildHash: this.omniBuildHash, authenticationMode: "api", durableJobs: Boolean(this.omniStore), models: ALBERT_OMNI_MODEL_IDS }, { status: ready ? 200 : 503, headers: { "cache-control": "no-store" } });
+    }
     if (request.method === "GET" && url.pathname === "/livez") {
       return Response.json({ ok: true, service: "albert-codex-runtime" }, { headers: { "cache-control": "no-store" } });
     }
@@ -253,19 +298,18 @@ export class CodexRuntimeHttpHandler {
     if (isOmniSubmit) {
       const omniParsed = omniServiceTurnSchema.safeParse(payload);
       if (!omniParsed.success) return jsonError("invalid_request", 400, "The Omni turn request is invalid.");
-      // The runtime resolves unknown models to the OpenAI default, so the
-      // credential requirement follows the provider the turn will actually use.
-      const omniProvider = isAlbertModelId(omniParsed.data.model)
-        ? providerForModel(omniParsed.data.model)
-        : "openai";
+      const omniProvider = providerForModel(omniParsed.data.model as (typeof ALBERT_OMNI_MODEL_IDS)[number]);
       const omniCredentials = omniProvider === "anthropic"
         ? this.config.omniAnthropic
         : this.config.omniOpenAi;
       if (!omniCredentials) {
         return jsonError("omni_unavailable", 503, "The Omni runtime is not configured on this environment.");
       }
+      if (this.config.omniDurabilityRequired && !this.omniStore) return jsonError("omni_unavailable", 503, "The durable Omni job store is not configured.");
       this.pruneReplayIds();
       if (this.requestIds.has(omniParsed.data.requestId) || this.jobs.has(omniParsed.data.requestId)) {
+        const prior = this.jobs.get(omniParsed.data.requestId)?.omniTurn;
+        if (prior && omniRequestHash(prior) !== omniRequestHash(omniParsed.data)) return jsonError("replayed_request", 409, "The job identity was reused with different input.");
         if (this.jobs.has(omniParsed.data.requestId)) {
           return Response.json({ jobId: omniParsed.data.requestId }, {
             status: 202,
@@ -275,13 +319,16 @@ export class CodexRuntimeHttpHandler {
         return jsonError("replayed_request", 409, "This Omni turn request has already been used.");
       }
       if (
-        this.activeTurns >= this.config.maxConcurrentTurns
-        && this.waitingJobs.length >= MAX_WAITING_JOBS
+        this.activeTurns + this.waitingJobs.length + this.omniSubmissions.size >= this.config.maxConcurrentTurns + MAX_WAITING_JOBS
       ) {
         return jsonError("omni_overloaded", 429, "Albert is unusually busy right now. Try again in a minute.");
       }
-      this.requestIds.set(omniParsed.data.requestId, Date.now());
-      this.startAgentJob(omniParsed.data.requestId, (job) => this.beginOmniJob(job, omniParsed.data));
+      try { await this.acceptOmniTurn(omniParsed.data); }
+      catch (error) {
+        return error instanceof Error && /different input/u.test(error.message)
+          ? jsonError("replayed_request", 409, "The job identity was reused with different input.")
+          : jsonError("omni_runtime_unavailable", 503, "The durable job store is unavailable.");
+      }
       return Response.json({ jobId: omniParsed.data.requestId }, {
         status: 202,
         headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
@@ -390,17 +437,44 @@ export class CodexRuntimeHttpHandler {
   }
 
   /** Shared job bookkeeping for both harnesses; `begin` runs the actual turn. */
-  private startAgentJob(requestId: string, begin: (job: CodexBackgroundJob) => void): void {
+  private acceptOmniTurn(turn: OmniServiceTurn): Promise<void> {
+    const hash = omniRequestHash(turn);
+    const pending = this.omniSubmissions.get(turn.requestId);
+    if (pending) return pending.hash === hash ? pending.promise : Promise.reject(new Error("The job identity was reused with different input."));
+    const start = async () => {
+      let durable: StoredOmniJob | undefined;
+      if (this.omniStore) {
+        const now = Date.now();
+        let deadlineAt = now + 720_000;
+        try {
+          const bearer = JSON.parse(Buffer.from(turn.cubeBearer.split(".")[1]!, "base64url").toString("utf8"));
+          if (typeof bearer.exp === "number") deadlineAt = Math.min(deadlineAt, bearer.exp * 1_000 - 5_000);
+        } catch { /* The runtime reports a malformed bearer without reaching Cube. */ }
+        const registered = await this.omniStore.create({ turn, createdAt: now, deadlineAt, events: [] });
+        if (registered.snapshot.result || registered.snapshot.failure) return;
+        durable = await this.omniStore.claim(turn.requestId, this.workerId) ?? undefined;
+        if (!durable) return;
+      }
+      this.requestIds.set(turn.requestId, Date.now());
+      this.startAgentJob(turn.requestId, (job) => this.beginOmniJob(job, turn), durable);
+    };
+    const promise = start().finally(() => this.omniSubmissions.delete(turn.requestId));
+    this.omniSubmissions.set(turn.requestId, { hash, promise });
+    return promise;
+  }
+
+  private startAgentJob(requestId: string, begin: (job: CodexBackgroundJob) => void, durable?: StoredOmniJob): void {
     const now = Date.now();
     const job: CodexBackgroundJob = {
       id: requestId,
-      events: [],
+      events: [...(durable?.snapshot.events ?? [])],
       waiters: new Set(),
       abort: new AbortController(),
-      createdAt: now,
+      createdAt: durable?.snapshot.createdAt ?? now,
       updatedAt: now,
       lastPolledAt: now,
-      eventBytes: 0,
+      eventBytes: durable ? durable.snapshot.events.reduce((sum, event) => sum + Buffer.byteLength(JSON.stringify(event)), 0) : 0,
+      ...(durable ? { durable, omniTurn: durable.snapshot.turn, checkpoint: durable.snapshot.checkpoint, deadlineAt: durable.snapshot.deadlineAt } : {}),
     };
     this.jobs.set(job.id, job);
     if (this.activeTurns >= this.config.maxConcurrentTurns) {
@@ -420,6 +494,20 @@ export class CodexRuntimeHttpHandler {
     begin(job);
   }
 
+  private saveOmniJob(job: CodexBackgroundJob): Promise<void> {
+    if (!job.durable || !job.omniTurn || !this.omniStore) return Promise.resolve();
+    const snapshot: OmniJobSnapshot = structuredClone({ turn: job.omniTurn, createdAt: job.createdAt, deadlineAt: job.deadlineAt!, events: job.events, ...(job.checkpoint ? { checkpoint: job.checkpoint } : {}), ...(job.result ? { result: job.result as OmniSemanticTurnResult } : {}), ...(job.failure ? { failure: job.failure } : {}) });
+    const save = (job.writes ?? Promise.resolve()).then(async () => {
+      if (job.writeError) throw job.writeError;
+      job.durable!.revision = await this.omniStore!.save(job.durable!, snapshot);
+    });
+    job.writes = save.catch((error: unknown) => {
+      job.writeError = error instanceof Error ? error : new Error("The durable checkpoint failed.");
+      job.abort.abort(job.writeError);
+    });
+    return save;
+  }
+
   private publishJobEvent(job: CodexBackgroundJob, event: CodexRuntimeBufferedEvent): void {
     const bytes = Buffer.byteLength(JSON.stringify(event), "utf8");
     if (
@@ -433,6 +521,7 @@ export class CodexRuntimeHttpHandler {
     job.eventBytes += bytes;
     job.updatedAt = Date.now();
     this.notifyJob(job);
+    void this.saveOmniJob(job).catch(() => undefined);
   }
 
   private beginJob(job: CodexBackgroundJob, turn: CodexServiceTurn): void {
@@ -483,29 +572,35 @@ export class CodexRuntimeHttpHandler {
   }
 
   private beginOmniJob(job: CodexBackgroundJob, turn: OmniServiceTurn): void {
+    job.omniTurn = turn;
+    job.deadlineAt ??= job.createdAt + 720_000;
     this.activeTurns += 1;
     const queryRecorder: AnalyticalQueryRecorder = {
-      start: async (attempt) => this.publishJobEvent(job, {
-        type: "query_audit",
-        phase: "start",
-        attempt: { ...attempt, runtime: "codex-app-server" },
-      }),
-      finish: async (outcome) => this.publishJobEvent(job, {
-        type: "query_audit",
-        phase: "finish",
-        outcome,
-      }),
+      start: async (attempt) => {
+        this.publishJobEvent(job, { type: "query_audit", phase: "start", attempt: { ...attempt, runtime: "codex-app-server" } });
+        await job.writes;
+        if (job.writeError) throw job.writeError;
+      },
+      finish: async (outcome) => {
+        this.publishJobEvent(job, { type: "query_audit", phase: "finish", outcome });
+        await job.writes;
+        if (job.writeError) throw job.writeError;
+      },
     };
-    void runOmniSemanticTurn({
+    job.completion = runOmniSemanticTurn({
       turn,
       cubeApiUrl: this.config.cubeApiUrl,
       ...(this.config.omniOpenAi ? { openai: this.config.omniOpenAi } : {}),
       ...(this.config.omniAnthropic ? { anthropic: this.config.omniAnthropic } : {}),
       signal: job.abort.signal,
-      emit: (event) => this.publishJobEvent(job, event),
+      deadlineAt: job.deadlineAt,
+      ...(job.checkpoint ? { resume: job.checkpoint } : {}),
+      checkpoint: async (checkpoint) => { job.checkpoint = checkpoint; await this.saveOmniJob(job); },
+      emit: async (event) => { this.publishJobEvent(job, event); await job.writes; if (job.writeError) throw job.writeError; },
       queryRecorder,
-    }).then((result) => {
-      job.result = result;
+    }).then(async (result) => {
+      job.result = { ...result, buildHash: this.omniBuildHash };
+      await this.saveOmniJob(job);
       // One line per answered turn with its token usage: the only place the
       // provider cost and prompt-cache hit rate of a turn become observable.
       process.stdout.write(`${JSON.stringify({
@@ -519,9 +614,12 @@ export class CodexRuntimeHttpHandler {
         durationMs: result.durationMs,
         ...(result.usage ? { usage: result.usage } : {}),
       })}\n`);
-    }).catch((error) => {
+    }).catch(async (error) => {
+      if (this.closing) return;
       const failure = omniPublicFailure(error);
+      job.result = undefined;
       job.failure = failure;
+      await this.saveOmniJob(job).catch(() => undefined);
       process.stdout.write(`${JSON.stringify({
         event: "omni_job_failed",
         code: failure.code,
@@ -538,6 +636,7 @@ export class CodexRuntimeHttpHandler {
   }
 
   private startNextWaitingJob(): void {
+    if (this.closing) return;
     while (this.activeTurns < this.config.maxConcurrentTurns) {
       const next = this.waitingJobs.shift();
       if (!next) return;
@@ -575,6 +674,7 @@ export class CodexRuntimeHttpHandler {
     const cutoff = Date.now() - ABANDONED_JOB_MS;
     for (let index = this.waitingJobs.length - 1; index >= 0; index -= 1) {
       const waiting = this.waitingJobs[index]!;
+      if (waiting.job.durable) continue;
       if (waiting.job.lastPolledAt >= cutoff) continue;
       this.waitingJobs.splice(index, 1);
       waiting.job.failure = { code: "codex_abandoned", message: "The Codex analysis was abandoned by its caller." };
@@ -582,6 +682,7 @@ export class CodexRuntimeHttpHandler {
       this.notifyJob(waiting.job);
     }
     for (const job of this.jobs.values()) {
+      if (job.durable) continue;
       if (job.result || job.failure || job.abort.signal.aborted) continue;
       if (job.lastPolledAt >= cutoff) continue;
       process.stdout.write(`${JSON.stringify({ event: "codex_job_reaped", jobId: job.id, idleMs: Date.now() - job.lastPolledAt })}\n`);
@@ -591,13 +692,36 @@ export class CodexRuntimeHttpHandler {
 
   private async pollJob(jobId: string, cursor: number, signal: AbortSignal): Promise<Response> {
     this.pruneReplayIds();
-    const job = this.jobs.get(jobId);
+    let job = this.jobs.get(jobId);
+    if (!job && this.omniStore) {
+      const stored = await this.omniStore.get(jobId);
+      if (stored) {
+        const claimed = stored.snapshot.result || stored.snapshot.failure ? null : await this.omniStore.claim(jobId, this.workerId);
+        if (claimed) {
+          this.startAgentJob(jobId, (restored) => this.beginOmniJob(restored, claimed.snapshot.turn), claimed);
+          job = this.jobs.get(jobId);
+        } else {
+          const snapshot = stored.snapshot;
+          if (cursor > snapshot.events.length) return jsonError("invalid_cursor", 409, "The job cursor is invalid.");
+          const events = snapshot.events.slice(cursor, cursor + 8);
+          const next = cursor + events.length;
+          if (!events.length && !snapshot.result && !snapshot.failure) await new Promise((resolve) => setTimeout(resolve, 1_000));
+          return Response.json({ jobId, cursor: next, events, ...(next === snapshot.events.length && snapshot.result ? { result: snapshot.result } : {}), ...(next === snapshot.events.length && snapshot.failure ? { error: snapshot.failure } : {}) }, { headers: { "cache-control": "private, no-store" } });
+        }
+      }
+    }
     if (!job) return jsonError("job_not_found", 404, "The Codex background job is unavailable.");
+    await job.writes;
+    if (job.writeError) return jsonError("omni_runtime_unavailable", 503, "The durable job checkpoint is unavailable.");
     job.lastPolledAt = Date.now();
     if (cursor > job.events.length) return jsonError("invalid_cursor", 409, "The Codex job cursor is invalid.");
     if (cursor === job.events.length && !job.result && !job.failure) {
       await this.waitForJobChange(job, signal);
     }
+    // Notifications are sent when events are queued. Only committed events
+    // may cross the polling boundary, including events added during the wait.
+    await job.writes;
+    if (job.writeError) return jsonError("omni_runtime_unavailable", 503, "The durable job checkpoint is unavailable.");
     const events = job.events.slice(cursor, cursor + 8);
     const nextCursor = cursor + events.length;
     const terminalDelivered = nextCursor >= job.events.length;

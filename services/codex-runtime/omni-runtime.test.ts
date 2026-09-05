@@ -343,7 +343,7 @@ test("Omni query normalizer repairs the common compareDateRange and phrasing mis
   assert.deepEqual(single.query.timeDimensions?.[0]?.dateRange, "2026-07-01 to 2026-08-31");
   assert.equal(single.adjustments.length, 1);
 
-  // Five comparison periods clamp to the governed four.
+  // Five comparison periods are rejected; no requested period is discarded.
   const five = normalizeOmniCubeQuery({
     measures: ["sales_analytics.gross_takings"],
     timeDimensions: [{
@@ -351,7 +351,8 @@ test("Omni query normalizer repairs the common compareDateRange and phrasing mis
       compareDateRange: ["a", "b", "c", "d", "e"],
     }],
   });
-  assert.equal(five.query.timeDimensions?.[0]?.compareDateRange?.length, 4);
+  assert.equal(five.query.timeDimensions?.[0]?.compareDateRange?.length, 5);
+  assert.match(five.errors.join(" "), /split.*separate queries/u);
 
   // "last 12 complete weeks" becomes Cube-parseable "last 12 weeks".
   const phrase = normalizeOmniCubeQuery({

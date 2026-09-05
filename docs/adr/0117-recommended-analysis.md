@@ -1,6 +1,6 @@
 # ADR 0117 — Recommended analysis on the homepage
 
-Date: 2026-08-23 · Status: accepted · Migrations: 0163, 0164
+Date: 2026-08-23 · Status: accepted · Migrations: 0163, 0164 · Amended by ADR 0133 (the daily look replaces the per-visit Luna pass; rows carry the tool they read)
 
 ## Context
 

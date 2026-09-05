@@ -134,12 +134,13 @@
       "artifact": ".albert-build/services/codex-runtime.js",
       "exposure": "signed-public",
       "livenessPath": "/livez",
-      "healthPath": "/readyz",
+      "healthPath": "/v1/omni/readyz",
       "requiredSecretNames": [
         "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
         "CUBE_API_URL",
         "OPENAI_API_KEY",
-        "OPENAI_BASE_URL"
+        "OPENAI_BASE_URL",
+        "ALBERT_OMNI_JOB_DATABASE_URL"
       ],
       "optionalSecretNames": [],
       "forbiddenRuntimeValues": [
@@ -285,6 +286,28 @@
       "optionalSecretNames": [
         "TOKEN_PREVIOUS_ENCRYPTION_KEYS",
         "DELETION_WORKER_POLL_MS"
+      ]
+    },
+    "imessage-bridge": {
+      "platform": "fly",
+      "manifest": "deploy/fly/imessage-bridge.toml",
+      "buildCommand": "npm run build:services",
+      "artifact": ".albert-build/services/imessage-bridge.js",
+      "exposure": "signed-public",
+      "livenessPath": "/livez",
+      "healthPath": "/readyz",
+      "requiredSecretNames": [
+        "LINQ_API_TOKEN",
+        "LINQ_WEBHOOK_SIGNING_SECRET",
+        "LINQ_WEBHOOK_URL_TOKEN",
+        "ALBERT_IMESSAGE_SUPABASE_ANON_KEY",
+        "ALBERT_IMESSAGE_SUPABASE_SERVICE_KEY",
+        "CUBEJS_API_SECRET",
+        "ALBERT_CODEX_RUNTIME_SIGNING_SECRET"
+      ],
+      "optionalSecretNames": [
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL"
       ]
     }
   },

@@ -178,18 +178,20 @@ export function timeRangeFromQuery(query: CubeQuery, timezone: string): TraceTim
   return { label: "All recorded history", start: "unknown", end: "unknown", timezone };
 }
 
+export function canonicalConnectorKey(connector: string): string {
+  const normalized = connector.toLowerCase().replaceAll("_", "-");
+  if (["lightspeed-r", "lightspeed-r-series", "lightspeed-retail"].includes(normalized)) return "lightspeed";
+  if (["lightspeed-x", "lightspeed-x-series"].includes(normalized)) return "lightspeed-x";
+  if (["xero-official", "xero-accounting"].includes(normalized)) return "xero";
+  return normalized;
+}
+
 export function scopedDescriptors(
   descriptors: readonly CatalogueViewDescriptor[],
   activeConnectors: readonly string[],
 ): readonly CatalogueViewDescriptor[] {
   if (activeConnectors.length === 0) return descriptors;
-  const active = new Set(activeConnectors.map((connector) => {
-    const normalized = connector.toLowerCase().replaceAll("_", "-");
-    if (["lightspeed-r", "lightspeed-r-series", "lightspeed-retail"].includes(normalized)) return "lightspeed";
-    if (["lightspeed-x", "lightspeed-x-series"].includes(normalized)) return "lightspeed-x";
-    if (["xero-official", "xero-accounting"].includes(normalized)) return "xero";
-    return normalized;
-  }));
+  const active = new Set(activeConnectors.map(canonicalConnectorKey));
   const scoped = descriptors.filter((descriptor) => active.has(descriptor.connector));
   // Routing metadata can be stale. It narrows context only when it still
   // leaves a useful semantic surface; Cube remains the authority either way.
@@ -251,7 +253,7 @@ export function provenanceForQuery(input: Readonly<{
 }>): TraceProvenance {
   const view = input.catalogue.views.find((candidate) => candidate.name === input.view);
   const freshness = input.freshness
-    .filter((entry) => entry.connector === input.connector && entry.dataThrough)
+    .filter((entry) => canonicalConnectorKey(entry.connector) === canonicalConnectorKey(input.connector) && entry.dataThrough)
     .map((entry) => entry.dataThrough!)
     .sort()
     .at(-1);

@@ -463,7 +463,9 @@ export function validateCubeQuery(
     },
     view: viewName,
     cubes,
-    members: allMembers,
+    // Deduplicated: a member that is also ordered or filtered on is one
+    // member, not a second trace column (ADR 0134).
+    members: [...new Set(allMembers)],
   };
 }
 

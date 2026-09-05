@@ -108,12 +108,11 @@ export function normalizeOmniCubeQuery(
         dateRange = normalizeRelative(compareDateRange[0]!);
         adjustments.push("compareDateRange had a single period, so it ran as the plain dateRange; pass two to four periods to compare.");
       } else {
-        adjustments.push("compareDateRange had a single period and a dateRange was already set, so the comparison entry was dropped.");
+        errors.push("Both dateRange and a single compareDateRange were supplied. Choose the intended window explicitly; neither is discarded.");
       }
       compareDateRange = undefined;
     } else if (compareDateRange !== undefined && compareDateRange.length > 4) {
-      adjustments.push(`compareDateRange supports at most four periods; the first four of ${compareDateRange.length} were kept.`);
-      compareDateRange = compareDateRange.slice(0, 4);
+      errors.push(`compareDateRange supports at most four periods; split the ${compareDateRange.length} requested periods into separate queries. No periods were discarded.`);
     }
 
     return {
@@ -142,7 +141,8 @@ export function normalizeOmniCubeQuery(
     ...(query.dimensions === undefined ? {} : { dimensions }),
   };
   if (normalized.dimensions !== undefined && normalized.dimensions.length === 0) {
-    const { dimensions: _empty, ...rest } = normalized;
+    const rest = { ...normalized };
+    delete rest.dimensions;
     return Object.freeze({ query: rest as CubeQuery, adjustments: Object.freeze(adjustments), errors: Object.freeze(errors) });
   }
   return Object.freeze({ query: normalized, adjustments: Object.freeze(adjustments), errors: Object.freeze(errors) });

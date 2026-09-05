@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cache } from "react";
 import { createClient } from "../../../utils/supabase/server.js";
 import { disconnectFivetranXero, OAuthFlowError } from "../../oauth/src/worker-rpc.js";
 import { toConnectionsWorkspace } from "./connections-workspace.js";
@@ -178,6 +179,18 @@ export const ALBERT_RATE_LIMIT_POLICIES = Object.freeze({
   "dashboard.build": Object.freeze({ limit: 24, windowSeconds: 86_400 }),
   // Luna rewrite of homepage next questions; cache hits never consume this.
   "conversation.recommended_analysis": Object.freeze({ limit: 12, windowSeconds: 3_600 }),
+  // Luna personalisation of the Discover library; cache hits never consume this.
+  "conversation.discover_prompts": Object.freeze({ limit: 8, windowSeconds: 3_600 }),
+  // Scheduled reports (ADR 0131): a create is one Luna parse; a manual run is a full Omni turn plus a text.
+  "scheduled.create": Object.freeze({ limit: 20, windowSeconds: 3_600 }),
+  "scheduled.mutation": Object.freeze({ limit: 60, windowSeconds: 60 }),
+  "scheduled.run": Object.freeze({ limit: 12, windowSeconds: 3_600 }),
+  // Alerts (ADR 0132): switches and recipients are cheap; a check is a
+  // lease, thirty governed queries and up to a few texts.
+  "alerts.mutation": Object.freeze({ limit: 60, windowSeconds: 60 }),
+  "alerts.check": Object.freeze({ limit: 12, windowSeconds: 3_600 }),
+  /** Deterministic element requeries (ADR 0134): each one runs a governed query. */
+  "dashboard.requery": Object.freeze({ limit: 240, windowSeconds: 3_600 }),
 } as const);
 
 export type AlbertRateLimitAction = keyof typeof ALBERT_RATE_LIMIT_POLICIES;
@@ -193,14 +206,21 @@ function singleton(value: unknown): unknown {
   return value;
 }
 
-export async function requireUser() {
+/**
+ * Authenticates once per request. Every repository function calls this, and
+ * `auth.getUser()` is a live network call to GoTrue, so without request-scoped
+ * memoisation a route doing K RPCs paid 2K serial round trips (ADR 0134).
+ * React's `cache()` is keyed to the request in the App Router, so the cookie
+ * store this reads is always the current request's.
+ */
+export const requireUser = cache(async () => {
   const supabase = await createClient();
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) throw new ControlPlaneError("Authentication is required.", 401);
   return { supabase, user: data.user };
-}
+});
 
-export async function currentTenantContext(): Promise<TenantContext | null> {
+export const currentTenantContext = cache(async (): Promise<TenantContext | null> => {
   const { supabase } = await requireUser();
   const { data, error } = await supabase.rpc("current_albert_context");
   if (error) {
@@ -214,7 +234,7 @@ export async function currentTenantContext(): Promise<TenantContext | null> {
   const parsed = tenantContextSchema.safeParse(candidate);
   if (!parsed.success) throw new ControlPlaneError("The organisation context is invalid.", 503);
   return parsed.data;
-}
+});
 
 export async function currentTenantDeletionReceipt(): Promise<TenantDeletionReceipt | null> {
   const { supabase } = await requireUser();

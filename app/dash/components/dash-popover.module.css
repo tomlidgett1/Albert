@@ -1,0 +1,30 @@
+/* Anchored popover surface (portalled): the dash floating-card treatment. */
+
+.surface {
+  position: fixed;
+  z-index: 1200;
+  display: flex;
+  min-width: 160px;
+  max-width: min(360px, calc(100vw - 16px));
+  flex-direction: column;
+  padding: 5px;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 12px;
+  color: var(--dash-text-body);
+  background: var(--dash-surface, #fff);
+  box-shadow: 0 18px 40px rgba(30, 30, 32, .13), 0 3px 8px rgba(30, 30, 32, .08);
+  font-size: 13px;
+  transform-origin: 100% 0;
+  animation: popoverEnter 200ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.surface[data-above="true"] { transform-origin: 100% 100%; }
+
+@keyframes popoverEnter {
+  from { opacity: 0; transform: translateY(-4px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface { animation: none; }
+}

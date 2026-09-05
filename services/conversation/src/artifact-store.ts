@@ -29,7 +29,7 @@ const modelContextSchema = z.array(z.object({
   status: z.string(),
   assistant_event: z.object({
     type: z.enum(["answer", "clarification"]),
-    text: z.string().min(1).max(16_000).nullish(),
+    text: z.string().min(1).max(120_000).nullish(),
     question: z.string().min(1).max(300).nullish(),
     provenance: z.record(z.string(), z.unknown()).optional(),
     resolvedSubject: z.object({

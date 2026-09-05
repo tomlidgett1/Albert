@@ -7,7 +7,7 @@ import {
   cubeSemanticVersionDigest,
   validateCubeQuery,
 } from "@/packages/albert-v3/src/cube/client";
-import { traceColumnFromCube } from "@/packages/albert-v3/src/cube/presentation";
+import { alignColumnsToPrevious, cubeResultColumns } from "@/packages/albert-v3/src/cube/presentation";
 import type { CubeQuery } from "@/packages/albert-v3/src/cube/types";
 import { loadAgentConfig } from "@/packages/albert-v3/src/agent-config/loader";
 import {
@@ -19,6 +19,8 @@ import type {
   DashboardSnapshot,
 } from "@/services/control-plane/src/dashboard-repository";
 import type { TenantContext } from "@/services/control-plane/src/web-repository";
+import { cachedCatalogue } from "./catalogue-cache";
+import { applyDashboardQueryOverrides } from "./query-overrides";
 
 export type DashboardRefreshResult = Readonly<{
   outcome: "success" | "empty" | "failure" | "incompatible";
@@ -35,7 +37,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function cell(value: unknown): string | number | null {
+export function snapshotCell(value: unknown): string | number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value === "boolean") return value ? "true" : "false";
@@ -43,7 +45,7 @@ function cell(value: unknown): string | number | null {
   return JSON.stringify(value).slice(0, 400);
 }
 
-function resultDigest(rows: readonly Readonly<Record<string, unknown>>[]): string {
+export function snapshotResultDigest(rows: readonly Readonly<Record<string, unknown>>[]): string {
   return createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 }
 
@@ -95,13 +97,22 @@ async function refreshCube(
       dashboard_refresh_lease_id: claim.leaseId,
     },
   });
-  const catalogue = await client.fetchCatalogue(AbortSignal.timeout(20_000));
+  const catalogue = await cachedCatalogue(apiUrl, client);
   const validated = validateCubeQuery(query, catalogue);
   if ("error" in validated) return failure("cube_query_invalid", true);
   if (cubeSemanticVersionDigest(validated, catalogue) !== claim.recipe.semanticVersionDigest) {
     return failure("semantic_version_mismatch", true);
   }
-  const { result } = await client.loadQuery(validated.query, { signal: AbortSignal.timeout(100_000) });
+  // The owner's sort/filters/limit (ADR 0134) apply only after the governed
+  // recipe has proven itself, and the effective query is validated against
+  // the same catalogue so an override can only narrow or reorder the result.
+  const overridden = applyDashboardQueryOverrides(validated.query, claim.queryOverrides);
+  if (!overridden.ok) return failure("query_overrides_invalid", false, { detail: overridden.error });
+  const effective = overridden.query === validated.query
+    ? validated
+    : validateCubeQuery(overridden.query, catalogue);
+  if ("error" in effective) return failure("query_overrides_invalid", false, { detail: effective.error });
+  const { result } = await client.loadQuery(effective.query, { signal: AbortSignal.timeout(100_000) });
   if (!result.ok) {
     const code = /within 90 seconds|cancelled/iu.test(result.error)
       ? "query_timeout"
@@ -109,19 +120,23 @@ async function refreshCube(
     return failure(code, false, { executionMs: result.executionMs });
   }
 
-  const columnKeys = result.rows.length > 0
-    ? Object.keys(result.rows[0]!)
-    : validated.members.filter((member, index, all) => all.indexOf(member) === index);
+  // One canonical column identity (ADR 0134): the same query-ordered,
+  // underscore-keyed columns the runtime traced, aligned to the columns the
+  // owner already sees so a refresh can never re-order or re-spell them.
+  const aligned = alignColumnsToPrevious(
+    cubeResultColumns(effective.query, result, currency),
+    claim.previousSnapshot?.columns ?? null,
+  );
   const rows = result.rows.slice(0, 50).map((row) => Object.fromEntries(
-    columnKeys.map((key) => [key, cell(row[key])]),
+    aligned.members.map((member, index) => [aligned.columns[index]!.key, snapshotCell(row[member])]),
   ));
-  const digest = resultDigest(result.rows);
+  const digest = snapshotResultDigest(result.rows);
   const refreshedAt = new Date().toISOString();
   const sourceWatermarks = currentSourceWatermarks.length > 0
     ? currentSourceWatermarks
     : claim.previousSnapshot?.sourceWatermarks ?? [];
   const snapshot: DashboardSnapshot = {
-    columns: columnKeys.map((key) => traceColumnFromCube(key, result.annotation[key], currency)),
+    columns: [...aligned.columns],
     rows,
     totalRowCount: result.rows.length,
     resultDigest: digest,
@@ -174,6 +189,9 @@ async function refreshDerivedV1(
       source: { ...claim.source, resultId: source.resultId },
       previousSnapshot: null,
     };
+    // A composed table's sources replay exactly as sealed: the pivot has no
+    // single query for the owner's sort or filters to apply to.
+    delete (sourceClaim as { queryOverrides?: unknown }).queryOverrides;
     if (source.recipe.kind !== "cube_v3") return failure("invalid_replay_recipe");
     const refreshed = await refreshCube(sourceClaim, tenant, currentSourceWatermarks, currency);
     adapters.push(source.recipe.kind);
@@ -196,15 +214,18 @@ async function refreshDerivedV1(
         resultId: snapshot.resultId,
         columns: snapshot.columns,
         rows: snapshot.rows.map((row) => Object.fromEntries(
-          Object.entries(row).map(([key, value]) => [key, cell(value)]),
+          Object.entries(row).map(([key, value]) => [key, snapshotCell(value)]),
         )),
       })),
       loadAgentConfig().timezone,
     );
-  } catch {
-    return failure("derived_transform_failed", true);
+  } catch (error) {
+    // The reason is evidence, not a secret: it names a column or an operator.
+    return failure("derived_transform_failed", true, {
+      detail: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+    });
   }
-  const digest = resultDigest(materialized.rows);
+  const digest = snapshotResultDigest(materialized.rows);
   const refreshedAt = new Date().toISOString();
   const sourceWatermarks = [...new Map(
     snapshots.flatMap((snapshot) => snapshot.sourceWatermarks)

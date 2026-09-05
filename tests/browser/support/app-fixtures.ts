@@ -3,6 +3,8 @@ import {
   createDeterministicFixtureTrace,
   FIXTURE_RESULT_ID,
 } from "../../../services/conversation/src/fixture";
+import { selectDiscoverCards } from "../../../services/discover/src/library";
+import { heuristicSchedule } from "../../../services/scheduled/src/parse";
 
 export const fixtureWorkspace = Object.freeze({
   tenantName: "Albert Bike Store",
@@ -165,6 +167,9 @@ export type AppApiCapture = {
   oauthSelectionPayloads: unknown[];
   reviewPayloads: unknown[];
   semanticPayloads: unknown[];
+  discoverPayloads: unknown[];
+  scheduledPayloads: unknown[];
+  alertsPayloads: unknown[];
 };
 
 const semanticPublicationHash =
@@ -808,6 +813,8 @@ export async function installAppApiRoutes(
     codexDelayMs?: number;
     anthropicDelayMs?: number;
     internalOperator?: boolean;
+    /** The built dashboard already exists: the Dashboards list starts with it. */
+    dashboardApplied?: boolean;
     semanticDraft?: boolean;
     role?: "owner" | "manager" | "bookkeeper" | "internal_operator";
   }> = {},
@@ -826,6 +833,9 @@ export async function installAppApiRoutes(
     oauthSelectionPayloads: [],
     reviewPayloads: [],
     semanticPayloads: [],
+    discoverPayloads: [],
+    scheduledPayloads: [],
+    alertsPayloads: [],
   };
   const sessionRole = options.role ?? "owner";
   let bootstrapped = false;
@@ -990,6 +1000,7 @@ export async function installAppApiRoutes(
             why: "Last week's review found sales down 11%, with Wednesday the weak day.",
             move: "diagnose",
             domain: "products",
+            tool: null,
             fromTitle: "Weekly sales trend",
             fromConversationId: "01J00000000000000000000021",
           },
@@ -999,6 +1010,7 @@ export async function installAppApiRoutes(
             why: "Parts sat at 31% against 44% for workshop in your last category review.",
             move: "diagnose",
             domain: "profit",
+            tool: "xero",
             fromTitle: "Margin by category",
             fromConversationId: "01J00000000000000000000033",
           },
@@ -1008,6 +1020,7 @@ export async function installAppApiRoutes(
             why: "You reviewed sales, but not whether that cash actually landed.",
             move: "close_the_loop",
             domain: "cash",
+            tool: "xero",
             fromTitle: "Weekly sales trend",
             fromConversationId: "01J00000000000000000000021",
           },
@@ -1020,10 +1033,347 @@ export async function installAppApiRoutes(
           : "",
         recommendations,
         sourceCount: recommendations.length > 0 ? 12 : 0,
-        source: recommendations.length > 0 ? "cache" : "empty",
+        source: recommendations.length > 0 ? "daily" : "empty",
+        connectors: ["xero", "deputy"],
         fingerprint: recommendations.length > 0 ? "a".repeat(64) : "",
       },
     });
+  });
+
+  // Discover: the fixture tenant has Xero and Deputy connected, so the grid is
+  // the library resolved for those two tools, served as an up-to-date cache.
+  await page.route(/\/api\/discover(?:\?.*)?$/u, async (route) => {
+    capture.discoverPayloads.push({
+      method: route.request().method(),
+      body: route.request().method() === "POST" ? route.request().postDataJSON() : null,
+    });
+    await route.fulfill({
+      json: {
+        cards: selectDiscoverCards(["xero", "deputy"]),
+        connectors: ["xero", "deputy"],
+        business: "Albert Bike Store",
+        source: "cache",
+        fingerprint: "b".repeat(64),
+        generatedAt: "2026-08-31T22:00:00.000Z",
+      },
+    });
+  });
+
+  // Scheduled (ADR 0131): one standing schedule with a sent run. Creates
+  // append (through the deterministic reading), updates merge, a manual run
+  // is queued and flips to sent on the next poll, so the tab's whole loop
+  // is exercised without a bridge.
+  const scheduledRun = {
+    runId: "01J00000000000000000000032",
+    taskId: "01J00000000000000000000031",
+    trigger: "schedule",
+    status: "sent",
+    requestedAt: "2026-08-31T23:00:02.000Z",
+    startedAt: "2026-08-31T23:00:02.000Z",
+    finishedAt: "2026-08-31T23:00:41.000Z",
+    scheduledFor: "2026-08-31T23:00:00.000Z",
+    conversationId: "01J00000000000000000000021",
+    turnId: "01J00000000000000000000022",
+    answerState: "Verified",
+    summary: "Sales hit $12,400 yesterday, up 8% on the same Monday last week.",
+    error: null,
+    bubbles: 1,
+  };
+  const scheduledTasks: Array<Record<string, unknown>> = [{
+    taskId: "01J00000000000000000000031",
+    title: "Yesterday's sales overview",
+    requestText: "Send me a message every morning at 9am with an overview of yesterday's sales performance",
+    prompt: "How did sales perform yesterday compared with the same day last week?",
+    timeOfDay: "09:00",
+    days: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+    timezone: "Australia/Melbourne",
+    phone: "+61414187820",
+    enabled: true,
+    nextRunAt: "2026-09-01T23:00:00.000Z",
+    lastRunAt: "2026-08-31T23:00:02.000Z",
+    createdAt: "2026-08-30T10:00:00.000Z",
+    updatedAt: "2026-08-30T10:00:00.000Z",
+    lastRun: scheduledRun,
+    recentRuns: [scheduledRun],
+  }];
+  let scheduledSequence = 40;
+  const scheduledId = () => `01J000000000000000000000${String(scheduledSequence++).padStart(2, "0")}`;
+  const scheduledPayload = () => ({
+    tasks: scheduledTasks,
+    numbers: [
+      { phone: "+61414187820", displayName: "Tom", isOwner: true },
+      { phone: "+61400000002", displayName: "Sam", isOwner: false },
+    ],
+    defaults: { timezone: "Australia/Melbourne", phone: "+61414187820" },
+    botNumberDisplay: "+1 (650) 283-1814",
+    canManage: true,
+  });
+  await page.route(/\/api\/scheduled(?:\?.*)?$/u, async (route) => {
+    const method = route.request().method();
+    const body = method === "POST" ? route.request().postDataJSON() as Record<string, unknown> : null;
+    capture.scheduledPayloads.push({ method, body });
+    if (method === "GET") {
+      // The bridge would have picked a queued run up by now.
+      for (const task of scheduledTasks) {
+        const lastRun = task.lastRun as Record<string, unknown> | null;
+        if (lastRun && (lastRun.status === "queued" || lastRun.status === "running")) {
+          const finished = {
+            ...lastRun,
+            status: "sent",
+            startedAt: "2026-09-01T04:10:03.000Z",
+            finishedAt: "2026-09-01T04:10:40.000Z",
+            conversationId: "01J00000000000000000000021",
+            turnId: "01J00000000000000000000022",
+            answerState: "Verified",
+            summary: "Sales hit $9,800 last week, down 3% on the week before.",
+            bubbles: 1,
+          };
+          task.lastRun = finished;
+          task.recentRuns = [finished, ...(task.recentRuns as unknown[]).slice(1)];
+          task.lastRunAt = finished.startedAt;
+        }
+      }
+      await route.fulfill({ json: scheduledPayload() });
+      return;
+    }
+    const action = body?.action;
+    if (action === "create") {
+      const draft = heuristicSchedule(String(body?.text ?? ""), "Australia/Melbourne");
+      const task = {
+        taskId: scheduledId(),
+        title: draft.title,
+        requestText: String(body?.text ?? ""),
+        prompt: draft.prompt,
+        timeOfDay: draft.timeOfDay,
+        days: [...draft.days],
+        timezone: draft.timezone,
+        phone: "+61414187820",
+        enabled: true,
+        nextRunAt: "2026-09-06T22:30:00.000Z",
+        lastRunAt: null,
+        createdAt: "2026-09-01T04:00:00.000Z",
+        updatedAt: "2026-09-01T04:00:00.000Z",
+        lastRun: null,
+        recentRuns: [],
+      };
+      scheduledTasks.push(task);
+      await route.fulfill({ json: { task, note: draft.note, source: "heuristic" } });
+      return;
+    }
+    const task = scheduledTasks.find((item) => item.taskId === body?.taskId);
+    if (!task) {
+      await route.fulfill({ status: 404, json: { error: "That schedule no longer exists." } });
+      return;
+    }
+    if (action === "update") {
+      const changes = Object.fromEntries(
+        Object.entries(body ?? {}).filter(([key]) => key !== "action" && key !== "taskId"),
+      );
+      Object.assign(task, changes, { updatedAt: "2026-09-01T04:05:00.000Z" });
+      if (task.enabled === false) task.nextRunAt = null;
+      else if (!task.nextRunAt) task.nextRunAt = "2026-09-06T22:30:00.000Z";
+      await route.fulfill({ json: { task } });
+      return;
+    }
+    if (action === "delete") {
+      scheduledTasks.splice(scheduledTasks.indexOf(task), 1);
+      await route.fulfill({ json: { removed: true } });
+      return;
+    }
+    if (action === "run") {
+      const run = {
+        runId: scheduledId(),
+        taskId: task.taskId,
+        trigger: "manual",
+        status: "queued",
+        requestedAt: "2026-09-01T04:10:00.000Z",
+        startedAt: null,
+        finishedAt: null,
+        scheduledFor: null,
+        conversationId: null,
+        turnId: null,
+        answerState: null,
+        summary: null,
+        error: null,
+        bubbles: null,
+      };
+      task.lastRun = run;
+      task.recentRuns = [run, ...(task.recentRuns as unknown[])].slice(0, 5);
+      await route.fulfill({ json: { run } });
+      return;
+    }
+    await route.fulfill({ status: 400, json: { error: "That request wasn't valid." } });
+  });
+
+  // Alerts (ADR 0132): the ten catalogue triggers with one stored override,
+  // one reading each, a couple of fired events and a finished evaluation.
+  // Updates merge; "check" opens an evaluation that finishes on the next
+  // poll, so the tab's whole loop is exercised without a bridge.
+  const alertsNumbers = [
+    { phone: "+61414187820", displayName: "Tom", isOwner: true },
+    { phone: "+61400000002", displayName: "Sam", isOwner: false },
+  ];
+  const alertsEvents: Array<Record<string, unknown>> = [
+    {
+      eventId: "01J00000000000000000000051",
+      triggerKey: "trading_day",
+      dedupeKey: "record:2026-08-27",
+      headline: "Biggest day in a year",
+      body: "Thu 27 Aug did $11,994 from 11 sales. Your previous best in the last 12 months was $8,751 on Sat 9 May.",
+      evidence: {},
+      status: "sent",
+      recipients: ["+61414187820"],
+      evaluationId: "01J00000000000000000000050",
+      firedAt: "2026-08-28T21:05:00.000Z",
+      deliveredAt: "2026-08-28T21:05:03.000Z",
+      error: null,
+    },
+    {
+      eventId: "01J00000000000000000000052",
+      triggerKey: "stockout",
+      dedupeKey: "stockout:Gear Inner Wire:2026-09-01",
+      headline: "Out of stock: Gear Inner Wire",
+      body: "Gear Inner Wire hit zero on Tue 1 Sep. It sold 56 units in the last 90 days, about 4.3 a week.",
+      evidence: {},
+      status: "sent",
+      recipients: ["+61414187820"],
+      evaluationId: "01J00000000000000000000050",
+      firedAt: "2026-09-01T21:05:00.000Z",
+      deliveredAt: "2026-09-01T21:05:04.000Z",
+      error: null,
+    },
+  ];
+  const alertsCatalogue = [
+    ["trading_day", "Trading day", "Sales", "A record day, a day the shop was staffed but the till barely moved, or a month that closes at a three-year low.", "Wed 2 Sep: $638 from 6 sales · best day in 12 months $11,994 (Thu 27 Aug)"],
+    ["bike_sold", "Bike sold", "Sales", "A bike over $1,500 or a first-time customer's bike, then the six-week and twelve-month service reminders if they have not been back.", "0 bikes sold Wed 2 Sep · 3 first services due · 0 annual services due"],
+    ["vip_customer", "Big customers", "Customers", "A $5k-plus customer buys again after a year away, goes quiet for six months, or crosses $5k or $10k lifetime for the first time.", "106 customers over $5k lifetime · 61 quiet for six months or more"],
+    ["workshop_uncollected", "Waiting on the customer", "Workshop", "A job finished for a week with nothing charged, or an open job past its promised date.", "20 finished awaiting collection · 18 open past their promised date"],
+    ["workshop_load", "Workshop load", "Workshop", "More bikes promised back on a day than the roster can turn, and a record or unusually quiet intake week.", "18 bikes promised back in the next 7 days · 101 rostered hours · 35 jobs in last week (avg 31)"],
+    ["stockout", "Consumable hit zero", "Stock", "A stocked item with sales in the last 90 days reaches zero on hand.", "14 stocked items at zero with sales in the last 90 days"],
+    ["aged_bike", "Bike on the floor a year", "Stock", "A bike passes another year in stock, and a new brand that has not sold a unit.", "8 bikes over a year old, $23,734 at cost"],
+    ["labour_roster", "Labour and roster", "People", "Wages over 30% of takings for a week, a leave request waiting, leave approved in the peak, or a trading day with nobody rostered.", "Labour 11% of takings last week (usual 23%) · 1 leave request waiting"],
+    ["supplier_bills", "Supplier bills", "Money", "A first bill from a new supplier, a look-alike supplier name, a bill bigger than any before, and Monday's overdue and due-this-week digests.", "0 bills in the last week · 16 bills open ($5,823) · 16 past due ($5,823)"],
+    ["cash_integrity", "Till and refunds", "Money", "The till uncounted for three trading days, a count out by $50, a refund over $500, a sale below cost, a big stock adjustment, or a heavy discount week.", "Till last counted Sun 9 Aug · 0 counts out by $50+ in 45 days"],
+  ] as const;
+  const alertsSummaries: Record<string, string> = {
+    trading_day: "Record days, dead days, quiet months.",
+    bike_sold: "Bike sales and service reminders.",
+    vip_customer: "Big customers back, quiet or new.",
+    workshop_uncollected: "Jobs waiting on the customer.",
+    workshop_load: "Busy days against the roster.",
+    stockout: "Stocked items hitting zero.",
+    aged_bike: "Bikes a year on the floor.",
+    labour_roster: "Wages, leave and roster gaps.",
+    supplier_bills: "New, odd and overdue bills.",
+    cash_integrity: "Till counts, refunds and discounts.",
+  };
+  const alertsTriggers: Array<Record<string, unknown>> = alertsCatalogue.map(([key, title, domain, rule, line]) => ({
+    key,
+    title,
+    domain,
+    summary: alertsSummaries[key],
+    rule,
+    example: "",
+    needs: key === "supplier_bills"
+      ? ["xero"]
+      : key === "workshop_load" || key === "labour_roster"
+        ? ["lightspeed-r", "deputy"]
+        : ["lightspeed-r"],
+    enabled: key !== "aged_bike",
+    recipients: key === "supplier_bills" ? ["+61414187820", "+61400000002"] : ["+61414187820"],
+    stored: key === "aged_bike" || key === "supplier_bills",
+    updatedAt: key === "aged_bike" || key === "supplier_bills" ? "2026-09-01T10:00:00.000Z" : null,
+    state: {
+      lastEvaluatedAt: "2026-09-02T00:05:00.000Z",
+      lastResult: { status: key === "trading_day" || key === "stockout" ? "fired" : "quiet", line },
+      lastFiredAt: key === "trading_day" ? "2026-08-28T21:05:00.000Z" : key === "stockout" ? "2026-09-01T21:05:00.000Z" : null,
+    },
+    recentEvents: alertsEvents.filter((event) => event.triggerKey === key),
+  }));
+  let alertsOpenEvaluation: Record<string, unknown> | null = null;
+  let alertsLastEvaluation: Record<string, unknown> = {
+    evaluationId: "01J00000000000000000000050",
+    trigger: "schedule",
+    status: "finished",
+    requestedAt: "2026-09-02T00:05:00.000Z",
+    startedAt: "2026-09-02T00:05:00.000Z",
+    finishedAt: "2026-09-02T00:05:31.000Z",
+    conversationId: "01J00000000000000000000060",
+    turnId: "01J00000000000000000000061",
+    freshnessDigest: "abc",
+    summary: {
+      evaluated: 10,
+      queries: 31,
+      fired: 2,
+      dataThrough: [
+        { connector: "lightspeed-r", domain: "sales", dataThrough: "2026-09-01T23:40:00.000Z" },
+        { connector: "xero", domain: "invoices", dataThrough: "2026-08-18T03:27:00.000Z" },
+        { connector: "deputy", domain: "timesheets", dataThrough: "2026-09-01T22:00:00.000Z" },
+      ],
+    },
+    error: null,
+  };
+  const alertsPayload = () => ({
+    triggers: alertsTriggers,
+    events: alertsEvents,
+    settings: { cadenceMinutes: 60, lastEvaluatedAt: "2026-09-02T00:05:31.000Z", lastFreshnessDigest: "abc" },
+    lastEvaluation: alertsLastEvaluation,
+    openEvaluation: alertsOpenEvaluation,
+    numbers: alertsNumbers,
+    defaults: { recipients: ["+61414187820"] },
+    botNumberDisplay: "+1 (650) 283-1814",
+    canManage: true,
+  });
+  await page.route(/\/api\/alerts(?:\?.*)?$/u, async (route) => {
+    const method = route.request().method();
+    const body = method === "POST" ? route.request().postDataJSON() as Record<string, unknown> : null;
+    capture.alertsPayloads.push({ method, body });
+    if (method === "GET") {
+      if (alertsOpenEvaluation) {
+        // The bridge would have run the check by now.
+        alertsLastEvaluation = {
+          ...alertsOpenEvaluation,
+          status: "finished",
+          startedAt: "2026-09-02T04:10:01.000Z",
+          finishedAt: "2026-09-02T04:10:32.000Z",
+          summary: alertsLastEvaluation.summary,
+        };
+        alertsOpenEvaluation = null;
+      }
+      await route.fulfill({ json: alertsPayload() });
+      return;
+    }
+    if (body?.action === "check") {
+      alertsOpenEvaluation = {
+        evaluationId: "01J00000000000000000000070",
+        trigger: "manual",
+        status: "queued",
+        requestedAt: "2026-09-02T04:10:00.000Z",
+        startedAt: null,
+        finishedAt: null,
+        conversationId: null,
+        turnId: null,
+        freshnessDigest: null,
+        summary: {},
+        error: null,
+      };
+      await route.fulfill({ json: { evaluation: alertsOpenEvaluation } });
+      return;
+    }
+    if (body?.action === "update") {
+      const trigger = alertsTriggers.find((item) => item.key === body.triggerKey);
+      if (!trigger) {
+        await route.fulfill({ status: 404, json: { error: "Unknown alert." } });
+        return;
+      }
+      if (typeof body.enabled === "boolean") trigger.enabled = body.enabled;
+      if (Array.isArray(body.recipients)) trigger.recipients = body.recipients;
+      trigger.stored = true;
+      trigger.updatedAt = "2026-09-02T04:05:00.000Z";
+      await route.fulfill({ json: { trigger } });
+      return;
+    }
+    await route.fulfill({ status: 400, json: { error: "That request wasn't valid." } });
   });
 
   await page.route(/\/api\/conversations(?:\?.*)?$/u, async (route) => {
@@ -1452,7 +1802,25 @@ export async function installAppApiRoutes(
   });
 
   // ---- Natural-language dashboard builder (ADR 0129) ----------------------
-  const dashboardBuildState = { applied: false };
+  const dashboardBuildState = {
+    /** Element editor state (ADR 0134): presentation, authored order, requeried granularity. */
+    presentation: {} as Record<string, Record<string, unknown>>,
+    order: {} as Record<string, string[]>,
+    granularity: null as string | null,
+    recipeVersion: {} as Record<string, number>,
+    applied: options.dashboardApplied === true,
+    title: options.dashboardApplied ? "Ashburton at a glance" : null as string | null,
+    /** An element edit replaced "Revenue by week" with "Revenue by day". */
+    edited: false,
+    /** "New dashboard" created the blank second dashboard. */
+    created: false,
+    /** Which dashboard the last whole build applied to. */
+    appliedTo: null as string | null,
+    /** The first dashboard was deleted from the list. */
+    deleted: false,
+    /** Element sort/filters saved through the tile route, by tile id. */
+    overrides: {} as Record<string, Record<string, unknown>>,
+  };
   const dashboardBuildDigest = "0f".repeat(32);
   const dashboardBuildStamp = "2026-08-30T04:10:00.000Z";
   const dashboardBuildWatermarks = [
@@ -1478,6 +1846,7 @@ export async function installAppApiRoutes(
     resultSuffix: string,
     display: Record<string, unknown>,
     snapshot: Record<string, unknown>,
+    replayKind: "cube_v3" | "derived_v1" = "cube_v3",
   ) => ({
     tileId,
     title,
@@ -1487,10 +1856,23 @@ export async function installAppApiRoutes(
       tableEventId: `01J00000000000000000DBE${resultSuffix}`,
       resultId: `01J00000000000000000DBR${resultSuffix}`,
     },
-    replayKind: "cube_v3",
-    snapshot,
-    columnPresentation: {},
+    replayKind,
+    queryYaml: replayKind === "cube_v3" ? "measures:\n  - sales_analytics.gross_takings" : null,
+    recipeVersion: dashboardBuildState.recipeVersion[tileId] ?? 1,
+    recipeOrigin: (dashboardBuildState.recipeVersion[tileId] ?? 1) > 1 ? "edited" : "trace",
+    snapshot: dashboardBuildState.order[tileId] && snapshot && Array.isArray((snapshot as { columns?: unknown }).columns)
+      ? {
+        ...snapshot,
+        columns: [...((snapshot as { columns: { key: string }[] }).columns)].sort((left, right) => {
+          const order = dashboardBuildState.order[tileId]!;
+          const rank = (key: string) => { const index = order.indexOf(key); return index < 0 ? order.length : index; };
+          return rank(left.key) - rank(right.key);
+        }),
+      }
+      : snapshot,
+    columnPresentation: dashboardBuildState.presentation[tileId] ?? {},
     display,
+    queryOverrides: dashboardBuildState.overrides[tileId] ?? {},
     refreshState: "current",
     lastErrorCode: null,
     lastRefreshAttemptAt: null,
@@ -1503,20 +1885,24 @@ export async function installAppApiRoutes(
   ];
   const builtDashboardDocument = () => ({
     dashboardId: "01J00000000000000000DBRD01",
+    title: dashboardBuildState.title,
+    lastBuildConversationId: dashboardBuildState.applied ? "01J00000000000000000DBCV01" : null,
     revision: dashboardBuildState.applied ? 9 : 0,
     layouts: dashboardBuildState.applied
       ? {
           desktop: [
             { i: "01J00000000000000000DBT101", x: 0, y: 0, w: 3, h: 5 },
             { i: "01J00000000000000000DBT201", x: 3, y: 0, w: 3, h: 5 },
-            { i: "01J00000000000000000DBT301", x: 0, y: 5, w: 6, h: 8 },
+            { i: dashboardBuildState.edited ? "01J00000000000000000DBT601" : "01J00000000000000000DBT301", x: 0, y: 5, w: 6, h: 8 },
             { i: "01J00000000000000000DBT401", x: 6, y: 5, w: 6, h: 7 },
+            { i: "01J00000000000000000DBT501", x: 0, y: 13, w: 12, h: 7 },
           ],
           tablet: [
             { i: "01J00000000000000000DBT101", x: 0, y: 0, w: 4, h: 5 },
             { i: "01J00000000000000000DBT201", x: 4, y: 0, w: 4, h: 5 },
-            { i: "01J00000000000000000DBT301", x: 0, y: 5, w: 4, h: 8 },
+            { i: dashboardBuildState.edited ? "01J00000000000000000DBT601" : "01J00000000000000000DBT301", x: 0, y: 5, w: 4, h: 8 },
             { i: "01J00000000000000000DBT401", x: 4, y: 5, w: 4, h: 7 },
+            { i: "01J00000000000000000DBT501", x: 0, y: 13, w: 8, h: 7 },
           ],
         }
       : { desktop: [], tablet: [] },
@@ -1545,27 +1931,60 @@ export async function installAppApiRoutes(
               { refunds_analytics_refund_total: 698.9, compareDateRange: "2026-07-02 - 2026-07-31" },
             ]),
           ),
-          dashboardBuildTile(
-            "01J00000000000000000DBT301",
-            "Revenue by week",
-            "V03",
-            {
-              mode: "chart",
-              chartType: "line",
-              xKey: "sales_analytics_completed_at",
-              yKey: "sales_analytics_gross_takings",
-              note: "by week, last 12 weeks",
-            },
-            dashboardBuildSnapshot([
-              { key: "sales_analytics_completed_at", label: "Completed", type: "date" },
-              { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
-            ], [
-              { sales_analytics_completed_at: "2026-07-20", sales_analytics_gross_takings: 8120.5 },
-              { sales_analytics_completed_at: "2026-07-27", sales_analytics_gross_takings: 8379.02 },
-              { sales_analytics_completed_at: "2026-08-03", sales_analytics_gross_takings: 8990.4 },
-              { sales_analytics_completed_at: "2026-08-10", sales_analytics_gross_takings: 9421.83 },
-            ]),
-          ),
+          // An element edit swaps this chart for a daily one in the same slot.
+          dashboardBuildState.edited
+            ? dashboardBuildTile(
+              "01J00000000000000000DBT601",
+              "Revenue by day",
+              "V06",
+              {
+                mode: "chart",
+                chartType: "line",
+                xKey: "sales_analytics_completed_at",
+                yKey: "sales_analytics_gross_takings",
+                note: "by day, last 30 days",
+              },
+              dashboardBuildSnapshot([
+                { key: "sales_analytics_completed_at", label: "Completed", type: "date" },
+                { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+              ], [
+                { sales_analytics_completed_at: "2026-08-27", sales_analytics_gross_takings: 1210.5 },
+                { sales_analytics_completed_at: "2026-08-28", sales_analytics_gross_takings: 1379.02 },
+                { sales_analytics_completed_at: "2026-08-29", sales_analytics_gross_takings: 1490.4 },
+                { sales_analytics_completed_at: "2026-08-30", sales_analytics_gross_takings: 1621.83 },
+              ]),
+            )
+            : dashboardBuildTile(
+              "01J00000000000000000DBT301",
+              "Revenue by week",
+              "V03",
+              {
+                mode: "chart",
+                chartType: "line",
+                // The server carries display keys across a re-spelled time column.
+                xKey: dashboardBuildState.granularity === "month" ? "sales_analytics_completed_at_month" : "sales_analytics_completed_at",
+                yKey: "sales_analytics_gross_takings",
+                note: "by week, last 12 weeks",
+              },
+              dashboardBuildState.granularity === "month"
+                ? dashboardBuildSnapshot([
+                  { key: "sales_analytics_completed_at_month", label: "Completed (month)", type: "date" },
+                  { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+                ], [
+                  { sales_analytics_completed_at_month: "2026-06-01", sales_analytics_gross_takings: 31200.5 },
+                  { sales_analytics_completed_at_month: "2026-07-01", sales_analytics_gross_takings: 34911.02 },
+                  { sales_analytics_completed_at_month: "2026-08-01", sales_analytics_gross_takings: 36780.1 },
+                ])
+                : dashboardBuildSnapshot([
+                  { key: "sales_analytics_completed_at", label: "Completed", type: "date" },
+                  { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+                ], [
+                  { sales_analytics_completed_at: "2026-07-20", sales_analytics_gross_takings: 8120.5 },
+                  { sales_analytics_completed_at: "2026-07-27", sales_analytics_gross_takings: 8379.02 },
+                  { sales_analytics_completed_at: "2026-08-03", sales_analytics_gross_takings: 8990.4 },
+                  { sales_analytics_completed_at: "2026-08-10", sales_analytics_gross_takings: 9421.83 },
+                ]),
+            ),
           dashboardBuildTile(
             "01J00000000000000000DBT401",
             "Top products by revenue",
@@ -1580,41 +1999,234 @@ export async function installAppApiRoutes(
               { sales_analytics_product: "Helmets", sales_analytics_gross_takings: 2310.9 },
             ]),
           ),
+          // A composed pivot: metrics down the rows, weeks across the columns.
+          dashboardBuildTile(
+            "01J00000000000000000DBT501",
+            "Weekly scorecard",
+            "V05",
+            { mode: "table", note: "Last 3 weeks, by Monday-starting week" },
+            dashboardBuildSnapshot([
+              { key: "metric", label: "Metric", type: "string" },
+              { key: "p_2026_07_27", label: "27 Jul", type: "number" },
+              { key: "p_2026_08_03", label: "3 Aug", type: "number" },
+              { key: "p_2026_08_10", label: "10 Aug", type: "number" },
+            ], [
+              { metric: "Sales", p_2026_07_27: 8379.02, p_2026_08_03: 8990.4, p_2026_08_10: 9421.83 },
+              { metric: "Gross profit", p_2026_07_27: 3120.5, p_2026_08_03: 3388.12, p_2026_08_10: 3610.77 },
+              { metric: "Transactions", p_2026_07_27: 214, p_2026_08_03: 231, p_2026_08_10: 246 },
+            ]),
+            "derived_v1",
+          ),
         ]
       : [],
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: dashboardBuildStamp,
   });
-  await page.route(/\/api\/dashboard$/u, async (route) => {
-    await route.fulfill({ json: { dashboard: builtDashboardDocument() } });
+  // Dashboards, plural (ADR 0134): the list, create, delete, and every
+  // document call addressed by id (the query string must not break the match).
+  const dashboardSummaries = () => {
+    const built = builtDashboardDocument();
+    return [
+      ...(dashboardBuildState.deleted ? [] : [{
+        dashboardId: built.dashboardId,
+        title: built.title,
+        revision: built.revision,
+        tileCount: built.tiles.length,
+        lastBuildConversationId: dashboardBuildState.applied ? "01J00000000000000000DBCV01" : null,
+        createdAt: built.createdAt,
+        updatedAt: built.updatedAt,
+      }]),
+      ...(dashboardBuildState.created ? [{
+        dashboardId: "01J00000000000000000DBRD02",
+        title: dashboardBuildState.appliedTo === "01J00000000000000000DBRD02" ? dashboardBuildState.title : null,
+        revision: 0,
+        tileCount: dashboardBuildState.appliedTo === "01J00000000000000000DBRD02" ? 5 : 0,
+        lastBuildConversationId: null,
+        createdAt: dashboardBuildStamp,
+        updatedAt: dashboardBuildStamp,
+      }] : []),
+    ];
+  };
+  const emptyDashboardDocument = () => ({
+    dashboardId: "01J00000000000000000DBRD02",
+    title: null,
+    revision: 0,
+    layouts: { desktop: [], tablet: [] },
+    lastBuildConversationId: null,
+    tiles: [],
+    createdAt: dashboardBuildStamp,
+    updatedAt: dashboardBuildStamp,
+  });
+  const documentFor = (dashboardId: string | null) => (
+    dashboardId === "01J00000000000000000DBRD02" && dashboardBuildState.appliedTo !== "01J00000000000000000DBRD02"
+      ? emptyDashboardDocument()
+      : builtDashboardDocument()
+  );
+  await page.route(/\/api\/dashboard\/list$/u, async (route) => {
+    await route.fulfill({ json: { dashboards: dashboardSummaries() } });
+  });
+  await page.route(/\/api\/dashboard(?:\?.*)?$/u, async (route) => {
+    const method = route.request().method();
+    if (method === "POST") {
+      capture.dashboardBuildPayloads.push({ endpoint: "create", body: route.request().postDataJSON() });
+      dashboardBuildState.created = true;
+      await route.fulfill({ status: 201, json: { dashboard: emptyDashboardDocument() } });
+      return;
+    }
+    if (method === "DELETE") {
+      capture.dashboardBuildPayloads.push({ endpoint: "delete", body: route.request().postDataJSON() });
+      dashboardBuildState.deleted = true;
+      await route.fulfill({ json: { dashboards: dashboardSummaries() } });
+      return;
+    }
+    const requested = new URL(route.request().url()).searchParams.get("dashboardId");
+    await route.fulfill({ json: { dashboard: documentFor(requested) } });
   });
   await page.route(/\/api\/dashboard\/refresh$/u, async (route) => {
-    await route.fulfill({ json: { dashboard: builtDashboardDocument(), refreshedTileIds: [] } });
+    const body = route.request().postDataJSON() as { dashboardId?: string; tileIds?: string[] };
+    capture.dashboardBuildPayloads.push({ endpoint: "refresh", body });
+    await route.fulfill({ json: { dashboard: documentFor(body.dashboardId ?? null), refreshedTileIds: body.tileIds ?? [] } });
   });
   await page.route(/\/api\/dashboard\/layout$/u, async (route) => {
     await route.fulfill({ json: { dashboard: builtDashboardDocument() } });
   });
+  // The element editor (ADR 0134, migration 0187): the governed view's
+  // fields behind an element, and one deterministic requery of its query.
+  const dashboardFieldsFixture = (tileId: string) => ({
+    view: { name: "sales_analytics", title: "Sales analytics" },
+    inQuery: tileId === "01J00000000000000000DBT301"
+      ? {
+        measures: ["sales_analytics.gross_takings"],
+        dimensions: [],
+        timeDimensions: [{ dimension: "sales_analytics.completed_at", granularity: dashboardBuildState.granularity ?? "week", dateRange: "last 12 weeks" }],
+        limit: 50,
+      }
+      : tileId === "01J00000000000000000DBT401"
+        ? {
+          measures: ["sales_analytics.gross_takings"],
+          dimensions: ["sales_analytics.product"],
+          timeDimensions: [{ dimension: "sales_analytics.completed_at", dateRange: "last 30 days" }],
+          limit: 10,
+        }
+        : {
+          measures: ["sales_analytics.gross_takings"],
+          dimensions: [],
+          timeDimensions: [{ dimension: "sales_analytics.completed_at", compareDateRange: [["2026-08-01", "2026-08-30"], ["2026-07-02", "2026-07-31"]] }],
+        },
+    members: [
+      { name: "sales_analytics.gross_takings", kind: "measure", title: "Gross takings", shortTitle: "Gross takings", type: "number" },
+      { name: "sales_analytics.net_takings", kind: "measure", title: "Net takings", shortTitle: "Net takings", type: "number" },
+      { name: "sales_analytics.product", kind: "dimension", title: "Product", shortTitle: "Product", type: "string" },
+      { name: "sales_analytics.completed_at", kind: "dimension", title: "Completed", shortTitle: "Completed", type: "time" },
+      { name: "sales_analytics.staff_member", kind: "dimension", title: "Staff member", shortTitle: "Staff member", type: "string" },
+    ],
+  });
   await page.route(/\/api\/dashboard\/tiles(?:\/.*)?$/u, async (route) => {
+    const method = route.request().method();
+    const pathname = new URL(route.request().url()).pathname;
+    if (method === "GET" && pathname.endsWith("/fields")) {
+      const tileId = pathname.split("/").at(-2) ?? "";
+      capture.dashboardBuildPayloads.push({ endpoint: "fields", tileId });
+      await route.fulfill({ json: dashboardFieldsFixture(tileId) });
+      return;
+    }
+    if (method === "POST" && pathname.endsWith("/query")) {
+      const tileId = pathname.split("/").at(-2) ?? "";
+      const body = route.request().postDataJSON() as { edits?: { op: string; granularity?: string }[]; recipeVersion?: number };
+      capture.dashboardBuildPayloads.push({ endpoint: "query", tileId, body });
+      for (const edit of body.edits ?? []) {
+        if (edit.op === "set_granularity" && edit.granularity) dashboardBuildState.granularity = edit.granularity;
+      }
+      dashboardBuildState.recipeVersion[tileId] = (body.recipeVersion ?? 1) + 1;
+      // Stale-while-revalidate: the element keeps its data while this runs.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const dashboard = builtDashboardDocument();
+      await route.fulfill({ json: { dashboard, tile: dashboard.tiles.find((tile) => tile.tileId === tileId) ?? null, executionMs: 900 } });
+      return;
+    }
+    if (method === "POST") {
+      capture.dashboardBuildPayloads.push({ endpoint: "pin", body: route.request().postDataJSON() });
+    }
+    if (method === "PATCH") {
+      const tileId = pathname.split("/").pop() ?? "";
+      const body = route.request().postDataJSON() as {
+        queryOverrides?: Record<string, unknown>;
+        columnPresentation?: Record<string, Record<string, unknown>>;
+        columnOrder?: string[];
+        display?: unknown;
+        title?: string;
+      };
+      capture.dashboardBuildPayloads.push({ endpoint: "tile", tileId, body });
+      // The element's sort/filters, presentation and column order live on
+      // the document; the client re-reads them.
+      if (body.queryOverrides) dashboardBuildState.overrides[tileId] = body.queryOverrides;
+      if (body.columnPresentation) dashboardBuildState.presentation[tileId] = body.columnPresentation;
+      if (body.columnOrder) dashboardBuildState.order[tileId] = body.columnOrder;
+    }
     await route.fulfill({ json: { dashboard: builtDashboardDocument() } });
   });
   await page.route(/\/api\/dashboard\/build$/u, async (route) => {
     capture.dashboardBuildPayloads.push({ endpoint: "build", body: route.request().postDataJSON() });
-    const body = route.request().postDataJSON() as { instruction?: string };
+    const body = route.request().postDataJSON() as { instruction?: string; dashboardId?: string; tileId?: string };
+    const dashboardId = body.dashboardId ?? "01J00000000000000000DBRD01";
+    if (body.tileId) {
+      // An element edit briefs the architect with the one element (ADR 0134).
+      await route.fulfill({
+        json: {
+          message: `Edit one element of my dashboard.\n\nElement: "Revenue by week" (chart)\nWhat I want changed: ${body.instruction ?? ""}\n\nThe element's governed query today (YAML):\nmeasures:\n  - sales_analytics.gross_takings\n\nDisplay today: line chart, x sales_analytics_completed_at, y sales_analytics_gross_takings\nWidth today: half\n\nRules for an element edit:\n- Rebuild ONLY this element; never add, remove or redesign any other element.\n\nTarget dashboard: ${dashboardId}\nTarget element: ${body.tileId}`,
+          preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: false },
+          dashboardId,
+          editTileId: body.tileId,
+          replacesTiles: 1,
+        },
+      });
+      return;
+    }
     await route.fulfill({
       json: {
-        message: `Design and build my dashboard.\n\nWhat I want: ${body.instruction ?? ""}`,
+        message: `Design and build my dashboard.\n\nWhat I want: ${body.instruction ?? ""}\n\nTarget dashboard: ${dashboardId}`,
         preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: false },
+        dashboardId,
         replacesTiles: 0,
       },
     });
   });
+  await page.route(/\/api\/dashboard\/rename$/u, async (route) => {
+    const body = route.request().postDataJSON() as { title?: string | null };
+    capture.dashboardBuildPayloads.push({ endpoint: "rename", body });
+    dashboardBuildState.title = typeof body.title === "string" ? body.title : null;
+    await route.fulfill({ json: { dashboard: builtDashboardDocument() } });
+  });
   await page.route(/\/api\/dashboard\/build\/apply$/u, async (route) => {
-    capture.dashboardBuildPayloads.push({ endpoint: "apply", body: route.request().postDataJSON() });
+    const body = route.request().postDataJSON() as { replaceTileId?: string; dashboardId?: string };
+    capture.dashboardBuildPayloads.push({ endpoint: "apply", body });
+    if (body.replaceTileId) {
+      // The edited tile is replaced in place; nothing else moves.
+      dashboardBuildState.edited = true;
+      await route.fulfill({
+        json: {
+          dashboard: builtDashboardDocument(),
+          applied: {
+            dashboardId: body.dashboardId ?? "01J00000000000000000DBRD01",
+            dashboardTitle: dashboardBuildState.title ?? "Ashburton at a glance",
+            timeframe: "Last 30 days, by day",
+            tiles: 1,
+            skipped: [],
+            replacedTileId: body.replaceTileId,
+            newTileId: "01J00000000000000000DBT601",
+          },
+        },
+      });
+      return;
+    }
     dashboardBuildState.applied = true;
+    dashboardBuildState.appliedTo = body.dashboardId ?? "01J00000000000000000DBRD01";
+    dashboardBuildState.title = "Ashburton at a glance";
     await route.fulfill({
       json: {
         dashboard: builtDashboardDocument(),
         applied: {
+          dashboardId: body.dashboardId ?? "01J00000000000000000DBRD01",
           dashboardTitle: "Ashburton at a glance",
           timeframe: "Last 30 days vs the previous 30",
           tiles: 4,
@@ -1776,6 +2388,95 @@ export async function installAppApiRoutes(
   await page.route(/\/api\/omni-conversation$/u, async (route) => {
     const requestPayload = route.request().postDataJSON() as Record<string, unknown>;
     capture.omniConversationPayloads.push(requestPayload);
+    if (
+      requestPayload.dashboardBuild === true
+      && typeof requestPayload.message === "string"
+      && requestPayload.message.startsWith("Edit one element of my dashboard.")
+    ) {
+      // An element edit (ADR 0134): the architect re-runs one query and
+      // composes exactly one replacement tile.
+      const editStamp = "2026-08-30T04:12:00.000Z";
+      const editEvents = [
+        { id: "omni_ed_ack", sequence: 1, type: "narrative", purpose: "acknowledgement", occurredAt: editStamp, text: "I’ll rework the revenue trend by day." },
+        {
+          id: "omni_ed_query", sequence: 2, type: "query", status: "complete", occurredAt: editStamp,
+          topic: "Sales analytics", name: "Revenue by day",
+          metrics: ["sales_analytics.gross_takings"], dimensions: ["sales_analytics.completed_at"],
+          timeRange: { label: "last 30 days", start: "unknown", end: "unknown", timezone: "Australia/Melbourne" },
+          lens: "Cube view: sales_analytics", view: "sales_analytics", cubesUsed: ["sales_analytics"],
+          queryYaml: "measures:\n  - sales_analytics.gross_takings\ntimeDimensions:\n  - dimension: sales_analytics.completed_at\n    granularity: day\n    dateRange: last 30 days",
+          rowCount: 4, executionMs: 700, connector: "lightspeed",
+          resultId: "01J00000000000000000DBRV06",
+        },
+        {
+          id: "omni_ed_table", sequence: 3, type: "table", status: "complete", occurredAt: editStamp,
+          caption: "Revenue by day",
+          columns: [
+            { key: "sales_analytics_completed_at", label: "Completed", type: "date" },
+            { key: "sales_analytics_gross_takings", label: "Gross takings", type: "currency", currency: "AUD" },
+          ],
+          rows: [
+            { sales_analytics_completed_at: "2026-08-27", sales_analytics_gross_takings: 1210.5 },
+            { sales_analytics_completed_at: "2026-08-28", sales_analytics_gross_takings: 1379.02 },
+            { sales_analytics_completed_at: "2026-08-29", sales_analytics_gross_takings: 1490.4 },
+            { sales_analytics_completed_at: "2026-08-30", sales_analytics_gross_takings: 1621.83 },
+          ],
+          resultId: "01J00000000000000000DBRV06",
+          provenance: {
+            sources: [{ connector: "lightspeed", label: "Cube semantic layer · lightspeed", dataThrough: "2026-08-30" }],
+            timeRange: { label: "last 30 days", start: "unknown", end: "unknown", timezone: "Australia/Melbourne" },
+            definitions: [],
+            semanticBundleHash: "albert-omni-fixture",
+            identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+          },
+          presentation: "evidence",
+          dashboardReplay: {
+            kind: "cube_v3",
+            queryEventId: "omni_ed_query",
+            queryDigest: "ab".repeat(32),
+            semanticVersionDigest: "cd".repeat(32),
+          },
+        },
+        {
+          id: "omni_ed_plan", sequence: 4, type: "dashboard_plan", status: "complete", occurredAt: editStamp,
+          dashboardTitle: "Ashburton at a glance",
+          timeframe: "Last 30 days, by day",
+          tiles: [
+            { resultId: "01J00000000000000000DBRV06", kind: "chart", title: "Revenue by day", width: "half", chartType: "line", xKey: "sales_analytics_completed_at", yKey: "sales_analytics_gross_takings" },
+          ],
+        },
+        {
+          id: "omni_ed_answer", sequence: 5, type: "answer", status: "complete", occurredAt: editStamp,
+          state: "Verified",
+          text: "The revenue trend now runs by day over the last 30 days.",
+          provenance: {
+            sources: [{ connector: "lightspeed", label: "Cube semantic layer · lightspeed", dataThrough: "2026-08-30" }],
+            timeRange: { label: "last 30 days", start: "unknown", end: "unknown", timezone: "Australia/Melbourne" },
+            definitions: [],
+            semanticBundleHash: "albert-omni-fixture",
+            identityGraph: { version: 0, hash: "d41d8cd98f00b204e9800998ecf8427e" },
+          },
+          followUps: [],
+          presentedResultIds: ["01J00000000000000000DBRV06"],
+          claims: [],
+        },
+      ];
+      await route.fulfill({
+        status: 200,
+        body: editEvents
+          .map((event) => `id: ${event.sequence}\nevent: trace\ndata: ${JSON.stringify(event)}\n\n`)
+          .join(""),
+        headers: {
+          "Cache-Control": "no-store",
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "X-Albert-Runtime": "omni",
+          "X-Albert-Model": "gpt-5.6-luna",
+          "X-Albert-Conversation-Id": "01J00000000000000000DBCV02",
+          "X-Albert-Turn-Id": "01J00000000000000000DBTN02",
+        },
+      }).catch(() => undefined);
+      return;
+    }
     if (requestPayload.dashboardBuild === true) {
       const buildStamp = "2026-08-30T04:09:00.000Z";
       const buildEvents = [
@@ -1877,6 +2578,9 @@ export async function installAppApiRoutes(
     }
     const stamp = "2026-08-03T00:44:00.000Z";
     const omniResultId = "01J0000000000000000000OMN1";
+    const workerPrompt = /^(Investigate |You are one specialist|Measure )/u.test(
+      typeof requestPayload.message === "string" ? requestPayload.message : "",
+    );
     const omniProvenance = {
       sources: [{ connector: "lightspeed", label: "Cube semantic layer · lightspeed", dataThrough: "2026-08-02" }],
       timeRange: { label: "last 12 weeks", start: "unknown", end: "unknown", timezone: "Australia/Melbourne" },
@@ -1931,8 +2635,59 @@ export async function installAppApiRoutes(
         provenance: omniProvenance,
         presentation: "evidence",
       },
+      // Ordinary chat turns also compose a pivot; fleet workers (Dashboard
+      // Master, Swarm) keep their single-result stream so their finding
+      // counts stay exact.
+      ...(workerPrompt ? [] : [
+        {
+          id: "omni_fx_pivot_query", sequence: 7, type: "query", status: "complete", occurredAt: stamp,
+          topic: "Composed pivot", name: "Weekly scorecard",
+          metrics: ["sales_analytics_gross_takings", "sales_analytics_gross_profit"],
+          dimensions: ["sales_analytics_completed_at"],
+          timeRange: omniProvenance.timeRange,
+          lens: "Derived pivot over this turn's results", view: "derived_result", cubesUsed: [],
+          queryYaml: "derived: albert_omni_pivot_v1\ncaption: Weekly scorecard",
+          rowCount: 2, executionMs: 0, connector: "lightspeed",
+          resultId: "01J0000000000000000000OMP1",
+        },
+        {
+          id: "omni_fx_pivot_table", sequence: 8, type: "table", status: "complete", occurredAt: stamp,
+          caption: "Weekly scorecard",
+          columns: [
+            { key: "metric", label: "Metric", type: "string" },
+            { key: "p_2026_07_20", label: "20 Jul", type: "number" },
+            { key: "p_2026_07_27", label: "27 Jul", type: "number" },
+          ],
+          rows: [
+            { metric: "Sales", p_2026_07_20: 8120.5, p_2026_07_27: 8379.02 },
+            { metric: "Gross profit", p_2026_07_20: 3010.2, p_2026_07_27: 3120.5 },
+          ],
+          rowFormats: [
+            { type: "currency", currency: "AUD" },
+            { type: "currency", currency: "AUD" },
+          ],
+          resultId: "01J0000000000000000000OMP1",
+          provenance: omniProvenance,
+          presentation: "evidence",
+          dashboardReplay: {
+            kind: "derived_v1",
+            sourceTableEventIds: ["omni_fx_table"],
+            transformDigest: "ef".repeat(32),
+          },
+          dashboardDerivation: {
+            version: "derived_table_v1",
+            sources: [{ tableEventId: "omni_fx_table", resultId: omniResultId }],
+            columns: [
+              { key: "metric", label: "Metric", type: "string" },
+              { key: "p_2026_07_20", label: "20 Jul", type: "number" },
+              { key: "p_2026_07_27", label: "27 Jul", type: "number" },
+            ],
+            rows: [],
+          },
+        },
+      ]),
       {
-        id: "omni_fx_tasks_done", sequence: 7, type: "tasks", status: "complete", occurredAt: stamp,
+        id: "omni_fx_tasks_done", sequence: 9, type: "tasks", status: "complete", occurredAt: stamp,
         items: [
           { id: "task-1", label: "Find the revenue fields", completed: true },
           { id: "task-2", label: "Query weekly revenue for the last 12 complete weeks", completed: true },
@@ -1940,7 +2695,7 @@ export async function installAppApiRoutes(
         ],
       },
       {
-        id: "omni_fx_answer", sequence: 8, type: "answer", status: "complete", occurredAt: stamp,
+        id: "omni_fx_answer", sequence: 10, type: "answer", status: "complete", occurredAt: stamp,
         state: "Verified",
         text: [
           "Revenue held steady across the last 12 complete weeks, finishing at **$8,379.02** in the latest week.",

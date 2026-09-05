@@ -20,17 +20,23 @@
  * per turn go to evals/albert/runs/<run>/events/<id>.jsonl.
  */
 import path from "node:path";
-import { mkdirSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import pg from "pg";
 import { ulid } from "ulid";
+import { createHash } from "node:crypto";
 import { signCubeJwt } from "../../packages/albert-v3/src/cube/jwt.js";
 import { ALBERT_CODEX_LOCAL_SIGNING_SECRET } from "../../packages/albert-codex/src/contracts.js";
 import {
   OmniRuntimeServiceClient,
   type OmniServiceTurn,
   type OmniTraceEventInput,
+  omniConnectorFreshnessSchema,
+  omniPriorResults,
+  ALBERT_OMNI_MODEL_IDS,
 } from "../../packages/albert-omni/src/index.js";
+import { priorResultsFromTraceEvents } from "../../packages/albert-v3/src/engine/prior-results.js";
+import { providerForModel } from "../../packages/shared/src/agent-runtime.js";
+import { scoreOmniRecord } from "./omni-score.js";
 import { OMNI_20_QUESTIONS } from "./questions-omni-20.js";
 import { OMNI_HARD30_QUESTIONS } from "./questions-omni-hard30.js";
 import { OMNI_DAILY60_QUESTIONS } from "./questions-omni-daily60.js";
@@ -64,11 +70,12 @@ type Args = {
   model: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
   corpus: "omni20" | "hard30" | "daily60";
+  trials: number;
 };
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
-    run: "omni-adhoc",
+    run: `omni-${ulid().toLowerCase()}`,
     concurrency: 3,
     timeoutMs: 780_000,
     resume: false,
@@ -77,6 +84,7 @@ function parseArgs(argv: string[]): Args {
     model: "gpt-5.6-luna",
     effort: "max",
     corpus: "omni20",
+    trials: 1,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]!;
@@ -93,10 +101,15 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--model") args.model = next();
     else if (a === "--effort") args.effort = next() as Args["effort"];
     else if (a === "--corpus") args.corpus = next() as Args["corpus"];
+    else if (a === "--trials") args.trials = Number(next());
+    else throw new Error(`Unknown argument ${a}`);
   }
   if (args.corpus !== "omni20" && args.corpus !== "hard30" && args.corpus !== "daily60") {
     throw new Error("--corpus must be omni20, hard30 or daily60");
   }
+  if (!Number.isInteger(args.trials) || args.trials < 1 || args.trials > 5) throw new Error("--trials must be between 1 and 5");
+  if (!Number.isInteger(args.concurrency) || args.concurrency < 1 || args.concurrency > 8) throw new Error("--concurrency must be between 1 and 8");
+  if (!(ALBERT_OMNI_MODEL_IDS as readonly string[]).includes(args.model)) throw new Error("The selected model is not supported by Omni.");
   return args;
 }
 
@@ -104,17 +117,21 @@ const args = parseArgs(process.argv.slice(2));
 const env = loadEnv();
 if (!env.CUBEJS_API_SECRET) throw new Error("CUBEJS_API_SECRET missing");
 
+let runtimeBuildHash = "";
 async function assertRuntimeReady(): Promise<void> {
-  const response = await fetch(`${args.serviceUrl.replace(/\/+$/u, "")}/readyz`, {
+  const response = await fetch(`${args.serviceUrl.replace(/\/+$/u, "")}/v1/omni/readyz`, {
     signal: AbortSignal.timeout(15_000),
   });
   const payload = await response.json().catch(() => null) as null | {
     ready?: boolean;
     authenticationMode?: string;
+    buildHash?: string;
   };
   if (!response.ok || payload?.ready !== true) {
     throw new Error(`The agent runtime is not ready (${response.status}).`);
   }
+  if (!payload.buildHash || !/^[a-f0-9]{64}$/u.test(payload.buildHash)) throw new Error("The runtime did not attest its harness build.");
+  runtimeBuildHash = payload.buildHash;
   console.log(`[omni-eval] runtime ready auth=${payload.authenticationMode ?? "unknown"}`);
 }
 
@@ -161,6 +178,8 @@ async function db(text: string, values?: unknown[]): Promise<pg.QueryResult> {
 }
 
 const BUSINESS_CONTEXT = loadEvalBusinessContext();
+const freshnessPayload = await db("select public.albert_connector_freshness() as freshness");
+const CONNECTOR_FRESHNESS = omniConnectorFreshnessSchema.array().parse(freshnessPayload.rows[0]?.freshness ?? []);
 const client = new OmniRuntimeServiceClient(
   args.serviceUrl,
   env.ALBERT_CODEX_RUNTIME_SIGNING_SECRET?.trim() || ALBERT_CODEX_LOCAL_SIGNING_SECRET,
@@ -170,16 +189,21 @@ const dir = runDir(args.run);
 const eventsDir = path.join(dir, "events");
 mkdirSync(eventsDir, { recursive: true });
 const resultsFile = path.join(dir, "results.jsonl");
+if (!args.resume && (existsSync(resultsFile) || readdirSync(eventsDir).length)) throw new Error("Evaluation artifacts are immutable. Choose a new --run name or explicitly --resume the same build.");
 const priorRunRecords = args.resume ? readJsonl<EvalTurnRecord>(resultsFile) : [];
 const existingRecords = new Map<string, EvalTurnRecord>();
 for (const record of priorRunRecords) {
-  if (!record.failed) existingRecords.set(record.id, record);
+  if (!record.failed && record.deterministic?.pass && record.runtimeBuildHash === runtimeBuildHash) existingRecords.set(record.id, record);
 }
-let engineVersion = "unknown";
-try { engineVersion = execSync("git rev-parse --short HEAD").toString().trim(); } catch { /* ignore */ }
-engineVersion = `omni-${engineVersion}${process.env.EVAL_ENGINE_LABEL ? `+${process.env.EVAL_ENGINE_LABEL}` : ""}`;
+const engineVersion = `omni-${runtimeBuildHash}`;
 
 const CORPUS = args.corpus === "hard30" ? OMNI_HARD30_QUESTIONS : args.corpus === "daily60" ? OMNI_DAILY60_QUESTIONS : OMNI_20_QUESTIONS;
+const manifest = { runtimeBuildHash, model: args.model, effort: args.effort, fastMode: args.fastMode, corpus: args.corpus, trials: args.trials, question: args.question ?? null, ids: args.ids ? [...args.ids].sort() : null, limit: args.limit ?? null, corpusHash: createHash("sha256").update(JSON.stringify(CORPUS)).digest("hex") };
+const manifestFile = path.join(dir, "manifest.json");
+if (args.resume) {
+  const existing = JSON.parse(readFileSync(manifestFile, "utf8"));
+  if (JSON.stringify(existing) !== JSON.stringify(manifest)) throw new Error("A resumed evaluation must use the same runtime build, model, settings and corpus. Choose a new run name.");
+} else writeFileSync(manifestFile, JSON.stringify(manifest), { flag: "wx" });
 let selected: EvalQuestion[] = args.question
   ? [{
     id: "ADHOC",
@@ -214,7 +238,23 @@ for (const [thread, turns] of byThread) {
   units.push({ key: thread, turns: turns.sort((left, right) => (left.turn ?? 0) - (right.turn ?? 0)) });
 }
 units.sort((left, right) => (right.turns.length - left.turns.length) || left.key.localeCompare(right.key));
-const selectedUnits = args.limit ? units.slice(0, args.limit) : units;
+const baseUnits = args.limit ? units.slice(0, args.limit) : units;
+const selectedUnits: Unit[] = [];
+for (let trial = 0; trial < args.trials; trial += 1) {
+  for (const unit of baseUnits) {
+    if (args.trials === 1) { selectedUnits.push(unit); continue; }
+    const suffix = `__trial${trial + 1}`;
+    selectedUnits.push({
+      key: unit.key + suffix,
+      turns: unit.turns.map((question) => ({
+        ...question,
+        id: question.id + suffix,
+        ...(question.thread ? { thread: question.thread + suffix } : {}),
+      })),
+    });
+  }
+}
+
 selected = selectedUnits.flatMap((unit) => unit.turns);
 const runnableCount = selected.filter((question) => !existingRecords.has(question.id)).length;
 console.log(`[omni-eval] run=${args.run} engine=${engineVersion} model=${args.model} effort=${args.effort} fast=${args.fastMode} service=${args.serviceUrl} turns=${runnableCount}/${selected.length} units=${selectedUnits.length} concurrency=${args.concurrency}`);
@@ -234,7 +274,7 @@ async function mintLease(question: EvalQuestion, existingConversationId?: string
   }
   const turnId = ulid();
   const runtimeProfile = {
-    provider: "openai",
+    provider: providerForModel(args.model as (typeof ALBERT_OMNI_MODEL_IDS)[number]),
     model: args.model,
     reasoningEffort: args.effort,
     fastMode: args.fastMode,
@@ -248,10 +288,6 @@ async function mintLease(question: EvalQuestion, existingConversationId?: string
   );
   const conversationId = String(begun.rows[0]?.conversation_id ?? "");
   if (!conversationId) throw new Error("begin_albert_turn returned no conversation id");
-  await db(
-    "update control_plane.conversation_turns set lease_expires_at = clock_timestamp() + interval '45 minutes' where turn_id = $1",
-    [turnId],
-  );
   await db("select public.albert_assign_conversation_title($1, $2)", [
     conversationId, `Eval · ${args.run} · ${question.id}`,
   ]).catch(() => undefined);
@@ -282,6 +318,7 @@ async function runTurnOnce(
   question: EvalQuestion,
   prior: readonly EvalTurnRecord[],
   existingConversationId?: string,
+  attemptNumber = 1,
 ): Promise<TurnAttempt> {
   const startedAt = new Date();
   const tokens = dateTokens(startedAt);
@@ -306,6 +343,8 @@ async function runTurnOnce(
     charts: [],
     errors: [],
     engineVersion,
+    runtimeBuildHash,
+    attemptNumber,
     businessContext: Boolean(BUSINESS_CONTEXT),
     specialistAgentId: "general",
     model: args.model,
@@ -313,18 +352,23 @@ async function runTurnOnce(
     fastMode: args.fastMode,
     authenticationMode: "api",
   };
-  const eventsFile = path.join(eventsDir, `${question.id}.jsonl`);
+  const eventsFile = path.join(eventsDir, `${question.id}.attempt-${attemptNumber}.jsonl`);
+  writeFileSync(eventsFile, "");
   const t0 = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error("eval timeout")), args.timeoutMs);
   let lease: Lease | undefined;
+  let renewal: ReturnType<typeof setInterval> | undefined;
   try {
     lease = await mintLease(question, existingConversationId);
+    renewal = setInterval(() => {
+      void db("select public.renew_albert_turn_lease($1, $2)", [lease!.turnId, 360]).catch(() => controller.abort(new Error("The evaluation turn lease could not be renewed.")));
+    }, 120_000);
     record.conversationId = lease.conversationId;
     record.turnId = lease.turnId;
     const cubeBearer = signCubeJwt({
       secret: env.CUBEJS_API_SECRET!,
-      expiresInSeconds: 2_700,
+      expiresInSeconds: 900,
       securityContext: {
         tenant_id: TENANT_ID,
         role: ROLE,
@@ -344,8 +388,9 @@ async function runTurnOnce(
       turnId: lease.turnId,
       message: question.question,
       priorConversation: conversationFromRecords(prior),
+      priorResults: omniPriorResults(priorResultsFromTraceEvents(prior.slice(-2).reverse().map((record, index) => ({ turnsAgo: index + 1, events: readFileSync(path.join(eventsDir, `${record.id}.attempt-${record.attemptNumber ?? 1}.jsonl`), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) })))),
       activeConnectors: [...ACTIVE_CONNECTORS],
-      connectorFreshness: [],
+      connectorFreshness: CONNECTOR_FRESHNESS,
       ...(BUSINESS_CONTEXT ? { businessContext: BUSINESS_CONTEXT.rendered.slice(0, 20_000) } : {}),
       timezone: "Australia/Melbourne",
       organisationName: "Ashburton Cycles",
@@ -392,7 +437,7 @@ async function runTurnOnce(
             caption: event.caption,
             presentation: event.presentation ?? "evidence",
             columns: event.columns.map((c) => ({ key: c.key, label: c.label, type: c.type, ...(c.currency ? { currency: c.currency } : {}) })),
-            rows: event.rows.slice(0, 50) as Array<Record<string, unknown>>,
+            rows: [...event.rows] as Array<Record<string, unknown>>,
             rowCount: event.rows.length,
             ...(event.provenance?.view?.name ? { view: event.provenance.view.name } : {}),
           });
@@ -414,6 +459,7 @@ async function runTurnOnce(
           record.answerText = event.text;
           record.followUps = event.followUps;
           record.presentedResultIds = event.presentedResultIds;
+          record.claims = event.claims;
           record.provenanceDefinitions = event.provenance?.definitions?.map((d) => ({ metric: d.metric, label: d.label, definition: d.definition }));
           break;
         case "clarification":
@@ -438,11 +484,15 @@ async function runTurnOnce(
       },
     );
     record.queriesExecuted = result.queriesExecuted;
+    record.usage = result.usage;
+    record.semanticDigests = result.semanticModelDigest ? [result.semanticModelDigest] : [];
+    if (result.buildHash !== runtimeBuildHash) record.failed = "Runtime build changed during evaluation.";
     if (!record.answerState) record.answerState = result.answerState;
   } catch (error) {
     record.failed = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   } finally {
     clearTimeout(timer);
+    if (renewal) clearInterval(renewal);
     record.durationMs = Date.now() - t0;
     if (lease) await completeLease(lease, record.failed ? undefined : record.answerState);
   }
@@ -450,12 +500,14 @@ async function runTurnOnce(
     record.golden = [];
     for (const spec of question.golden) record.golden.push(await computeGolden(cube, spec, tokens));
   }
+  record.deterministic = scoreOmniRecord(record);
   return { record, ...(lease ? { conversationId: lease.conversationId } : {}) };
 }
 
 const TRANSIENT = /overloaded|429|rate limit|fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|another turn is already running/iu;
 
 let done = 0;
+let failedUnits = 0;
 const queue = [...selectedUnits];
 async function runUnit(unit: Unit): Promise<void> {
   const prior: EvalTurnRecord[] = [];
@@ -469,14 +521,18 @@ async function runUnit(unit: Unit): Promise<void> {
       continue;
     }
     console.log(`[${done + 1}/${selected.length}] START ${question.id} (${question.pattern}/${question.tier}) "${question.question.slice(0, 80)}"`);
-    let attempt = await runTurnOnce(question, prior, conversationId);
+    const attemptStartedAt = Date.now();
+    let attempt = await runTurnOnce(question, prior, conversationId, 1);
+    appendJsonl(resultsFile, attempt.record);
     if (attempt.record.failed && TRANSIENT.test(attempt.record.failed)) {
       console.log(`[omni-eval] ${question.id} transient failure (${attempt.record.failed}); retrying once in 20s`);
       await new Promise((resolve) => setTimeout(resolve, 20_000));
-      attempt = await runTurnOnce(question, prior, attempt.conversationId ?? conversationId);
+      attempt = await runTurnOnce(question, prior, attempt.conversationId ?? conversationId, 2);
+      attempt.record.totalDurationMs = Date.now() - attemptStartedAt;
+      appendJsonl(resultsFile, attempt.record);
     }
     const { record } = attempt;
-    appendJsonl(resultsFile, record);
+    if (!record.deterministic?.pass) failedUnits += 1;
     prior.push(record);
     conversationId = attempt.conversationId ?? conversationId;
     done += 1;
@@ -495,6 +551,7 @@ async function worker(): Promise<void> {
     try {
       await runUnit(unit);
     } catch (error) {
+      failedUnits += unit.turns.length;
       console.error(`[omni-eval] unit ${unit.key} crashed:`, error);
     }
   }
@@ -505,5 +562,8 @@ await Promise.all(Array.from(
   () => worker(),
 ));
 console.log(`[omni-eval] finished ${done}/${selected.length} turns → ${resultsFile}`);
+const records = readJsonl<EvalTurnRecord>(resultsFile).filter((record) => record.runtimeBuildHash === runtimeBuildHash);
+const firstAttempts = records.filter((record) => record.attemptNumber === 1);
+writeFileSync(path.join(dir, "summary.json"), JSON.stringify({ model: args.model, effort: args.effort, fastMode: args.fastMode, runtimeBuildHash, trials: args.trials, expectedTurns: selected.length, completedTurns: done, failedTurns: failedUnits, attempts: records.length, firstAttemptPasses: firstAttempts.filter((record) => record.deterministic?.pass).length, firstAttempts: firstAttempts.length, totalAttemptDurationMs: records.reduce((sum, record) => sum + record.durationMs, 0) }, null, 2));
 await pool.end();
-process.exit(0);
+process.exit(failedUnits || done !== selected.length ? 1 : 0);

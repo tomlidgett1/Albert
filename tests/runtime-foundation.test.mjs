@@ -41,7 +41,7 @@ before(async () => {
       "--strict",
       "--skipLibCheck",
       "--lib",
-      "ES2022,DOM,DOM.Iterable",
+      "ES2024,DOM,DOM.Iterable",
       "packages/shared/src/index.ts",
       "packages/agent/src/index.ts",
       "packages/connector-sdk/src/index.ts",

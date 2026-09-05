@@ -31,8 +31,10 @@ import {
   displayFromPlanTile,
   packDashboardLayouts,
   type DashboardPlanEvent,
+  queryYamlTopic,
 } from "../../services/dashboard-build/src/contracts.js";
 import { refreshDashboardClaim } from "../../services/dashboard/src/refresh.js";
+import { pairDerivedTableEvent } from "../../packages/albert-omni/src/pivot.js";
 import type { DashboardRefreshClaim } from "../../services/control-plane/src/dashboard-repository.js";
 import type { TenantContext } from "../../services/control-plane/src/web-repository.js";
 import {
@@ -56,6 +58,9 @@ type Args = {
   timeoutMs: number;
   persist: boolean;
   apply: boolean;
+  /** Element edit (ADR 0134): rework this tile of this dashboard in the lean edit mode. */
+  editTile: string | null;
+  dashboard: string | null;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -69,6 +74,8 @@ function parseArgs(argv: string[]): Args {
     timeoutMs: 780_000,
     persist: false,
     apply: false,
+    editTile: null,
+    dashboard: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]!;
@@ -81,12 +88,15 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--fast") args.fastMode = true;
     else if (a === "--timeout-ms") args.timeoutMs = Number(next());
     else if (a === "--persist") args.persist = true;
+    else if (a === "--edit-tile") args.editTile = next();
+    else if (a === "--dashboard") args.dashboard = next();
     else if (a === "--apply") { args.apply = true; args.persist = true; }
   }
   return args;
 }
 
 const args = parseArgs(process.argv.slice(2));
+if (args.editTile && !process.argv.includes("--effort")) args.effort = "low";
 const env = loadEnv();
 if (!env.CUBEJS_API_SECRET) throw new Error("CUBEJS_API_SECRET missing");
 
@@ -186,6 +196,30 @@ const cubeBearer = signCubeJwt({
   },
 });
 
+// ---- Element edit: brief the architect with the one tile (ADR 0134) --------
+let editBrief: { message: string; topic: string | null } | null = null;
+if (args.editTile) {
+  const doc = (await db("select public.albert_dashboard_get($1) as doc", [args.dashboard])).rows[0]?.doc as {
+    dashboardId: string;
+    title?: string | null;
+    layouts: { desktop: { i: string; w: number }[] };
+    tiles: Parameters<typeof buildDashboardBriefMessage>[0]["currentTiles"];
+  };
+  const tile = doc.tiles.find((candidate) => candidate.tileId === args.editTile);
+  if (!tile) throw new Error(`tile ${args.editTile} not on dashboard ${args.dashboard}`);
+  editBrief = {
+    message: buildDashboardBriefMessage({
+      instruction: args.instruction,
+      currentTiles: doc.tiles,
+      dashboardId: doc.dashboardId,
+      dashboardTitle: doc.title ?? null,
+      editTile: { tile, span: doc.layouts.desktop.find((item) => item.i === tile.tileId)?.w },
+    }),
+    topic: queryYamlTopic(tile.queryYaml),
+  };
+  console.log(`[dash-build] element edit of "${tile.title}" topic=${editBrief.topic ?? "-"}`);
+}
+
 const turn: OmniServiceTurn = {
   protocolVersion: 1,
   requestId: ulid(),
@@ -194,7 +228,7 @@ const turn: OmniServiceTurn = {
   role: ROLE,
   conversationId,
   turnId,
-  message: buildDashboardBriefMessage({ instruction: args.instruction, currentTiles: [] }),
+  message: editBrief?.message ?? buildDashboardBriefMessage({ instruction: args.instruction, currentTiles: [] }),
   priorConversation: [],
   activeConnectors: [...ACTIVE_CONNECTORS],
   connectorFreshness: [],
@@ -205,8 +239,9 @@ const turn: OmniServiceTurn = {
   cubeBearer,
   model: args.model,
   effort: args.effort,
-  fastMode: args.fastMode,
+  fastMode: editBrief ? true : args.fastMode,
   dashboardBuild: true,
+  ...(editBrief ? { dashboardEdit: true, ...(editBrief.topic ? { dashboardEditTopic: editBrief.topic } : {}) } : {}),
 };
 
 // ---- Web-relay mirror: stamping, pairing, persistence ----------------------
@@ -237,6 +272,22 @@ const receiveEvent = async (event: OmniTraceEventInput) => {
       delete outbound.dashboardReplay;
       console.log(`[dash-build] ${at}s WARN table ${event.resultId} had no pairable query event`);
     }
+  }
+  if (event.type === "table" && event.dashboardReplay?.kind === "derived_v1") {
+    // Mirror the relay: pair the derivation's source table events and stamp
+    // the digest, or strip the recipe (ADR 0134 derived joins/computes and pivots).
+    const paired = pairDerivedTableEvent(event, tableEventIdByResultId);
+    if (paired) {
+      outbound = { ...outbound, ...paired };
+      console.log(`[dash-build] ${at}s derived table ${event.resultId} sealed over ${paired.dashboardReplay.sourceTableEventIds.length} sources`);
+    } else {
+      delete outbound.dashboardReplay;
+      delete outbound.dashboardDerivation;
+      console.log(`[dash-build] ${at}s WARN derived table ${event.resultId} could not be paired`);
+    }
+  }
+  if (event.type === "table" && !outbound.dashboardReplay) {
+    console.log(`[dash-build] ${at}s table ${event.resultId} "${event.caption}" is NOT replayable`);
   }
   sequence += 1;
   const stamped = { ...outbound, id: ulid(), sequence, occurredAt: new Date().toISOString() };

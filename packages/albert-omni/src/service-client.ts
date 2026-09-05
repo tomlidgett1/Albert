@@ -1,4 +1,5 @@
 import { signInternalRequest } from "../../security/src/index.js";
+import { boundOmniTurnContext } from "./context.js";
 import {
   codexQueryAuditEventSchema,
   type CodexQueryAuditEvent,
@@ -77,29 +78,26 @@ export class OmniRuntimeServiceClient {
     signal?: AbortSignal,
     emitQueryAudit?: (event: CodexQueryAuditEvent) => Promise<void>,
   ): Promise<OmniSemanticTurnResult> {
-    const body = JSON.stringify(turn);
+    const body = JSON.stringify(boundOmniTurnContext(turn));
     // A severed connection or a proxy-level 5xx does not mean the turn died:
     // the job keeps running server-side, submits are idempotent while their
     // job is alive, and polls carry an explicit cursor.
     const TRANSIENT_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000, 8_000];
     const requestJson = async (path: string, requestBody: string): Promise<Record<string, unknown>> => {
-      const signed = await signInternalRequest({
-        method: "POST",
-        path,
-        body: requestBody,
-        secret: this.signingSecret,
-      });
       for (let attempt = 0; ; attempt += 1) {
         const retryDelay = TRANSIENT_RETRY_DELAYS_MS[attempt];
         let transient: string | undefined;
         try {
+          const signed = await signInternalRequest({ method: "POST", path, body: requestBody, secret: this.signingSecret });
+          const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
           let response: Response;
           try {
             response = await fetch(new URL(path, `${this.baseUrl}/`), {
               method: "POST",
               headers: { "content-type": "application/json", accept: "application/json", ...signed },
               body: requestBody,
-              signal,
+              signal: requestSignal,
+              redirect: "error",
             });
           } catch (error) {
             throw new OmniRuntimeServiceError(

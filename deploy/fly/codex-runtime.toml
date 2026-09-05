@@ -7,9 +7,8 @@ kill_timeout = 30
 
 [env]
   ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
-  # 16 is the config validator's ceiling. Each turn spawns one codex CLI child
-  # and holds one long-poll request; the VM size and the http_service
-  # concurrency limits below are sized for this cap — change them together.
+  # Both harnesses share 16 slots. Omni runs in-process; Codex uses a CLI child.
+  # The VM and HTTP concurrency limits are sized for this cap.
   ALBERT_CODEX_MAX_CONCURRENT_TURNS = "16"
   ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
   ALBERT_RUNTIME_IDENTITY = "codex-runtime"
@@ -38,7 +37,7 @@ kill_timeout = 30
     grace_period = "30s"
     interval = "15s"
     method = "GET"
-    path = "/readyz"
+    path = "/v1/omni/readyz"
     timeout = "10s"
 
   [[http_service.checks]]

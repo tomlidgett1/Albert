@@ -1,5 +1,6 @@
 import { rm, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
+import { computeOmniBuildFingerprint } from "../packages/albert-omni/src/build-fingerprint.mjs";
 
 const outdir = ".albert-build/services";
 const requestedBuildSha = process.env.GITHUB_SHA ?? process.env.ALBERT_BUILD_SHA;
@@ -29,6 +30,7 @@ await build({
   packages: "external",
   define: {
     __ALBERT_SERVICE_BUILD_SHA__: JSON.stringify(buildSha),
+    __ALBERT_OMNI_BUILD_HASH__: JSON.stringify(computeOmniBuildFingerprint()),
   },
   sourcemap: true,
   sourcesContent: false,

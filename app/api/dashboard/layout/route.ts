@@ -7,9 +7,11 @@ import {
 import { consumeAlbertRateLimit, ControlPlaneError } from "@/services/control-plane/src/web-repository";
 import { assertSameOriginMutation, readBoundedJsonBody, rateLimitExceededResponse } from "@/services/control-plane/src/request-security";
 
+const ulid = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/);
 const requestSchema = z.object({
   layouts: dashboardLayoutsSchema,
   expectedRevision: z.number().int().nonnegative(),
+  dashboardId: ulid.optional(),
 }).strict();
 
 export async function PATCH(request: Request) {
@@ -19,7 +21,9 @@ export async function PATCH(request: Request) {
     if (!limit.allowed) return rateLimitExceededResponse(limit);
     const parsed = requestSchema.safeParse(await readBoundedJsonBody(request));
     if (!parsed.success) return Response.json({ error: "A valid dashboard layout is required." }, { status: 400 });
-    return Response.json({ dashboard: await updateDashboardLayouts(parsed.data.layouts, parsed.data.expectedRevision) }, {
+    return Response.json({
+      dashboard: await updateDashboardLayouts(parsed.data.layouts, parsed.data.expectedRevision, parsed.data.dashboardId),
+    }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
@@ -28,4 +32,3 @@ export async function PATCH(request: Request) {
     return Response.json({ error: error instanceof Error ? error.message : "The layout could not be saved." }, { status });
   }
 }
-

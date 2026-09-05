@@ -69,24 +69,55 @@ const bikeShopBriefs: readonly AnalysisBrief[] = [
   }),
 ];
 
-test("the homepage recommended analysis surface is a single briefing panel", () => {
+test("the homepage recommended analysis surface is a single briefing panel fed by the daily look", () => {
   const page = read("app/dash/page.tsx");
   const component = read("app/dash/components/RecommendedAnalysis.tsx");
+  const css = read("app/dash/dash.module.css");
   const route = read("app/api/recommended-analysis/route.ts");
   const migration = read("infra/migrations/control-plane/0164_m8_recommended_analysis_corpus.sql");
   const adr = read("docs/adr/0117-recommended-analysis.md");
-  const policies = read("services/control-plane/src/web-repository.ts");
+  const dailyAdr = read("docs/adr/0133-daily-look.md");
+  const bridge = read("services/imessage-bridge/src/main.ts");
+  const loop = read("services/imessage-bridge/src/daily-brief.ts");
   assert.match(page, /import RecommendedAnalysis from "\.\/components\/RecommendedAnalysis"/u);
   assert.match(page, /showRecommendedHome[\s\S]*<RecommendedAnalysis/u);
+  // The daily look's standing conversation is bookkeeping, hidden from history like `Alerts ·`.
+  assert.match(page, /conversation\.title\.startsWith\(DAILY_BRIEF_CONVERSATION_TITLE_PREFIX\)/u);
   assert.doesNotMatch(page, /showRecentHomeAnalyses|Recent analysis/u);
   assert.match(component, /What to look at next/u);
+  // One sentence per row with the tool's logo at the left; no skeleton and no per-visit refinement.
+  assert.match(component, /CONNECTOR_LOGOS\[item\.tool\]/u);
+  assert.match(component, /if \(recommendations\.length === 0\) return null;/u);
+  assert.doesNotMatch(component, /recommendedAnalysisSkeleton|method: "POST"|recommendedAnalysisCardWhy/u);
+  // Bare rows: no heading, verdict, card or border around them.
+  assert.doesNotMatch(component, /recommendedAnalysisPanel|recommendedAnalysisHeader|recommendedAnalysisTitle|recommendedAnalysisVerdict|<h3/u);
+  // Below the composer and out of the flow, so the composer stays centred.
+  assert.match(css, /\.recommendedAnalysis \{[^}]*position: absolute;[^}]*top: calc\(100% \+ \d+px\);/u);
   assert.match(route, /composePlaybookBrief/u);
-  assert.match(route, /synthesizeRecommendedAnalysis/u);
+  assert.match(route, /isDailyBriefModel/u);
+  assert.match(route, /withRecommendedTools/u);
   assert.match(route, /loadProactiveSignal/u);
+  assert.doesNotMatch(route, /export async function POST|synthesizeRecommendedAnalysis|OPENAI_API_KEY/u);
   assert.match(migration, /albert_recommended_analysis_corpus/u);
   assert.match(migration, /p_verdict/u);
   assert.match(adr, /Corpus, not last-four/u);
-  assert.match(policies, /"conversation\.recommended_analysis"/u);
+  assert.match(adr, /ADR 0133/u);
+  assert.match(dailyAdr, /gpt-5\.6-luna/u);
+  assert.match(bridge, /new DailyBriefLoop\(/u);
+  assert.match(loop, /dailyBriefModelLabel\(this\.deps\.model\)/u);
+});
+
+test("playbook rows name the connected tool they read", () => {
+  const now = new Date("2026-08-23T03:00:00.000Z");
+  const rows = buildPlaybookRecommendations(bikeShopBriefs, ["lightspeed-r", "xero", "deputy"], now);
+  assert.equal(rows.length, 3);
+  for (const item of rows) assert.ok(item.tool === null || typeof item.tool === "string", item.question);
+  const cash = rows.find((item) => item.domain === "cash");
+  if (cash) assert.equal(cash.tool, "xero");
+  const staff = rows.find((item) => item.domain === "staff");
+  if (staff) assert.equal(staff.tool, "deputy");
+  const posOnly = buildPlaybookRecommendations(bikeShopBriefs, ["lightspeed-r"], now);
+  assert.ok(posOnly.every((item) => item.tool === "lightspeed"), "with only a till connected every row reads Lightspeed");
 });
 
 test("elliptical follow-ups become self-contained questions", () => {

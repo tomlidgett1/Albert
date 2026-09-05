@@ -58,7 +58,11 @@
     "test:shopifyql:schema": "node --import tsx --test tests/contracts/shopifyql-schema-registry.contract.test.ts",
     "prompt-docs:check": "tsx scripts/write-connector-playbook-doc.mts --check && tsx scripts/write-staging-schema-doc.mts --check",
     "connector-pack:activate": "tsx scripts/activate-connector-pack.ts",
-    "connector-pack:retire-connection": "tsx scripts/retire-connector-pack-connection.ts"
+    "connector-pack:retire-connection": "tsx scripts/retire-connector-pack-connection.ts",
+    "test:omni": "node --import tsx --test services/codex-runtime/omni*.test.ts tests/contracts/omni-*.test.ts tests/contracts/dashboard-build.contract.test.ts",
+    "eval:omni:frozen:luna-max": "node --env-file=.env.local --import tsx scripts/albert-eval/run-omni-frozen.mts --trials 2 --concurrency 3",
+    "eval:omni:live:luna-max": "node --import tsx scripts/albert-eval/run-omni.mts --corpus omni20 --model gpt-5.6-luna --effort max --concurrency 3",
+    "eval:omni:release": "npm run test:omni && npm run eval:omni:frozen:luna-max && npm run eval:omni:live:luna-max"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.226",
@@ -68,10 +72,11 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@nivo/bar": "^0.99.0",
     "@nivo/line": "^0.99.0",
-    "@openai/codex": "0.148.0",
     "@openai/agents": "^0.14.3",
+    "@openai/codex": "0.148.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.0",
+    "decimal.js": "10.6.0",
     "flint-chart": "^0.5.1",
     "framer-motion": "^12.43.0",
     "js-yaml": "4.3.1",

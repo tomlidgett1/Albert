@@ -54,6 +54,16 @@ async function post(body: Record<string, unknown>): Promise<Record<string, unkno
   return payload;
 }
 
+async function loadWorkspace(signal?: AbortSignal): Promise<Loaded | null> {
+  const response = await fetch("/api/imessage", { cache: "no-store", signal });
+  if (response.status === 401) return null;
+  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    throw new Error(typeof payload.error === "string" ? payload.error : "iMessage setup could not be loaded.");
+  }
+  return payload as unknown as Loaded;
+}
+
 export function ImessageManager() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -71,25 +81,27 @@ export function ImessageManager() {
     noticeTimer.current = setTimeout(() => setNotice(null), 5000);
   }, []);
 
-  const refresh = useCallback(async () => {
-    const response = await fetch("/api/imessage", { cache: "no-store" });
-    if (response.status === 401) {
-      setNeedsSignIn(true);
-      return;
-    }
-    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!response.ok) {
-      throw new Error(typeof payload.error === "string" ? payload.error : "iMessage setup could not be loaded.");
-    }
-    setLoaded(payload as unknown as Loaded);
+  const applyWorkspace = useCallback((workspace: Loaded | null) => {
+    setNeedsSignIn(workspace === null);
+    setLoaded(workspace);
   }, []);
 
+  const refresh = useCallback(async () => {
+    applyWorkspace(await loadWorkspace());
+  }, [applyWorkspace]);
+
   useEffect(() => {
-    refresh().catch((error) => setLoadError(error instanceof Error ? error.message : "Something went wrong."));
+    const controller = new AbortController();
+    loadWorkspace(controller.signal).then((workspace) => {
+      if (!controller.signal.aborted) applyWorkspace(workspace);
+    }).catch((error) => {
+      if (!controller.signal.aborted) setLoadError(error instanceof Error ? error.message : "Something went wrong.");
+    });
     return () => {
+      controller.abort();
       if (noticeTimer.current) clearTimeout(noticeTimer.current);
     };
-  }, [refresh]);
+  }, [applyWorkspace]);
 
   const normalised = normalisePhone(phone);
   const phoneValid = PHONE_PATTERN.test(normalised);
