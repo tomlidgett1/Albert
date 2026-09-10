@@ -2,6 +2,8 @@
 
 Date: 2026-09-02. Status: accepted. Amends ADR 0117.
 
+Superseded for cadence, freshness and display by ADR 0137.
+
 ## The ask
 
 "What to look at next" on the New Analysis page loaded and then vanished,

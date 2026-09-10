@@ -53,6 +53,7 @@ const coverageSchema = z.object({
 
 const recommendationSchema = z.object({
   id: z.string().min(4).max(80),
+  title: z.string().min(8).max(90).optional(),
   question: z.string().min(8).max(200),
   why: z.string().min(8).max(200),
   move: z.enum(ANALYTICAL_MOVES),
@@ -69,6 +70,8 @@ const cacheSchema = z.object({
   recommendations: z.array(recommendationSchema).max(8),
   model: z.string().min(1).max(120),
   generatedAt: z.string(),
+  windowStart: z.string().nullish(),
+  windowEnd: z.string().nullish(),
 });
 
 function singleton(value: unknown): unknown {
@@ -195,6 +198,7 @@ export async function loadProactiveSignal(
 function storedRecommendation(item: z.infer<typeof recommendationSchema>): RecommendedQuestion {
   return Object.freeze({
     id: item.id,
+    ...(item.title ? { title: item.title } : {}),
     question: item.question,
     why: item.why,
     move: item.move,
@@ -212,6 +216,8 @@ export type RecommendedAnalysisCache = Readonly<{
   recommendations: readonly RecommendedQuestion[];
   model: string;
   generatedAt: string;
+  windowStart?: string | null;
+  windowEnd?: string | null;
 }>;
 
 export async function loadRecommendedAnalysisCache(
@@ -236,6 +242,8 @@ export async function loadRecommendedAnalysisCache(
     recommendations: Object.freeze(parsed.data.recommendations.map(storedRecommendation)),
     model: parsed.data.model,
     generatedAt: parsed.data.generatedAt,
+    windowStart: parsed.data.windowStart,
+    windowEnd: parsed.data.windowEnd,
   });
 }
 

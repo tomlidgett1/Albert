@@ -50,3 +50,47 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.screenshot({ path: `.playwright/recommended-${colorScheme}.png` });
   });
 }
+
+function currentLook(now: number, title: string, expiresSoon = false) {
+  const end = expiresSoon ? now - 7_200_000 + 2_000 : now;
+  return {
+    recommendations: [{ id: "daily-test", title, question: "What explains the sales change in the last 24 hours?", why: "Sales fell against comparable weekday windows.", domain: "sales", move: "diagnose", tool: "lightspeed", fromTitle: "Daily look", fromConversationId: null }],
+    generatedAt: new Date(end).toISOString(), windowStart: new Date(end - 86_400_000).toISOString(), windowEnd: new Date(end).toISOString(), expiresAt: new Date(end + 7_200_000).toISOString(), timezone: "Australia/Melbourne", source: "daily",
+  };
+}
+
+test("an open homepage picks up a refreshed look without reloading, even without past chats", async ({ page }) => {
+  const now = Date.now();
+  await page.clock.install({ time: new Date(now) });
+  await installAppApiRoutes(page);
+  let reads = 0;
+  await page.route(/\/api\/recommended-analysis(?:\?.*)?$/u, async route => {
+    reads += 1;
+    await route.fulfill({ json: currentLook(now, reads === 1 ? "Sales slowed despite more customers visiting" : "Customer spending recovered during the afternoon") });
+  });
+  await page.goto("/dash");
+  const panel = page.getByRole("region", { name: "What to look at next" });
+  await expect(panel.getByText("Sales slowed despite more customers visiting")).toBeVisible();
+  await page.clock.fastForward(60_000);
+  await expect(panel.getByText("Customer spending recovered during the afternoon")).toBeVisible();
+  await expect(panel.getByText("Sales slowed despite more customers visiting")).toHaveCount(0);
+});
+
+test("expired recommendations disappear even when the refresh request fails", async ({ page }) => {
+  const now = Date.now();
+  await page.clock.install({ time: new Date(now) });
+  await installAppApiRoutes(page, { recentAnalyses: true });
+  let reads = 0;
+  await page.route(/\/api\/recommended-analysis(?:\?.*)?$/u, async route => {
+    reads += 1;
+    if (reads > 1) return route.fulfill({ status: 503, json: { error: "Temporarily unavailable" } });
+    await route.fulfill({ json: currentLook(now, "Sales slowed despite more customers visiting", true) });
+  });
+  await page.goto("/dash");
+  const panel = page.getByRole("region", { name: "What to look at next" });
+  await expect(panel).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => reads).toBeGreaterThan(1);
+  await page.clock.fastForward(2_100);
+  await expect(panel).toHaveCount(0);
+});

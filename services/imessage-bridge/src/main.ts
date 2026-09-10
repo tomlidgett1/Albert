@@ -102,7 +102,7 @@ const alerts = config.alertsEnabled
   : null;
 handler.setAlertsStatus(() => alerts?.status() ?? { enabled: false });
 
-// The daily look (ADR 0133): once a day, from the configured local hour, a
+// The rolling daily look (ADR 0137): hourly, a
 // Luna Max turn on the Omni harness reads the last 24 hours and writes the
 // homepage's "What to look at next". It runs here for the same reason the
 // scheduler and alerts do: only this process may run turns as the owner.
@@ -112,7 +112,7 @@ const dailyBrief = config.dailyBriefEnabled
     runAnalysis: (request) => runOwnerAnalysis({ store: handler.controlPlane, config, log }, request),
     model: config.dailyBriefModel,
     effort: DAILY_BRIEF_EFFORT,
-    fromHour: config.dailyBriefFromHour,
+    refreshMs: config.dailyBriefRefreshMs,
     pollMs: config.dailyBriefPollMs,
     log,
   })
@@ -195,7 +195,7 @@ server.listen(config.port, "0.0.0.0", () => {
     model: config.model,
     scheduler: scheduler ? { pollMs: config.schedulerPollMs } : null,
     alerts: alerts ? { pollMs: config.alertsPollMs, quietHours: config.alertsQuietHours } : null,
-    dailyBrief: dailyBrief ? { pollMs: config.dailyBriefPollMs, model: config.dailyBriefModel, fromHour: config.dailyBriefFromHour } : null,
+    dailyBrief: dailyBrief ? { pollMs: config.dailyBriefPollMs, model: config.dailyBriefModel, refreshMs: config.dailyBriefRefreshMs } : null,
   })}\n`);
   scheduler?.start();
   alerts?.start();

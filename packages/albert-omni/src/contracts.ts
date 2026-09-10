@@ -266,6 +266,9 @@ export const omniSemanticTurnResultSchema = z.object({
   usage: omniTurnUsageSchema.optional(),
   buildHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   semanticModelDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
-}).strict();
+// Result metadata is additive across independently deployed callers. Keep
+// validating known fields, and strip future metadata rather than failing a
+// completed analysis (ADR 0137). Request/tool schemas remain strict.
+}).strip();
 
 export type OmniSemanticTurnResult = z.infer<typeof omniSemanticTurnResultSchema>;

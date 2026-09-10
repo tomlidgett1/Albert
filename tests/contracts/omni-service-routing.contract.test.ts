@@ -26,3 +26,12 @@ test("a first turn does not send an empty extension to strict deployed v1 runtim
   assert.equal(Object.hasOwn(turn, "priorResults"), false);
   assert.deepEqual(turn.priorConversation, []);
 });
+
+test("completed turns accept additive runtime metadata but reject malformed known fields", async () => {
+  const { omniSemanticTurnResultSchema } = await import("../../packages/albert-omni/src/contracts");
+  const result = { answerState: "Verified", queriesExecuted: 2, modelRequests: 3, durationMs: 100, futureMetadata: { revision: 2 } };
+  const parsed = omniSemanticTurnResultSchema.parse(result);
+  assert.equal(Object.hasOwn(parsed, "futureMetadata"), false);
+  assert.throws(() => omniSemanticTurnResultSchema.parse({ ...result, queriesExecuted: -1 }));
+  assert.throws(() => omniSemanticTurnResultSchema.parse({ ...result, answerState: "made-up" }));
+});

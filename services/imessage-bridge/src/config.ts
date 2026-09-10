@@ -6,7 +6,7 @@
  * turns itself, and it deploys as its own Fly app so none of these
  * credentials enter the codex-runtime boundary.
  */
-import { DAILY_BRIEF_FROM_HOUR, DAILY_BRIEF_MODEL } from "../../recommended-analysis/src/daily-brief.js";
+import { DAILY_BRIEF_REFRESH_MS, DAILY_BRIEF_MODEL } from "../../recommended-analysis/src/daily-brief.js";
 
 export type ImessageBridgeConfig = Readonly<{
   port: number;
@@ -42,11 +42,11 @@ export type ImessageBridgeConfig = Readonly<{
   alertsPollMs: number;
   alertsQuietHours: Readonly<{ from: number; to: number }>;
   cubeApiUrl: string;
-  /** The daily look (ADR 0133): the loop's switch, cadence, model and the local hour it may run from. */
+  /** The rolling daily look (ADR 0137): switch, polling and refresh cadence. */
   dailyBriefEnabled: boolean;
   dailyBriefPollMs: number;
   dailyBriefModel: string;
-  dailyBriefFromHour: number;
+  dailyBriefRefreshMs: number;
 }>;
 
 function required(source: NodeJS.ProcessEnv, key: string): string {
@@ -113,9 +113,9 @@ export function loadImessageBridgeConfig(source: NodeJS.ProcessEnv = process.env
   if (!Number.isInteger(dailyBriefPollSeconds) || dailyBriefPollSeconds < 30 || dailyBriefPollSeconds > 3600) {
     throw new Error("ALBERT_DAILY_BRIEF_POLL_SECONDS must be a whole number of seconds between 30 and 3600.");
   }
-  const dailyBriefFromHour = Number(source.ALBERT_DAILY_BRIEF_HOUR?.trim() || String(DAILY_BRIEF_FROM_HOUR));
-  if (!Number.isInteger(dailyBriefFromHour) || dailyBriefFromHour < 0 || dailyBriefFromHour > 23) {
-    throw new Error("ALBERT_DAILY_BRIEF_HOUR must be a local hour between 0 and 23.");
+  const dailyBriefRefreshSeconds = Number(source.ALBERT_DAILY_BRIEF_REFRESH_SECONDS?.trim() || String(DAILY_BRIEF_REFRESH_MS / 1000));
+  if (!Number.isInteger(dailyBriefRefreshSeconds) || dailyBriefRefreshSeconds < 1800 || dailyBriefRefreshSeconds > 3600) {
+    throw new Error("ALBERT_DAILY_BRIEF_REFRESH_SECONDS must be between 1800 and 3600 seconds.");
   }
   const dailyBriefModel = source.ALBERT_DAILY_BRIEF_MODEL?.trim() || DAILY_BRIEF_MODEL;
   if (!/^[a-zA-Z0-9._-]{1,120}$/u.test(dailyBriefModel)) {
@@ -149,6 +149,6 @@ export function loadImessageBridgeConfig(source: NodeJS.ProcessEnv = process.env
     dailyBriefEnabled,
     dailyBriefPollMs: dailyBriefPollSeconds * 1000,
     dailyBriefModel,
-    dailyBriefFromHour,
+    dailyBriefRefreshMs: dailyBriefRefreshSeconds * 1000,
   });
 }

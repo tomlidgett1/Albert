@@ -1554,16 +1554,7 @@ export default function DashPage() {
     }
     return groups;
   }, [filteredConversations, pinnedConversationIdSet, pinnedConversationIds]);
-  const showRecommendedHome = chatComposerHero
-    && !isCustomerAgent
-    && conversationSummaries.some((conversation) => (
-      !archivedConversationIds.has(conversation.conversationId)
-      && !proactiveConversationIds.has(conversation.conversationId)
-      && !swarmConversationIds.has(conversation.conversationId)
-      && !dashboardMasterConversationIds.has(conversation.conversationId)
-      && !conversation.title.startsWith(ALERTS_CONVERSATION_TITLE_PREFIX)
-      && !conversation.title.startsWith(DAILY_BRIEF_CONVERSATION_TITLE_PREFIX)
-    ));
+  const showRecommendedHome = chatComposerHero && !isCustomerAgent;
   const chatTitle = useMemo(() => {
     if (activeConversationId) {
       const match = conversationSummaries.find((item) => item.conversationId === activeConversationId);

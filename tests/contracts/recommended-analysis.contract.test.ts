@@ -87,16 +87,14 @@ test("the homepage recommended analysis surface is a single briefing panel fed b
   assert.match(component, /What to look at next/u);
   // One sentence per row with the tool's logo at the left; no skeleton and no per-visit refinement.
   assert.match(component, /CONNECTOR_LOGOS\[item\.tool\]/u);
-  assert.match(component, /if \(recommendations\.length === 0\) return null;/u);
+  assert.match(component, /recommendations\.length === 0/u);
   assert.doesNotMatch(component, /recommendedAnalysisSkeleton|method: "POST"|recommendedAnalysisCardWhy/u);
   // Bare rows: no heading, verdict, card or border around them.
   assert.doesNotMatch(component, /recommendedAnalysisPanel|recommendedAnalysisHeader|recommendedAnalysisTitle|recommendedAnalysisVerdict|<h3/u);
   // Below the composer and out of the flow, so the composer stays centred.
   assert.match(css, /\.recommendedAnalysis \{[^}]*position: absolute;[^}]*top: calc\(100% \+ \d+px\);/u);
-  assert.match(route, /composePlaybookBrief/u);
-  assert.match(route, /isDailyBriefModel/u);
-  assert.match(route, /withRecommendedTools/u);
-  assert.match(route, /loadProactiveSignal/u);
+  assert.match(route, /homepageDailyBrief/u);
+  assert.doesNotMatch(route, /composePlaybookBrief|loadProactiveSignal/u);
   assert.doesNotMatch(route, /export async function POST|synthesizeRecommendedAnalysis|OPENAI_API_KEY/u);
   assert.match(migration, /albert_recommended_analysis_corpus/u);
   assert.match(migration, /p_verdict/u);

@@ -234,7 +234,7 @@ test("light, beige, dark, green, and system themes remain accessible", async ({
   await expectNoWcagViolations(page, "system");
 });
 
-test("homepage recommends next questions from previous conversation results", async ({
+test("homepage recommends current issues and opens the exact evidence window", async ({
   page,
 }) => {
   const capture = await installAppApiRoutes(page, { recentAnalyses: true });
@@ -246,19 +246,19 @@ test("homepage recommends next questions from previous conversation results", as
   await expect(recommended.getByText("You've looked at sales and customers recently.")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Recent analysis" })).toHaveCount(0);
   await expect(recommended.getByRole("button", {
-    name: "Ask: Which products dragged Wednesday's sales last week?",
+    name: "Ask: Sales slowed despite more customers visiting",
   })).toBeVisible();
   await expect(recommended.getByRole("button", {
-    name: "Ask: What is dragging parts margin: mix, discounting, or cost?",
+    name: "Ask: Discounts are weighing on parts margin",
   })).toBeVisible();
-  await expect(recommended.getByText("Did last week's takings reach the bank", { exact: false })).toBeVisible();
+  await expect(recommended.getByText("Customer payments need a closer look", { exact: false })).toBeVisible();
   // One sentence per row, with the logo of the tool it reads at the left.
-  const cashRow = recommended.getByRole("button", { name: "Ask: Did last week's takings reach the bank, and what is still outstanding?" });
+  const cashRow = recommended.getByRole("button", { name: "Ask: Customer payments need a closer look" });
   await expect(cashRow.locator("img")).toHaveAttribute("src", /logos\/xero\.svg/u);
   await expect(recommended.getByText("You reviewed sales, but not whether that cash actually landed.")).toHaveCount(0);
 
   await recommended.getByRole("button", {
-    name: "Ask: Which products dragged Wednesday's sales last week?",
+    name: "Ask: Sales slowed despite more customers visiting",
   }).click();
   await expect(page.getByRole("region", { name: "What to look at next" })).toHaveCount(0);
   // The recommendation is asked on whichever harness the chat runs (Omni by default).
@@ -271,7 +271,8 @@ test("homepage recommends next questions from previous conversation results", as
   const sent = sentPayloads()[0] as {
     message?: string;
   };
-  expect(sent.message).toBe("Which products dragged Wednesday's sales last week?");
+  expect(sent.message).toContain("Which products explain the lower sales over the last 24 hours?");
+  expect(sent.message).toContain("Investigate the 24-hour period from");
 });
 
 test("homepage keeps history in the sidebar instead of a second card grid", async ({

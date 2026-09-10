@@ -131,6 +131,8 @@ const storedRecommendedAnalysisSchema = z.object({
   model: z.string(),
   generatedAt: z.string(),
   recommendations: z.array(z.unknown()).default([]),
+  windowStart: z.string().nullish(),
+  windowEnd: z.string().nullish(),
 }).passthrough();
 
 function toSchedulerTask(raw: z.infer<typeof scheduledTaskSchema>): SchedulerTask {
@@ -520,12 +522,12 @@ export class OwnerControlPlane {
   }
 
   /** The stored homepage brief, read as the owner: what the daily look last wrote and when. */
-  async recommendedAnalysis(): Promise<Readonly<{ model: string; generatedAt: string; itemCount: number }> | null> {
+  async recommendedAnalysis(): Promise<Readonly<{ model: string; generatedAt: string; itemCount: number; windowStart?: string | null; windowEnd?: string | null }> | null> {
     return this.rpc("albert_recommended_analysis", undefined, (data) => {
       const value = singleton(data);
       if (value == null) return null;
       const parsed = storedRecommendedAnalysisSchema.parse(value);
-      return Object.freeze({ model: parsed.model, generatedAt: parsed.generatedAt, itemCount: parsed.recommendations.length });
+      return Object.freeze({ model: parsed.model, generatedAt: parsed.generatedAt, itemCount: parsed.recommendations.length, windowStart: parsed.windowStart, windowEnd: parsed.windowEnd });
     });
   }
 
@@ -536,6 +538,8 @@ export class OwnerControlPlane {
     verdict: string;
     recommendations: readonly unknown[];
     model: string;
+    windowStart: string;
+    windowEnd: string;
   }>): Promise<void> {
     return this.rpc("albert_save_recommended_analysis", {
       p_source_fingerprint: input.sourceFingerprint,
@@ -543,6 +547,8 @@ export class OwnerControlPlane {
       p_recommendations: input.recommendations,
       p_model: input.model,
       p_verdict: input.verdict,
+      p_window_start: input.windowStart,
+      p_window_end: input.windowEnd,
     }, () => undefined);
   }
 

@@ -5,7 +5,9 @@ import {
   dailyBriefMessage,
   dailyBriefModelLabel,
   dailyBriefTitle,
-  isDailyBriefModel,
+  dailyBriefWindow,
+  DAILY_BRIEF_VERSION_PREFIX,
+  DAILY_BRIEF_REFRESH_MS,
   parseDailyBriefAnswer,
   type DailyBriefFreshness,
 } from "../../recommended-analysis/src/daily-brief.js";
@@ -15,24 +17,19 @@ import type { OwnerAnalysisRequest, OwnerAnalysisResult } from "./analysis.js";
 import type { OwnerTenantContext } from "./owner-session.js";
 
 /**
- * The daily-look loop (ADR 0133). Once a day, from the configured local
- * hour, it runs one Luna Max turn on the Omni harness as the owner — in the
- * standing "Daily look · last 24 hours" conversation — asking whether
- * anything interesting happened in the last 24 hours across the connected
- * tools, reads the answer back into up to three rows, and stores them as
- * the homepage's "What to look at next" brief (migration 0164's row, named
- * `omni:<model>` so the web route can tell it from the chat-history
- * playbook). A look stored today is never repeated today; a failed attempt
- * waits `retryMs` before trying again.
- *
- * It lives in the bridge for the same reason the scheduler and alerts do:
- * this is the one process holding the owner session and the Cube secret.
+ * The rolling daily look (ADR 0137). An hourly governed Luna Max turn
+ * checks the current 24-hour window and stores up to three short headlines
+ * with separate follow-up questions and evidence. Reuses a standing audit
+ * conversation without old answers; failed attempts back off for retryMs.
+ * The bridge holds the owner session and Cube signing capability.
  */
 
 export type StoredDailyBrief = Readonly<{
   model: string;
   generatedAt: string;
   itemCount: number;
+  windowStart?: string | null;
+  windowEnd?: string | null;
 }>;
 
 export type DailyBriefSave = Readonly<{
@@ -41,6 +38,8 @@ export type DailyBriefSave = Readonly<{
   verdict: string;
   recommendations: readonly RecommendedQuestion[];
   model: string;
+  windowStart: string;
+  windowEnd: string;
 }>;
 
 export interface DailyBriefStore {
@@ -56,8 +55,7 @@ export type DailyBriefDeps = Readonly<{
   runAnalysis: (request: OwnerAnalysisRequest) => Promise<OwnerAnalysisResult>;
   model: string;
   effort: NonNullable<OwnerAnalysisRequest["effort"]>;
-  /** Local hour from which today's look may run. */
-  fromHour: number;
+  refreshMs?: number;
   pollMs: number;
   /** After a failed attempt, how long to wait before trying again. */
   retryMs?: number;
@@ -69,7 +67,7 @@ export type DailyBriefStatus = Readonly<{
   enabled: boolean;
   pollMs: number;
   model: string;
-  fromHour: number;
+  refreshMs: number;
   lastTickAt: string | null;
   lastRunAt: string | null;
   lastError: string | null;
@@ -107,7 +105,7 @@ export class DailyBriefLoop {
       enabled: true,
       pollMs: this.deps.pollMs,
       model: this.deps.model,
-      fromHour: this.deps.fromHour,
+      refreshMs: this.deps.refreshMs ?? DAILY_BRIEF_REFRESH_MS,
       lastTickAt: this.lastTickAt,
       lastRunAt: this.lastRunAt,
       lastError: this.lastError,
@@ -133,7 +131,7 @@ export class DailyBriefLoop {
     return this.deps.now?.() ?? new Date();
   }
 
-  /** One poll: run today's look if it is due and has not been stored yet. */
+  /** One poll: refresh the observed window if due. */
   async tick(): Promise<void> {
     if (this.ticking) return;
     this.ticking = true;
@@ -148,8 +146,8 @@ export class DailyBriefLoop {
         this.deps.store.recommendedAnalysis(),
       ]);
       // A chat-history brief (the playbook's row) does not count as today's look.
-      const lastGeneratedAt = stored && isDailyBriefModel(stored.model) ? stored.generatedAt : null;
-      if (!dailyBriefDue({ now, timezone: tenant.timezone, lastGeneratedAt, fromHour: this.deps.fromHour })) return;
+      const lastGeneratedAt = stored?.model.startsWith(DAILY_BRIEF_VERSION_PREFIX) ? stored.windowEnd ?? null : null;
+      if (!dailyBriefDue({ now, lastGeneratedAt, refreshMs: this.deps.refreshMs })) return;
       await this.run(tenant, now);
       this.lastError = null;
     } catch (error) {
@@ -185,6 +183,7 @@ export class DailyBriefLoop {
         model: this.deps.model,
         effort: this.deps.effort,
         kind: "daily_brief",
+        freshContext: true,
         // The answer is read by this loop and, if opened, rendered in the app: no bubble contract.
         channel: null,
       });
@@ -194,10 +193,10 @@ export class DailyBriefLoop {
         connectorKeys: routing.activeConnectors,
         source: { conversationId: analysis.conversationId, title: dailyBriefTitle(now, tenant.timezone) },
       });
-      if (parsed.items.length === 0 && !parsed.verdict) {
+      if (analysis.clarification || !["Verified", "Qualified", "Exploratory"].includes(analysis.answerState) || !parsed.valid) {
         throw new Error(analysis.clarification
           ? "The daily look asked a clarifying question instead of answering."
-          : "The daily look finished without an answer.");
+          : "The daily look did not return a valid, evidence-backed brief.");
       }
       await store.saveRecommendedAnalysis({
         sourceFingerprint: dailyBriefFingerprint({
@@ -209,6 +208,7 @@ export class DailyBriefLoop {
         verdict: parsed.verdict.slice(0, 400),
         recommendations: parsed.items,
         model: dailyBriefModelLabel(this.deps.model),
+        ...dailyBriefWindow(now),
       });
       this.lastRunAt = this.now().toISOString();
       this.deps.log("daily_brief_generated", {

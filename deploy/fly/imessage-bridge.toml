@@ -22,10 +22,9 @@ kill_timeout = 30
   CUBE_API_URL = "https://albert-cube.fly.dev"
   ALBERT_ALERTS_POLL_SECONDS = "60"
   ALBERT_ALERTS_QUIET_HOURS = "21-7"
-  # The daily look (ADR 0133): Luna at max effort on the Omni harness, once a
-  # day from 6am local, polled every five minutes.
+  # The rolling daily look (ADR 0137): refreshed hourly, polled every five minutes.
   ALBERT_DAILY_BRIEF_MODEL = "gpt-5.6-luna"
-  ALBERT_DAILY_BRIEF_HOUR = "6"
+  ALBERT_DAILY_BRIEF_REFRESH_SECONDS = "3600"
   ALBERT_DAILY_BRIEF_POLL_SECONDS = "300"
   NODE_ENV = "production"
   PORT = "8797"

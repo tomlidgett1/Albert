@@ -44,6 +44,8 @@ export type OwnerAnalysisRequest = Readonly<{
   effort?: ImessageBridgeConfig["effort"];
   /** Stored on the turn's runtime profile so the ledger can tell what kind of turn it was. */
   kind?: string;
+  /** Scheduled looks reuse their audit conversation without importing yesterday's answers. */
+  freshContext?: boolean;
   /** Delivery channel: iMessage bubbles by default; `null` asks for the in-app answer contract. */
   channel?: "imessage" | null;
 }>;
@@ -147,7 +149,7 @@ export async function runOwnerAnalysis(
   }
 
   const [priorConversation, routing, businessContext] = await Promise.all([
-    existingConversationId
+    existingConversationId && !request.freshContext
       ? store.priorConversation(conversationId).catch(() => [] as const)
       : Promise.resolve([] as const),
     store.connectorRouting(),

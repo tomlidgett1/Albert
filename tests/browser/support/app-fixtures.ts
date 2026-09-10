@@ -992,20 +992,23 @@ export async function installAppApiRoutes(
   });
 
   await page.route(/\/api\/recommended-analysis(?:\?.*)?$/u, async (route) => {
+    const briefNow = Date.now();
     const recommendations = options.recentAnalyses
       ? [
           {
             id: "rec-1-wednesday",
-            question: "Which products dragged Wednesday's sales last week?",
-            why: "Last week's review found sales down 11%, with Wednesday the weak day.",
+            title: "Sales slowed despite more customers visiting",
+            question: "Which products explain the lower sales over the last 24 hours?",
+            why: "Sales fell 11% against comparable weekday windows, despite more transactions.",
             move: "diagnose",
             domain: "products",
-            tool: null,
-            fromTitle: "Weekly sales trend",
+            tool: "lightspeed",
+            fromTitle: "Daily look",
             fromConversationId: "01J00000000000000000000021",
           },
           {
             id: "rec-2-parts",
+            title: "Discounts are weighing on parts margin",
             question: "What is dragging parts margin: mix, discounting, or cost?",
             why: "Parts sat at 31% against 44% for workshop in your last category review.",
             move: "diagnose",
@@ -1016,7 +1019,8 @@ export async function installAppApiRoutes(
           },
           {
             id: "rec-3-cash",
-            question: "Did last week's takings reach the bank, and what is still outstanding?",
+            title: "Customer payments need a closer look",
+            question: "Which customer payments changed over the last 24 hours and need following up?",
             why: "You reviewed sales, but not whether that cash actually landed.",
             move: "close_the_loop",
             domain: "cash",
@@ -1034,6 +1038,11 @@ export async function installAppApiRoutes(
         recommendations,
         sourceCount: recommendations.length > 0 ? 12 : 0,
         source: recommendations.length > 0 ? "daily" : "empty",
+        generatedAt: new Date(briefNow).toISOString(),
+        windowStart: new Date(briefNow - 86_400_000).toISOString(),
+        windowEnd: new Date(briefNow).toISOString(),
+        expiresAt: new Date(briefNow + 7_200_000).toISOString(),
+        timezone: "Australia/Melbourne",
         connectors: ["xero", "deputy"],
         fingerprint: recommendations.length > 0 ? "a".repeat(64) : "",
       },
