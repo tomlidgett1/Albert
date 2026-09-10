@@ -341,6 +341,8 @@ test("the display rejects the owner's screenshot and accepts concrete analysis r
   assert.equal(isActionRecommendation("Analyse why [category] sales fell to [amount]", "A supplied template."), false);
   assert.equal(isActionRecommendation("Review the $4,120 AOV", "AOV $4,120."), false);
   assert.equal(isActionRecommendation("Review the $4,120 margin loss", "Margin loss was $4,120."), true);
+  assert.equal(isActionRecommendation("Check Gear Inner Wire at 0 on hand after 57 units sold in the trailing sales window", "0 on hand after 57 units sold."), false);
+  assert.equal(isActionRecommendation("Review Gear Inner Wire with 0 units in stock", "Gear Inner Wire had 0 on hand after 57 units sold."), true);
 });
 
 test("a look is retained across the day and is due only after 24 hours", () => {

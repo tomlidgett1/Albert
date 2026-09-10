@@ -13,7 +13,7 @@ important issues from the last seven days, refreshed every 24 hours.
   display text, detailed question and evidence. The displayed `title` must
   begin with Analyse why, Investigate, Review or Check, name a concrete issue,
   and carry one useful observed figure (at most two). It is limited to 110
-  characters and 18 words. The parser and read/display boundaries reject
+  characters and 14 words. The parser and read/display boundaries reject
   passive headlines, jargon, template echoes and figures absent from the
   evidence. The figure check is a presentation safeguard; the existing
   governed query/answer pipeline remains responsible for factual grounding.

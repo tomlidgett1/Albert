@@ -201,7 +201,7 @@ export function dailyBriefMessage(input: Readonly<{
     "Verdict: one sentence, at most 28 words, on the week's most important issues.",
     "- [Tool] Action to investigate with a key figure | Detailed investigation question? | Evidence, comparison and why it matters.",
     "",
-    "The first field is a tap-to-analyse request, not a news headline. Start with 'Analyse why', 'Investigate', 'Review' or 'Check'. Name the specific business issue and include one useful observed amount, percentage or count (at most two). Use plain language, at most 110 characters and 18 words; avoid AOV, KPI, transaction volume, superlatives and 'should we'. Wording patterns: 'Analyse why [category] sales fell to [amount]', 'Investigate the [percentage] rise in [cost]', 'Review [amount] in overdue invoices'. Replace every bracket with evidence from this run; never copy a pattern as an actual finding. Copy the displayed figures exactly from the evidence field, without extra rounding or abbreviations. Keep the detailed question and evidence under 200 characters each. Separate the three fields with ' | '. Do not split one issue into several rows.",
+    "The first field is a tap-to-analyse request, not a news headline. Start with 'Analyse why', 'Investigate', 'Review' or 'Check'. Name the specific business issue and include one useful observed amount, percentage or count (at most two). Aim for 6–10 words, with at most 110 characters and 14 words. Avoid AOV, KPI, transaction volume, trailing sales window, event-time window, superlatives and 'should we'. Wording patterns: 'Analyse why [category] sales fell to [amount]', 'Investigate the [percentage] rise in [cost]', 'Review [amount] in overdue invoices'. Replace every bracket with evidence from this run; never copy a pattern as an actual finding. Copy the displayed figures exactly from the evidence field, without extra rounding or abbreviations. Keep the detailed question and evidence under 200 characters each. Separate the three fields with ' | '. Do not split one issue into several rows.",
     "",
     `Up to three lines starting with "- [", fewer if fewer things are interesting; Tool is the tool the evidence came from${toolRule}; every figure must come from a query you ran in this turn; no headings, tables, charts, links or extra follow-up questions.`,
   ].join("\n");
@@ -228,8 +228,8 @@ export function isActionRecommendation(title: unknown, evidence: unknown): title
   const figures = displayFigures(title);
   const evidenceFigures = new Set(displayFigures(evidence));
   return /^(?:Analyse why|Investigate|Review|Check)\s+\S/iu.test(title)
-    && title.length >= 12 && title.length <= 110 && title.split(/\s+/u).length <= 18
-    && !/[;]|\b(?:AOV|KPI|GMROI|SKU|should we|transaction volume)\b/iu.test(title)
+    && title.length >= 12 && title.length <= 110 && title.split(/\s+/u).length <= 14
+    && !/[;]|\b(?:AOV|KPI|GMROI|SKU|should we|transaction volume|trailing sales window|event-time window)\b/iu.test(title)
     && !PLACEHOLDER.test(title) && figures.length >= 1 && figures.length <= 2
     && figures.every((figure) => evidenceFigures.has(figure));
 }
