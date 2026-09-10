@@ -1,4 +1,4 @@
-import { DAILY_BRIEF_MAX_AGE_MS, isFreshDailyBrief } from "./daily-brief.js";
+import { DAILY_BRIEF_MAX_AGE_MS, isActionRecommendation, isFreshDailyBrief } from "./daily-brief.js";
 import type { RecommendedQuestion } from "./playbook.js";
 import { normaliseRecommendedTools } from "./tools.js";
 
@@ -13,13 +13,13 @@ type StoredBrief = Readonly<{
   recommendations: readonly RecommendedQuestion[];
 }>;
 
-/** Past chats never substitute for observations in the rolling 24-hour window. */
+/** The daily selection of material investigations from the last seven days. */
 export function homepageDailyBrief(cache: StoredBrief | null, connectorKeys: readonly string[], timezone: string, now = new Date()) {
   const connectors = normaliseRecommendedTools(connectorKeys);
   const fresh = cache !== null && isFreshDailyBrief(cache, now);
   return {
     source: fresh ? "daily" as const : cache ? "stale" as const : "empty" as const,
-    recommendations: fresh ? cache.recommendations.filter((item) => item.title && item.tool && connectors.includes(item.tool)).slice(0, 3) : [],
+    recommendations: fresh ? cache.recommendations.filter((item) => isActionRecommendation(item.title, item.why) && item.tool && connectors.includes(item.tool)).slice(0, 3) : [],
     verdict: fresh ? cache.verdict : "",
     sourceCount: fresh ? cache.sourceCount : 0,
     fingerprint: fresh ? cache.sourceFingerprint : "",

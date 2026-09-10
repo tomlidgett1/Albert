@@ -1,4 +1,4 @@
-/** Rolling 24-hour recommendations (ADR 0137); generation belongs to the worker. */
+/** Seven-day investigations refreshed every 24 hours (ADR 0138); generation belongs to the worker. */
 import { correlationIdFromHeader, createServiceLogger, safeErrorEvidence } from "@/packages/observability/src";
 import { ControlPlaneError, currentTenantContext, loadConnectorRouting, requireUser } from "@/services/control-plane/src/web-repository";
 import { loadRecommendedAnalysisCache } from "@/services/control-plane/src/recommended-analysis-repository";

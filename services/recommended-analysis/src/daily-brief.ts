@@ -1,6 +1,6 @@
 /**
- * The daily look (ADRs 0133/0137). Every hour the imessage-bridge runs one Luna
- * Max turn on the Omni harness that reads the last 24 hours across the
+ * The daily look (ADR 0138). Every 24 hours the imessage-bridge runs one Luna
+ * Max turn on the Omni harness that reads the last seven days across the
  * connected tools and names up to three things worth looking at next; the
  * homepage's "What to look at next" panel shows them. This module is the
  * pure, shared half: cadence and freshness, the message the turn receives, the
@@ -22,18 +22,18 @@ import {
 } from "./tools.js";
 
 /** The standing conversation the daily turns run in; hidden from history like `Alerts ·`. */
-export const DAILY_BRIEF_CONVERSATION_TITLE = "Daily look · last 24 hours" as const;
+export const DAILY_BRIEF_CONVERSATION_TITLE = "Daily look · last 7 days" as const;
 export const DAILY_BRIEF_CONVERSATION_TITLE_PREFIX = "Daily look ·" as const;
 
 /** Luna at max effort on the Omni harness, per the owner. */
 export const DAILY_BRIEF_MODEL = "gpt-5.6-luna" as const;
 export const DAILY_BRIEF_EFFORT = "max" as const;
 
-export const DAILY_BRIEF_WINDOW_MS = 24 * 60 * 60_000;
-export const DAILY_BRIEF_REFRESH_MS = 60 * 60_000;
+export const DAILY_BRIEF_WINDOW_MS = 7 * 24 * 60 * 60_000;
+export const DAILY_BRIEF_REFRESH_MS = 24 * 60 * 60_000;
 /** Bound stale observations even when generation or the network fails. */
-export const DAILY_BRIEF_MAX_AGE_MS = 2 * DAILY_BRIEF_REFRESH_MS;
-export const DAILY_BRIEF_VERSION_PREFIX = "omni:daily-v2:";
+export const DAILY_BRIEF_MAX_AGE_MS = DAILY_BRIEF_REFRESH_MS + 2 * 60 * 60_000;
+export const DAILY_BRIEF_VERSION_PREFIX = "omni:weekly-v1:";
 
 export const DAILY_BRIEF_MAX_ITEMS = MAX_RECOMMENDATIONS;
 
@@ -41,7 +41,7 @@ export const DAILY_BRIEF_MAX_ITEMS = MAX_RECOMMENDATIONS;
 export const DAILY_BRIEF_MODEL_PREFIX = "omni:" as const;
 
 /** The why a row falls back to when the model gave the sentence and nothing more. */
-export const DAILY_BRIEF_DEFAULT_WHY = "From the latest look at the last 24 hours.";
+export const DAILY_BRIEF_DEFAULT_WHY = "From the latest review of the last seven days.";
 
 export function dailyBriefModelLabel(model: string): string {
   return `${DAILY_BRIEF_VERSION_PREFIX}${model.trim()}`;
@@ -96,7 +96,7 @@ export function formatLocalDay(date: Date, timezone: string): string {
   return `${found.get("weekday")} ${found.get("day")} ${found.get("month")}`;
 }
 
-/** Refresh the rolling window hourly; a missing/invalid look recovers at any hour. */
+/** Refresh every 24 hours; a missing/invalid look recovers at any hour. */
 export function dailyBriefDue(input: Readonly<{
   now: Date;
   lastGeneratedAt: string | null;
@@ -127,7 +127,7 @@ export function isFreshDailyBrief(input: Readonly<{
 }
 
 export function dailyBriefAsk(item: RecommendedQuestion, window: Readonly<{ windowStart: string; windowEnd: string; timezone: string }>): string {
-  return `${item.question}\n\nInvestigate the 24-hour period from ${window.windowStart} to ${window.windowEnd} (${window.timezone}). The daily look found: ${item.why} Verify this against the source data and explain what needs attention in plain language.`;
+  return `${item.title}\n\n${item.question}\n\nInvestigate the seven-day period from ${window.windowStart} to ${window.windowEnd} (${window.timezone}). The daily look found: ${item.why} Verify the change against a comparable period, investigate the drivers, and explain the most useful next action in plain language.`;
 }
 
 /** The title a stored row points back to: "Daily look · Wed 2 Sep". */
@@ -186,22 +186,22 @@ export function dailyBriefMessage(input: Readonly<{
   const toolRule = names.length > 0 ? ` (${listInEnglish(names, "or")})` : "";
   const reaches = freshnessLine(input.freshness ?? [], input.timezone);
   return [
-    `Look at the last 24 hours (${window})${toolList} and tell me whether anything interesting happened.`,
+    `Review the last seven days (${window})${toolList} and identify the most important things the owner should analyse next. These recommendations refresh once every 24 hours.`,
     `Use this exact event-time window: [${from.toISOString()}, ${input.now.toISOString()}). Do not move it backwards to the latest available data. Previous conversations are not evidence for this run.`,
     "",
-    "Prioritise what could change the owner's next decision: a material sales change, overdue money that changed in this window, unusual refunds or discounts, labour out of line with trading, or evidenced stock shortages. Compare like-for-like 24-hour windows at the same local times and weekdays over the previous four weeks. Never compare a partial day with whole days. A category being the largest, or stock moving out during normal sales, is not by itself unusual or a shortage. Stock risk requires current stock or cover evidence.",
+    "Rank by money at stake, urgency and the usefulness of an investigation: lost sales or margin, growing costs, overdue money to recover, discount/refund leakage, labour out of line with demand, or evidenced stock shortages. Compare the seven-day window with the preceding comparable seven days; use earlier comparable weeks to test whether a change is unusual. Never compare a partial day with whole days. Small percentage changes on tiny bases and standalone transaction-count records rank below material financial issues. A category being largest, or normal stock outflow, is not an investigation. Stock risk requires current stock or cover evidence.",
     "",
-    "Interesting means a clear move against the usual pattern, a first, a record, an outlier, or something that stopped. An ordinary day is not interesting: if nothing stands out, say so and list nothing.",
+    "Choose up to three distinct investigations across the connected business, with the most important first. A record or a high is not enough: identify an unresolved driver, risk, opportunity or decision worth investigating. Do not label four comparable weekdays as an all-time or four-week record. Do not claim an explanation or causal link before investigating it. If nothing material warrants investigation, say so and list nothing.",
     "",
     ...(reaches ? [reaches] : []),
-    "Before judging a tool, verify coverage of the requested window. Older data may supply a comparable baseline but never the current finding. Missing data, empty results and sync state are never a finding. Empty results alone cannot distinguish no activity from an incomplete sync; omit unsupported comparisons. Never turn a source freshness gap into falling sales, a stockout or stopped activity.",
+    "Check coverage before comparing. A material finding on completed days within the last seven days is eligible if you name its period and compare matching completed days. Current receivables or stock balances observed within the window may warrant action even when their original invoices or purchases are older. Older data may supply a baseline but never masquerade as this week's activity. Missing data, empty results and sync state are never a finding; unsynced days are not zero activity. Do not pad the list with sources that lack supporting evidence.",
     "",
     "Answer in exactly this shape and nothing else:",
     "",
-    "Verdict: one sentence, at most 28 words, on the last 24 hours as a whole.",
-    "- [Tool] Short headline | Self-contained question? | Evidence and why it matters.",
+    "Verdict: one sentence, at most 28 words, on the week's most important issues.",
+    "- [Tool] Action to investigate with a key figure | Detailed investigation question? | Evidence, comparison and why it matters.",
     "",
-    "The headline is the homepage display: 4–10 plain-language words, at most 90 characters, with no figures, acronyms, semicolons or 'should we'. State the main issue at a business level. Keep the detailed question under 200 characters and the evidence under 200 characters. Put the measured current value and comparable baseline in the evidence only. Separate the three fields with ' | '. Use one row per distinct issue; do not split one sales change into three rows. Rank by material impact, fewer than three when appropriate.",
+    "The first field is a tap-to-analyse request, not a news headline. Start with 'Analyse why', 'Investigate', 'Review' or 'Check'. Name the specific business issue and include one useful observed amount, percentage or count (at most two). Use plain language, at most 110 characters and 18 words; avoid AOV, KPI, transaction volume, superlatives and 'should we'. Wording patterns: 'Analyse why [category] sales fell to [amount]', 'Investigate the [percentage] rise in [cost]', 'Review [amount] in overdue invoices'. Replace every bracket with evidence from this run; never copy a pattern as an actual finding. Copy the displayed figures exactly from the evidence field, without extra rounding or abbreviations. Keep the detailed question and evidence under 200 characters each. Separate the three fields with ' | '. Do not split one issue into several rows.",
     "",
     `Up to three lines starting with "- [", fewer if fewer things are interesting; Tool is the tool the evidence came from${toolRule}; every figure must come from a query you ran in this turn; no headings, tables, charts, links or extra follow-up questions.`,
   ].join("\n");
@@ -215,7 +215,24 @@ export type ParsedDailyBrief = Readonly<{
 
 const ITEM_LINE = /^\s*(?:[-*•]|\d{1,2}[.)])\s*(?:\*\*)?\s*\[\s*([^\]\n]{2,40}?)\s*\]\s*(?:\*\*)?\s*[:–—-]?\s*(.+?)\s*$/u;
 const VERDICT_LINE = /^\s*(?:\*\*)?\s*verdict\s*(?:\*\*)?\s*[:：]\s*(?:\*\*)?\s*(.+?)\s*$/iu;
-const PLACEHOLDER = /one sentence, at most|a few words on why|<\s*tool\s*>|\bwhat happened with its figure\b/iu;
+const PLACEHOLDER = /one sentence, at most|a few words on why|<\s*tool\s*>|\bwhat happened with its figure\b|short headline|self-contained question|action to investigate with a key figure|\[(?:category|amount|percentage|cost)\]/iu;
+
+function displayFigures(text: string): readonly string[] {
+  return [...text.matchAll(/\d[\d,]*(?:\.\d+)?(?:\s?%|\s?[kKmM]\b)?/gu)]
+    .map(([value]) => value.replace(/[,\s]/gu, "").toLowerCase());
+}
+
+/** Enforce the owner's action-first display contract, including its evidence anchor. */
+export function isActionRecommendation(title: unknown, evidence: unknown): title is string {
+  if (typeof title !== "string" || typeof evidence !== "string") return false;
+  const figures = displayFigures(title);
+  const evidenceFigures = new Set(displayFigures(evidence));
+  return /^(?:Analyse why|Investigate|Review|Check)\s+\S/iu.test(title)
+    && title.length >= 12 && title.length <= 110 && title.split(/\s+/u).length <= 18
+    && !/[;]|\b(?:AOV|KPI|GMROI|SKU|should we|transaction volume)\b/iu.test(title)
+    && !PLACEHOLDER.test(title) && figures.length >= 1 && figures.length <= 2
+    && figures.every((figure) => evidenceFigures.has(figure));
+}
 
 function stripInlineMarkdown(value: string): string {
   return value
@@ -231,7 +248,7 @@ function dailyBriefId(question: string, index: number): string {
   return `daily-${index + 1}-${hash.toString(16).padStart(5, "0")}`;
 }
 
-/** Only the explicit headline/question/evidence shape can publish a current look. */
+/** Only a concrete analysis request backed by the supplied evidence can publish. */
 export function parseDailyBriefAnswer(input: Readonly<{
   text: string;
   followUps?: readonly string[];
@@ -257,8 +274,7 @@ export function parseDailyBriefAnswer(input: Readonly<{
     const fields = (asItem[2] ?? "").split(/\s+\|\s+/u).map(stripInlineMarkdown);
     if (!tool || fields.length !== 3) continue;
     const [title, question, why] = fields as [string, string, string];
-    if (title.length < 8 || title.length > 90 || title.split(/\s+/u).length > 12
-      || /[\d$%€£;]|\b(?:AOV|KPI|GMROI|SKU|should we)\b/iu.test(title)
+    if (!isActionRecommendation(title, why)
       || question.length < 12 || question.length > 200 || !question.endsWith("?")
       || why.length < 8 || why.length > 200
       || fields.some((field) => PLACEHOLDER.test(field))) continue;

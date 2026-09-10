@@ -195,7 +195,7 @@ test("bridge config locks haiku at max effort and validates its boundary", () =>
   assert.equal(config.effort, "max");
   assert.equal(config.dailyBriefEnabled, true);
   assert.equal(config.dailyBriefModel, "gpt-5.6-luna");
-  assert.equal(config.dailyBriefRefreshMs, 3_600_000);
+  assert.equal(config.dailyBriefRefreshMs, 86_400_000);
   assert.equal(config.dailyBriefPollMs, 300_000);
   assert.throws(() => loadImessageBridgeConfig({ ...bridgeEnv(), ALBERT_DAILY_BRIEF_REFRESH_SECONDS: "7200" }));
   assert.equal(loadImessageBridgeConfig({ ...bridgeEnv(), ALBERT_DAILY_BRIEF_ENABLED: "off" }).dailyBriefEnabled, false);

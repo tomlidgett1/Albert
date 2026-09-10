@@ -2,6 +2,8 @@
 
 Date: 2026-09-10. Status: accepted. Amends ADRs 0117 and 0133.
 
+Display and cadence superseded by ADR 0138 following owner feedback.
+
 ## Problem
 
 The owner found the homepage rows dense, irrelevant and apparently frozen.

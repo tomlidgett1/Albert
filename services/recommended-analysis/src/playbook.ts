@@ -60,7 +60,7 @@ export type AnalysisBrief = Readonly<{
 
 export type RecommendedQuestion = Readonly<{
   id: string;
-  /** Short owner-facing headline; the full analytical question is opened on click. */
+  /** Concise investigation request; the full analytical question is opened on click. */
   title?: string;
   question: string;
   why: string;

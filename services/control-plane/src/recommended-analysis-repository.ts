@@ -53,7 +53,7 @@ const coverageSchema = z.object({
 
 const recommendationSchema = z.object({
   id: z.string().min(4).max(80),
-  title: z.string().min(8).max(90).optional(),
+  title: z.string().min(8).max(110).optional(),
   question: z.string().min(8).max(200),
   why: z.string().min(8).max(200),
   move: z.enum(ANALYTICAL_MOVES),

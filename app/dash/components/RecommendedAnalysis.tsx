@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { dailyBriefAsk, DAILY_BRIEF_MAX_AGE_MS, DAILY_BRIEF_WINDOW_MS } from "@/services/recommended-analysis/src/daily-brief";
+import { dailyBriefAsk, isActionRecommendation, DAILY_BRIEF_MAX_AGE_MS, DAILY_BRIEF_WINDOW_MS } from "@/services/recommended-analysis/src/daily-brief";
 import type { RecommendedQuestion } from "@/services/recommended-analysis/src/playbook";
 import { CONNECTOR_LOGOS, type TraceConnectorId } from "./connectors";
 import styles from "../dash.module.css";
@@ -25,7 +25,7 @@ function isRecommendedQuestion(value: unknown): value is RecommendedQuestion {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const item = value as Record<string, unknown>;
   return typeof item.id === "string"
-    && typeof item.title === "string" && item.title.length >= 8 && item.title.length <= 90
+    && isActionRecommendation(item.title, item.why)
     && typeof item.question === "string" && item.question.length >= 12
     && typeof item.why === "string"
     && isTool(item.tool);
@@ -45,7 +45,7 @@ function parsePayload(value: unknown): RecommendedPayload | null {
   return { ...payload, recommendations: payload.recommendations.filter(isRecommendedQuestion).slice(0, 3) } as RecommendedPayload;
 }
 
-/** Short headlines stay below the centred composer; the click carries the exact evidence window. */
+/** Concrete investigation prompts stay below the centred composer and carry their evidence window. */
 export default function RecommendedAnalysis({ onAsk, reduceMotion }: Readonly<{
   onAsk: (question: string) => void;
   reduceMotion: boolean;
@@ -100,7 +100,7 @@ export default function RecommendedAnalysis({ onAsk, reduceMotion }: Readonly<{
   const recommendations = brief?.recommendations ?? [];
   if (recommendations.length === 0 || !brief) return null;
   const minutes = Math.max(0, Math.floor((checkedAt - Date.parse(brief.generatedAt)) / 60_000));
-  const updated = minutes < 1 ? "just now" : `${minutes} min ago`;
+  const updated = minutes < 1 ? "just now" : minutes < 60 ? `${minutes} min ago` : minutes < 1440 ? `${Math.floor(minutes / 60)}h ago` : "1 day ago";
 
   return (
     <motion.section
@@ -111,7 +111,7 @@ export default function RecommendedAnalysis({ onAsk, reduceMotion }: Readonly<{
       transition={{ duration: reduceMotion ? 0 : 0.32, ease: [0.22, 1, 0.36, 1] }}
     >
       <p className={styles.recommendedAnalysisFreshness}>
-        Last 24 hours <span aria-hidden="true">·</span> <time dateTime={brief.generatedAt}>Updated {updated}</time>
+        Last 7 days <span aria-hidden="true">·</span> <time dateTime={brief.generatedAt}>Updated {updated}</time>
       </p>
       {recommendations.map((item) => (
         <button

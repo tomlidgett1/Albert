@@ -246,19 +246,19 @@ test("homepage recommends current issues and opens the exact evidence window", a
   await expect(recommended.getByText("You've looked at sales and customers recently.")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Recent analysis" })).toHaveCount(0);
   await expect(recommended.getByRole("button", {
-    name: "Ask: Sales slowed despite more customers visiting",
+    name: "Ask: Analyse why bike sales fell 11% this week",
   })).toBeVisible();
   await expect(recommended.getByRole("button", {
-    name: "Ask: Discounts are weighing on parts margin",
+    name: "Ask: Analyse why parts margin fell to 31%",
   })).toBeVisible();
-  await expect(recommended.getByText("Customer payments need a closer look", { exact: false })).toBeVisible();
+  await expect(recommended.getByText("Review $6,400 in overdue customer payments", { exact: false })).toBeVisible();
   // One sentence per row, with the logo of the tool it reads at the left.
-  const cashRow = recommended.getByRole("button", { name: "Ask: Customer payments need a closer look" });
+  const cashRow = recommended.getByRole("button", { name: "Ask: Review $6,400 in overdue customer payments" });
   await expect(cashRow.locator("img")).toHaveAttribute("src", /logos\/xero\.svg/u);
   await expect(recommended.getByText("You reviewed sales, but not whether that cash actually landed.")).toHaveCount(0);
 
   await recommended.getByRole("button", {
-    name: "Ask: Sales slowed despite more customers visiting",
+    name: "Ask: Analyse why bike sales fell 11% this week",
   }).click();
   await expect(page.getByRole("region", { name: "What to look at next" })).toHaveCount(0);
   // The recommendation is asked on whichever harness the chat runs (Omni by default).
@@ -271,8 +271,8 @@ test("homepage recommends current issues and opens the exact evidence window", a
   const sent = sentPayloads()[0] as {
     message?: string;
   };
-  expect(sent.message).toContain("Which products explain the lower sales over the last 24 hours?");
-  expect(sent.message).toContain("Investigate the 24-hour period from");
+  expect(sent.message).toContain("Which products explain the lower sales over the last seven days?");
+  expect(sent.message).toContain("Investigate the seven-day period from");
 });
 
 test("homepage keeps history in the sidebar instead of a second card grid", async ({

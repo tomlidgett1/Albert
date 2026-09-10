@@ -42,7 +42,7 @@ export type ImessageBridgeConfig = Readonly<{
   alertsPollMs: number;
   alertsQuietHours: Readonly<{ from: number; to: number }>;
   cubeApiUrl: string;
-  /** The rolling daily look (ADR 0137): switch, polling and refresh cadence. */
+  /** The daily look (ADR 0138): switch, polling and 24-hour refresh cadence. */
   dailyBriefEnabled: boolean;
   dailyBriefPollMs: number;
   dailyBriefModel: string;
@@ -114,8 +114,8 @@ export function loadImessageBridgeConfig(source: NodeJS.ProcessEnv = process.env
     throw new Error("ALBERT_DAILY_BRIEF_POLL_SECONDS must be a whole number of seconds between 30 and 3600.");
   }
   const dailyBriefRefreshSeconds = Number(source.ALBERT_DAILY_BRIEF_REFRESH_SECONDS?.trim() || String(DAILY_BRIEF_REFRESH_MS / 1000));
-  if (!Number.isInteger(dailyBriefRefreshSeconds) || dailyBriefRefreshSeconds < 1800 || dailyBriefRefreshSeconds > 3600) {
-    throw new Error("ALBERT_DAILY_BRIEF_REFRESH_SECONDS must be between 1800 and 3600 seconds.");
+  if (dailyBriefRefreshSeconds !== DAILY_BRIEF_REFRESH_MS / 1000) {
+    throw new Error("ALBERT_DAILY_BRIEF_REFRESH_SECONDS must be 86400 seconds (every 24 hours).");
   }
   const dailyBriefModel = source.ALBERT_DAILY_BRIEF_MODEL?.trim() || DAILY_BRIEF_MODEL;
   if (!/^[a-zA-Z0-9._-]{1,120}$/u.test(dailyBriefModel)) {

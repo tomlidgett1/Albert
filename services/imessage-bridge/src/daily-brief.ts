@@ -17,8 +17,8 @@ import type { OwnerAnalysisRequest, OwnerAnalysisResult } from "./analysis.js";
 import type { OwnerTenantContext } from "./owner-session.js";
 
 /**
- * The rolling daily look (ADR 0137). An hourly governed Luna Max turn
- * checks the current 24-hour window and stores up to three short headlines
+ * The daily look (ADR 0138). Every 24 hours a governed Luna Max turn
+ * reviews the last seven days and stores up to three material investigations
  * with separate follow-up questions and evidence. Reuses a standing audit
  * conversation without old answers; failed attempts back off for retryMs.
  * The bridge holds the owner session and Cube signing capability.
@@ -146,7 +146,7 @@ export class DailyBriefLoop {
         this.deps.store.recommendedAnalysis(),
       ]);
       // A chat-history brief (the playbook's row) does not count as today's look.
-      const lastGeneratedAt = stored?.model.startsWith(DAILY_BRIEF_VERSION_PREFIX) ? stored.windowEnd ?? null : null;
+      const lastGeneratedAt = stored?.model.startsWith(DAILY_BRIEF_VERSION_PREFIX) ? stored.generatedAt : null;
       if (!dailyBriefDue({ now, lastGeneratedAt, refreshMs: this.deps.refreshMs })) return;
       await this.run(tenant, now);
       this.lastError = null;

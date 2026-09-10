@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   DAILY_BRIEF_CONVERSATION_TITLE,
   DAILY_BRIEF_REFRESH_MS,
+  DAILY_BRIEF_MAX_AGE_MS,
+  isActionRecommendation,
   dailyBriefWindow,
   dailyBriefAsk,
   isFreshDailyBrief,
@@ -31,14 +33,14 @@ const SOURCE = { conversationId: CONVERSATION, title: "Daily look · Wed 2 Sep" 
 
 const ANSWER = [
   "**Verdict:** Takings held up yesterday but labour ran heavy and one big bill landed.",
-  "- [Lightspeed] Sales slowed despite more customers visiting | Which categories explain the lower sales in the last 24 hours? | Takings were $4,120, 31% below comparable weekday windows.",
-  "- **[Deputy]** Staffing costs outpaced a quieter trading day | How did worked hours compare with demand in the last 24 hours? | Labour was 38% of takings against a usual 27% in comparable windows.",
-  "- [Xero] A large supplier bill needs reviewing | What explains the unusual supplier bill raised in the last 24 hours? | A $6,400 bill was the largest supplier bill this quarter.",
+  "- [Lightspeed] Analyse why bike sales fell to $4,120 | Which categories explain the lower sales in the last seven days? | Takings were $4,120, 31% below comparable weekday windows.",
+  "- **[Deputy]** Investigate labour costs reaching 38% of sales | How did worked hours compare with demand in the last seven days? | Labour was 38% of takings against a usual 27% in comparable windows.",
+  "- [Xero] Review the $6,400 supplier bill | What explains the unusual supplier bill raised in the last seven days? | A $6,400 bill was the largest supplier bill this quarter.",
   "",
   "[Which categories fell?](?ai-query=Which%20categories%20fell)",
 ].join("\n");
 
-test("rolling looks refresh hourly, including overnight and after downtime", () => {
+test("weekly investigations refresh every 24 hours, including after downtime", () => {
   assert.equal(dailyBriefDue({ now: MORNING, lastGeneratedAt: null }), true);
   for (const age of [0, DAILY_BRIEF_REFRESH_MS - 1]) {
     assert.equal(dailyBriefDue({ now: MORNING, lastGeneratedAt: new Date(+MORNING - age).toISOString() }), false);
@@ -55,25 +57,27 @@ test("rolling looks refresh hourly, including overnight and after downtime", () 
 test("freshness binds the observation window, not just when an old brief was saved", () => {
   const base = { model: dailyBriefModelLabel("gpt-5.6-luna"), generatedAt: MORNING.toISOString(), ...dailyBriefWindow(MORNING) };
   assert.equal(isFreshDailyBrief(base, MORNING), true);
-  assert.equal(isFreshDailyBrief(base, new Date(+MORNING + 7_200_000 - 1)), true);
-  assert.equal(isFreshDailyBrief(base, new Date(+MORNING + 7_200_000)), false);
+  assert.equal(isFreshDailyBrief(base, new Date(+MORNING + DAILY_BRIEF_MAX_AGE_MS - 1)), true);
+  assert.equal(isFreshDailyBrief(base, new Date(+MORNING + DAILY_BRIEF_MAX_AGE_MS)), false);
   assert.equal(isFreshDailyBrief({ ...base, model: "omni:gpt-5.6-luna" }, MORNING), false);
   assert.equal(isFreshDailyBrief({ ...base, windowStart: null }, MORNING), false);
   assert.equal(isFreshDailyBrief({ ...base, windowEnd: "invalid" }, MORNING), false);
-  assert.equal(isFreshDailyBrief({ ...base, ...dailyBriefWindow(new Date(+MORNING - 86_400_000)) }, MORNING), false);
+  assert.equal(isFreshDailyBrief({ ...base, ...dailyBriefWindow(new Date(+MORNING - DAILY_BRIEF_MAX_AGE_MS)) }, MORNING), false);
   assert.equal(isFreshDailyBrief({ ...base, ...dailyBriefWindow(new Date(+MORNING + 1)) }, MORNING), false);
 });
 
 test("the prompt fixes the current window and requires comparable, material evidence", () => {
   const message = dailyBriefMessage({ now: MORNING, timezone: MELBOURNE, connectorKeys: CONNECTORS });
-  assert.match(message, /last 24 hours/u);
-  assert.match(message, /2026-08-31T20:30:00.000Z, 2026-09-01T20:30:00.000Z/u);
+  assert.match(message, /last seven days/u);
+  assert.match(message, /2026-08-25T20:30:00.000Z, 2026-09-01T20:30:00.000Z/u);
   assert.match(message, /Do not move it backwards/u);
   assert.match(message, /Never compare a partial day with whole days/u);
   assert.match(message, /Stock risk requires current stock or cover evidence/u);
   assert.match(message, /Missing data, empty results and sync state are never a finding/u);
-  assert.match(message, /no figures, acronyms/u);
-  assert.match(message, /if nothing stands out, say so and list nothing/u);
+  assert.match(message, /tap-to-analyse request/u);
+  assert.match(message, /Rank by money at stake, urgency/u);
+  assert.match(message, /once every 24 hours/u);
+  assert.match(message, /If nothing material warrants investigation, say so and list nothing/u);
 });
 
 test("display headlines are separate from grounded evidence and the complete follow-up", () => {
@@ -81,21 +85,21 @@ test("display headlines are separate from grounded evidence and the complete fol
   assert.equal(parsed.valid, true);
   assert.equal(parsed.items.length, 3);
   assert.deepEqual(parsed.items.map(item => item.tool), ["lightspeed", "deputy", "xero"]);
-  assert.equal(parsed.items[0]!.title, "Sales slowed despite more customers visiting");
+  assert.equal(parsed.items[0]!.title, "Analyse why bike sales fell to $4,120");
   assert.equal(parsed.items[1]!.domain, "staff");
   for (const item of parsed.items) {
-    assert.doesNotMatch(item.title!, /[0-9$%]/u);
+    assert.equal(isActionRecommendation(item.title, item.why), true);
     assert.match(item.question, /\?$/u);
     assert.equal(item.fromConversationId, CONVERSATION);
   }
   const ask = dailyBriefAsk(parsed.items[0]!, { ...dailyBriefWindow(MORNING), timezone: MELBOURNE });
   assert.match(ask, /Which categories explain/u);
-  assert.match(ask, /2026-08-31T20:30:00.000Z to 2026-09-01T20:30:00.000Z/u);
+  assert.match(ask, /2026-08-25T20:30:00.000Z to 2026-09-01T20:30:00.000Z/u);
   assert.match(ask, /\$4,120/u);
 });
 
 test("quiet days never turn generic follow-ups into observations", () => {
-  const parsed = parseDailyBriefAnswer({ text: "Verdict: Nothing unusual stood out in the last 24 hours.", followUps: ["Which bills are due this week?"], connectorKeys: CONNECTORS, source: SOURCE });
+  const parsed = parseDailyBriefAnswer({ text: "Verdict: Nothing unusual stood out in the last seven days.", followUps: ["Which bills are due this week?"], connectorKeys: CONNECTORS, source: SOURCE });
   assert.equal(parsed.valid, true);
   assert.deepEqual(parsed.items, []);
 });
@@ -160,7 +164,7 @@ function fakeStore(stored: StoredDailyBrief | null, clock: Date, connectors: rea
     },
     async saveRecommendedAnalysis(input) {
       store.saves.push(input);
-      store.stored = { model: input.model, generatedAt: clock.toISOString(), itemCount: input.recommendations.length, windowStart: input.windowStart, windowEnd: input.windowEnd };
+      store.stored = { model: input.model, generatedAt: input.windowEnd, itemCount: input.recommendations.length, windowStart: input.windowStart, windowEnd: input.windowEnd };
     },
   };
   return store;
@@ -202,7 +206,7 @@ test("the loop runs today's look once, stores it as omni:<model> with tools, and
   assert.equal(requests[0]!.effort, "max");
   assert.equal(requests[0]!.channel, null);
   assert.equal(requests[0]!.kind, "daily_brief");
-  assert.match(requests[0]!.question, /last 24 hours/u);
+  assert.match(requests[0]!.question, /last seven days/u);
   assert.equal(store.saves.length, 1);
   const save = store.saves[0]!;
   assert.equal(save.model, dailyBriefModelLabel("gpt-5.6-luna"));
@@ -297,7 +301,7 @@ test("a clarification instead of an answer is a failure, not a stored brief", as
   assert.match(loop.status().lastError ?? "", /clarifying question/u);
 });
 
-test("a failed refresh recovers after backoff and a later hour gets new evidence", async () => {
+test("a failed refresh recovers after backoff and the next day gets new evidence", async () => {
   let time = new Date(MORNING);
   const store = fakeStore(null, time);
   let calls = 0;
@@ -325,4 +329,26 @@ test("an unavailable answer cannot replace a previously good look", async () => 
   await loop.tick();
   assert.equal(store.saves.length, 0);
   assert.match(loop.status().lastError ?? "", /valid, evidence-backed/u);
+});
+
+test("the display rejects the owner's screenshot and accepts concrete analysis requests", () => {
+  assert.equal(isActionRecommendation("Transaction volume hit a four-week high", "31 purchases vs 17, 16, 15 and 8."), false);
+  assert.equal(isActionRecommendation("Analyse why bike sales fell to $4,120", "Bike sales fell to $4,120 from $5,970."), true);
+  assert.equal(isActionRecommendation("Investigate the 18% rise in labour costs", "Labour costs rose 18% to $3,200."), true);
+  assert.equal(isActionRecommendation("Review $6,400 in overdue invoices", "Overdue invoices total $6,400."), true);
+  assert.equal(isActionRecommendation("Analyse why sales changed", "Sales fell 11%."), false);
+  assert.equal(isActionRecommendation("Analyse why sales fell to $9,000", "Sales fell to $4,120."), false);
+  assert.equal(isActionRecommendation("Analyse why [category] sales fell to [amount]", "A supplied template."), false);
+  assert.equal(isActionRecommendation("Review the $4,120 AOV", "AOV $4,120."), false);
+  assert.equal(isActionRecommendation("Review the $4,120 margin loss", "Margin loss was $4,120."), true);
+});
+
+test("a look is retained across the day and is due only after 24 hours", () => {
+  const lastGeneratedAt=MORNING.toISOString();
+  assert.equal(dailyBriefDue({ now:new Date(+MORNING + 60 * 60_000),lastGeneratedAt }),false);
+  assert.equal(dailyBriefDue({ now:new Date(+MORNING + 24 * 60 * 60_000 - 1),lastGeneratedAt }),false);
+  assert.equal(dailyBriefDue({ now:new Date(+MORNING + 24 * 60 * 60_000),lastGeneratedAt }),true);
+  const week=dailyBriefWindow(MORNING);
+  assert.equal(Date.parse(week.windowEnd)-Date.parse(week.windowStart),7*24*60*60_000);
+  assert.equal(isFreshDailyBrief({model:dailyBriefModelLabel('gpt-5.6-luna'),generatedAt:lastGeneratedAt,...week},new Date(+MORNING+24*60*60_000)),true);
 });

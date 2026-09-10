@@ -102,8 +102,8 @@ const alerts = config.alertsEnabled
   : null;
 handler.setAlertsStatus(() => alerts?.status() ?? { enabled: false });
 
-// The rolling daily look (ADR 0137): hourly, a
-// Luna Max turn on the Omni harness reads the last 24 hours and writes the
+// The daily look (ADR 0138): every 24 hours, a
+// Luna Max turn on the Omni harness reviews the last seven days and writes the
 // homepage's "What to look at next". It runs here for the same reason the
 // scheduler and alerts do: only this process may run turns as the owner.
 const dailyBrief = config.dailyBriefEnabled
