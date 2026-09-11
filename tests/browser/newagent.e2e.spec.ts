@@ -58,6 +58,7 @@ test("newagent remains usable on a narrow view2 canvas", async ({ page }) => {
   await page.goto("/newagent");
   await expect(page.getByRole("textbox", { name: "Ask the new agent about your business" })).toBeVisible();
   await expect(page.locator('button[aria-keyshortcuts="Alt+N"]')).toBeVisible();
+  expect((await page.locator('button[aria-keyshortcuts="Alt+N"]').boundingBox())?.width).toBeGreaterThanOrEqual(30);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: ".playwright/newagent-mobile-dark.png", fullPage: true });
 });

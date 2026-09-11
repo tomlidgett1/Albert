@@ -3352,7 +3352,7 @@ export default function DashPage() {
           throw new Error(briefPayload?.error || "The dashboard build could not be started.");
         }
         requestMessage = briefPayload.message;
-        if (briefPayload.preferences) requestPreferences = briefPayload.preferences;
+        if (briefPayload.preferences && !isNewAgent) requestPreferences = briefPayload.preferences;
         if (typeof briefPayload.editTopic === "string") dashboardEditTopic = briefPayload.editTopic;
         // An unnamed build lands on the dashboard the server resolved (or
         // created); the mode follows it so the panel shows that document.
@@ -5120,7 +5120,7 @@ export default function DashPage() {
           </div>
 
           <div className={styles.view2NavRight}>
-            {isNewAgent ? <span className={styles.chatRuntimeIndicator}>Agents API</span> : null}
+            {isNewAgent ? <span className={`${styles.chatRuntimeIndicator} ${styles.view2NewAnalysisLabel}`}>Agents API</span> : null}
             <View2ConnectedTools
               providers={connectionsData.providers}
               onOpenConnections={() => selectView2Page("Connections")}
@@ -6049,7 +6049,7 @@ export default function DashPage() {
                     <h2 className={styles.chatHeroTitle}>
                       {activeChatRuntime === "xero_mcp"
                         ? "Ask Xero anything"
-                        : activeChatRuntime === "codex" || activeChatRuntime === "omni"
+                        : activeChatRuntime === "codex" || activeChatRuntime === "omni" || activeChatRuntime === "newagent"
                           ? "Ask about your business"
                         : isCustomerAgent
                           ? activeSpecialistAgent.ui.emptyStateTitle
