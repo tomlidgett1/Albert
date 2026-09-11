@@ -51,6 +51,40 @@ test("native answer validation rejects invented money and unknown result handles
   ]) assert.equal(compose(candidate).ok, false);
 });
 
+test("binding repairs identify the original name, valid columns and the single calculation row", () => {
+  const wrongColumn = compose({ ...answer, values: [{ ...answer.values[0]!, column: "invented" }] });
+  assert.ok(!wrongColumn.ok);
+  assert.match(wrongColumn.issues.join(" "), /august_2026: r1 has no column invented.*store, gross/u);
+  const wrongRow = compose({ ...answer, values: [{ ...answer.values[0]!, row: 5 }] });
+  assert.ok(!wrongRow.ok);
+  assert.match(wrongRow.issues.join(" "), /august_2026: r1 has 1 row.*row index is 0/u);
+  const combined = compose({ ...answer, values: [{ ...answer.values[0]!, column: "invented" }], detail: "The period is 13 weeks." });
+  assert.ok(!combined.ok);
+  assert.match(combined.issues.join(" "), /august_2026: r1 has no column/u);
+  assert.match(combined.issues.join(" "), /Unbound figures: 13/u);
+});
+
+test("unused planning bindings cannot reject the answer or create unsupported public claims", () => {
+  const baseline = compose(answer);
+  const result = compose({ ...answer, values: [...answer.values, { name: "unused", result: "r99", column: "invented", row: 5 }] });
+  assert.ok(result.ok && baseline.ok);
+  assert.deepEqual(result.answer, baseline.answer);
+  assert.equal(compose({ ...answer, summary: "Gross takings were $999.00.", values: [{ name: "unused", result: "r1", column: "gross", row: 0 }] }).ok, false);
+});
+
+test("comparison date ranges and week counts are grounded without authorizing unrelated figures", () => {
+  const compared = { ...evidence, provenance: { ...evidence.provenance, timeRange: { ...evidence.provenance.timeRange, start: "unknown", end: "unknown" } }, semantics: { ...evidence.semantics!, window: JSON.stringify({ ranges: [{ compareDateRange: [["2026-06-15", "2026-09-06"], ["2026-03-23", "2026-06-14"]] }] }) } };
+  const render = (detail: string, limitations: string[] = []) => composeManagedAnswer({ ...answer, detail, limitations }, new Map([[id, compared]]), () => id, { ...options, question: "whats been driving the business lately" });
+  const detail = "The last 12 complete weeks cover 15 June–6 September 2026, compared with 23 March–14 June 2026. This is a twelve-week comparison.";
+  const limitation = "The preceding 12-week window is 23 March 2026 to 14 June 2026.";
+  const result = render(detail, [limitation]);
+  assert.ok(result.ok, result.ok ? "" : result.issues.join("; "));
+  assert.ok(result.answer.text.includes(detail));
+  assert.ok(result.answer.text.includes(limitation), "separate prose sections must restore their own dates");
+  assert.equal(render(`${detail} Labour cost was 12 dollars.`).ok, false);
+  assert.equal(render("The last 13 weeks explain the change.").ok, false);
+});
+
 test("negative changes cannot be described as a decrease by a negative amount", () => {
   const negative = new Map([[id, { ...evidence, rows: [{ store: "North", gross: -600 }] }]]);
   const render = (summary: string) => composeManagedAnswer({ ...answer, summary }, negative, () => id, options);

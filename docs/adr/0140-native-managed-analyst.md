@@ -75,6 +75,31 @@ with the deployer environment for the database checks. Neither writes credential
 to artifacts. Provider token usage remains explicitly unavailable when the API
 does not return it; it is never presented as a measured zero.
 
+## Broad investigation completion
+
+The production question “whats been driving the business lately”, using Luna Max
+with Fast enabled, exhausted the twelve-minute runtime after thirty field lookups,
+nine successful queries and two oversized calculation attempts. Explicit field
+alternatives now use OR matching; words within each alternative retain AND
+matching. Native chat discovery counts reinspections and pauses after three lookups
+without a successful query, with twelve lookups total per turn. The analyst starts
+with an operating headline and then investigates supported driver hypotheses.
+
+Related exact calculations accept a bounded batch of thirty-two, with unchanged
+reference, unit and evidence checks. A soft investigation budget moves the agent
+to synthesis after three minutes or twenty-four tools, reserving time for a final
+answer. New source reads stop in that phase; exact transformations and presentation
+of saved evidence remain available. This does not relax final-answer validation or
+treat an idle, failed or cancelled provider turn as success. Dashboard construction
+retains its existing investigation lifecycle. Deadline failures have
+an explicit error code and retain their query evidence. Evaluations preserve the
+owner's selected model/effort/speed and freeze the calendar clock for repeatability.
+Final-answer errors identify the model's original binding name and the available
+rows/columns. Unused planning bindings produce no public claims and require no
+repair turn. Calendar phrases and week counts are accepted only when the selected
+evidence's exact recorded ranges establish them; this does not authorize unrelated
+money or counts. Percentage differences are presented in percentage points.
+
 References: [sessions](https://developers.openai.com/api/docs/guides/agents-api/sessions),
 [function results](https://developers.openai.com/api/docs/guides/agents-api/tools/functions),
 [observability and caching](https://developers.openai.com/api/docs/guides/agents-api/observability),

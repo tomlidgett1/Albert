@@ -9,6 +9,9 @@ export interface AnalyticalResultHandles {
 }
 
 export type AnalyticalNativeRun = Readonly<{
+  deadlineAt?: number;
+  getProgress?: () => Readonly<{ results: number; queries: number }>;
+  onSynthesis?: () => Promise<void>;
   question: string;
   context: string;
   resultsContext: string;

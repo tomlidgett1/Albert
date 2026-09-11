@@ -44,6 +44,11 @@ export function composeManagedAnswer(
   const parsed = managedAnswerSchema.safeParse(value);
   if (!parsed.success) return { ok: false, issues: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).slice(0, 8) };
   const answer = parsed.data;
+  const sourceText = [answer.summary, answer.detail].filter(Boolean).join("\n\n");
+  const usedNames = new Set([...sourceText.matchAll(/\{\{([a-z][a-z0-9_]{0,39})\}\}/gu)].map((match) => match[1]!));
+  // Unused planning bindings are not public claims. Keep every displayed figure
+  // strict, without forcing another model turn merely to remove an unused entry.
+  const activeBindings = answer.values.filter((binding) => usedNames.has(binding.name));
   const issues: string[] = [];
   const idFor = (alias: string) => {
     const id = resolve(alias);
@@ -51,14 +56,17 @@ export function composeManagedAnswer(
     return id ?? alias;
   };
   const names = new Map<string, string>();
-  const values: ComposeAnswerInput["values"] = answer.values.map((binding, index) => {
+  const values: ComposeAnswerInput["values"] = activeBindings.map((binding, index) => {
     const id = `value_${letters(index)}`;
     if (names.has(binding.name)) issues.push(`Duplicate value name ${binding.name}.`);
     names.set(binding.name, id);
-    return { id, resultId: idFor(binding.result), columnKey: binding.column, rowIndex: binding.row, format: "auto", decimals: null };
+    const resultId = idFor(binding.result);
+    const source = evidence.get(resultId);
+    if (source && !source.columns.some((column) => column.key === binding.column)) issues.push(`Value ${binding.name}: ${binding.result} has no column ${binding.column}. Use an exact column key from: ${source.columns.map((column) => column.key).slice(0, 40).join(", ")}.`);
+    if (source && !source.rows[binding.row]) issues.push(`Value ${binding.name}: ${binding.result} has ${source.rows.length} ${source.rows.length === 1 ? "row" : "rows"}. ${source.rows.length === 1 ? "Its only row index is 0; calculated values are columns in that row." : source.rows.length ? "Use an existing zero-based row index." : "Do not bind a numeric value from an empty result."}`);
+    return { id, resultId, columnKey: binding.column, rowIndex: binding.row, format: "auto", decimals: null };
   });
-  const sourceText = [answer.summary, answer.detail].filter(Boolean).join("\n\n");
-  for (const binding of answer.values) {
+  for (const binding of activeBindings) {
     const cell = evidence.get(resolve(binding.result) ?? "")?.rows[binding.row]?.[binding.column];
     if (cell !== null && Number(cell) < 0 && new RegExp(`\\b(?:decreased|declined|fell|dropped|down)\\s+by\\s+(?:\\*\\*)?\\{\\{${binding.name}\\}\\}`, "iu").test(sourceText)) {
       issues.push(`The change {{${binding.name}}} is signed negative. Write "a change of {{${binding.name}}}" or compute a positive decline magnitude; do not say "decreased by" a negative amount.`);
@@ -81,14 +89,23 @@ export function composeManagedAnswer(
     return `${title ? `**${title}**\n\n` : ""}{{${table.id}}}`;
   });
   const citedResultIds = [...new Set(answer.citedResults.map(idFor))];
-  if (issues.length) return { ok: false, issues };
-  const dates = protectReportingDates([markdown, ...tableBlocks].filter(Boolean).join("\n\n"), [...evidence.values()]);
+  const selectedIds = new Set([...citedResultIds, ...values.map((value) => value.resultId), ...tables.map((table) => table.resultId)]);
+  const selectedEvidence = [...evidence.values()].filter((source) => selectedIds.has(source.resultId));
+  const textParts = [[markdown, ...tableBlocks].filter(Boolean).join("\n\n"), ...answer.limitations];
+  let separator = "ALBERTLIMITATIONBOUNDARY";
+  while (textParts.some((text) => text.includes(separator))) separator += "X";
+  const boundary = `\n${separator}\n`;
+  const dates = protectReportingDates(textParts.join(boundary), selectedEvidence);
+  const [protectedMarkdown, ...protectedLimitations] = dates.text.split(boundary);
   const composed = composeAnswer({
     outcome: answer.outcome,
-    markdown: dates.text,
+    markdown: protectedMarkdown!,
     values, tables, citedResultIds,
-    limitations: answer.limitations, followUps: answer.followUps,
+    limitations: protectedLimitations, followUps: answer.followUps,
   }, evidence, options);
+  // Report independent grounding errors in the same repair as a bad binding.
+  // This remains validation-only: no result can publish while native issues exist.
+  if (issues.length) return { ok: false, issues: [...new Set([...issues, ...(!composed.ok ? composed.issues : [])])] };
   return composed.ok ? { ok: true, answer: { ...composed.answer, text: dates.restore(composed.answer.text) } } : composed;
 }
 

@@ -156,7 +156,7 @@ export async function POST(request: Request): Promise<Response> {
           durationMs: outcome.durationMs, native: harness.metrics,
         }, correlationId);
       } catch (error) {
-        logger.error("agents_api.turn_failed", { conversationId, turnId, ...safeErrorEvidence(error) }, correlationId);
+        logger.error("agents_api.turn_failed", { conversationId, turnId, native: harness?.metrics, ...safeErrorEvidence(error) }, correlationId);
         if (!signal.aborted) await emit({ type: "error", status: "error", recoverable: true,
           message: error instanceof AgentsApiError ? error.message : "The new agent could not complete the analysis. Please try again.",
         });

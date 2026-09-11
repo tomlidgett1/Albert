@@ -1,0 +1,2 @@
+# Keep semantic-search changes reviewable across legacy literal control patterns.
+packages/albert-omni/src/semantic-model.ts diff

@@ -93,3 +93,21 @@ test("the topic index carries the opening of each view's guidance as a routing h
   assert.match(index, /Guidance: Use this view for takings, transactions and refunds\./u);
   assert.ok(index.length < 2_000, "the index stays compact: guidance is a routing excerpt, not the full text");
 });
+
+test("multi-field alternatives return their union instead of requiring every term in one field", () => {
+  const result = searchModelFields(catalogue, "gross_takings|stock value|unsold");
+  assert.equal(result.fieldCount, 3);
+  assert.deepEqual(result.viewNames, ["inventory_analytics", "sales_analytics"]);
+  assert.match(result.document, /sales_analytics.gross_takings/u);
+  assert.match(result.document, /inventory_analytics.stock_value/u);
+  assert.doesNotMatch(result.document, /name: inventory_analytics.stock_age_band/u);
+  assert.equal(searchModelFields(catalogue, "gross_takings,stock value").fieldCount, 2);
+  assert.equal(searchModelFields(catalogue, "stock value").fieldCount, 1, "ordinary multi-word queries still require both terms");
+});
+
+test("an unknown requested topic never silently searches other topics", () => {
+  const result = searchModelFields(catalogue, "gross", "missing_topic");
+  assert.equal(result.fieldCount, 0);
+  assert.deepEqual(result.viewNames, []);
+  assert.match(result.document, /No topic named/u);
+});

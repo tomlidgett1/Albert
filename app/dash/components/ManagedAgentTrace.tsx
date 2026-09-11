@@ -24,6 +24,7 @@ function progressLabel(events: readonly TraceEvent[]): string {
   if (event?.type === "research") return "Finding the right measures";
   if (event?.type === "progress" && event.stage === "query") return "Checking your data";
   if (event?.type === "progress" && event.stage === "field_values") return "Checking names and filters";
+  if (event?.type === "progress" && event.stage === "synthesis") return "Preparing the answer";
   return "Understanding your question";
 }
 

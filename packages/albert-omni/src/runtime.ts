@@ -10,6 +10,7 @@ import { Agent, Runner, user, assistant, type AgentInputItem } from "@openai/age
 import { createGovernedToolRegistry } from "../../albert-agents-api/src/tools.js";
 import { composeManagedAnswer, MANAGED_ANSWER_JSON_SCHEMA, MANAGED_ANSWER_INSTRUCTIONS } from "../../albert-agents-api/src/answer.js";
 import { MANAGED_ANALYST_INSTRUCTIONS } from "../../albert-agents-api/src/instructions.js";
+import { ManagedDiscoveryBudget } from "../../albert-agents-api/src/investigation-budget.js";
 import type { PriorTurnResult } from "../../albert-v3/src/engine/prior-results.js";
 import {
   normalizeAgentPreferences,
@@ -103,6 +104,8 @@ export type OmniSemanticTurnOptions = Readonly<{
   /** A managed harness can use the same governed tools without the Omni runner. */
   harness?: AnalyticalHarness;
   loadResults?: (ids: readonly string[]) => Promise<readonly PriorTurnResult[]>;
+  /** Calendar clock for deterministic evaluations; execution deadlines use real time. */
+  calendarNow?: Date;
 }>;
 
 const MAX_AGENT_TURNS = 48;
@@ -315,7 +318,7 @@ export async function runGovernedAnalyticalTurn(
 
     const todayLine = (() => {
       try {
-        const now = new Date();
+        const now = options.calendarNow ?? new Date();
         const readable = new Intl.DateTimeFormat("en-AU", {
           timeZone: timezone, weekday: "long", day: "numeric", month: "long", year: "numeric",
         }).format(now);
@@ -385,6 +388,7 @@ export async function runGovernedAnalyticalTurn(
 
     const toolRegistry = createGovernedToolRegistry();
     const tool = toolRegistry.define;
+    const discoveryBudget = options.harness?.native && !turn.dashboardBuild ? new ManagedDiscoveryBudget() : undefined;
 
     const ensureResults = async (ids: readonly string[]) => {
       const needed = [...new Set(ids)].filter((id) => {
@@ -468,7 +472,7 @@ export async function runGovernedAnalyticalTurn(
 
     const searchSemanticModel = tool({
       name: "SearchSemanticModel",
-      description: "Look up the semantic model. Pass topicName to load a whole topic's field definitions (do this before your first query against a topic), searchPattern to search fields by keyword across the model, or both to search within one topic. Returns YAML field definitions grouped by view; use the returned fully qualified names exactly.",
+      description: "Look up the semantic model. Pass topicName to load a topic, searchPattern to search fields, or both to search within one topic. Separate alternative field names with | or commas (gross_takings|transactions|completed_at); words within one alternative must all match. This is keyword search, not regular expressions. Returns YAML definitions; use the exact fully qualified names. A whole-topic result already contains its fields: query data instead of looking them up again individually.",
       parameters: z.object({
         topicName: z.string().min(1).max(160).nullable(),
         searchPattern: z.string().min(1).max(200).nullable(),
@@ -479,12 +483,14 @@ export async function runGovernedAnalyticalTurn(
         if (!input.topicName && !input.searchPattern) {
           return JSON.stringify({ ok: false, error: "Pass topicName, searchPattern, or both." });
         }
+        const pause = discoveryBudget?.admit(queriesExecuted);
+        if (pause) return JSON.stringify({ ok: false, error: "discovery_paused", guidance: pause, inspectedTopics: [...inspectedTopics] });
         const previousTopic = input.topicName ? resolveTopic(catalogue, input.topicName) : undefined;
         const reinspection = Boolean(previousTopic && inspectedTopics.has(previousTopic.name));
-        if (!reinspection && modelSearches >= MAX_MODEL_SEARCHES) {
+        if ((!reinspection || discoveryBudget) && modelSearches >= MAX_MODEL_SEARCHES) {
           return JSON.stringify({ ok: false, error: "The model-search allowance for this turn is spent. Work with the definitions already loaded." });
         }
-        if (!reinspection) modelSearches += 1;
+        if (!reinspection || discoveryBudget) modelSearches += 1;
         const result = input.searchPattern
           ? searchModelFields(catalogue, input.searchPattern, input.topicName ?? undefined)
           : lookupTopicModel(catalogue, input.topicName!);
@@ -1097,7 +1103,7 @@ export async function runGovernedAnalyticalTurn(
 
     const calculateValuesTool = tool({
       name: "CalculateValues",
-      description: "Compute exact decimal arithmetic between two governed result cells, including different rows of a period comparison. Each calculation has a key, label, kind and left/right {resultId,rowIndex,columnKey}. Kinds: sum, difference (left-right), ratio (left/right), percent_of (left/right*100), percent_change ((left-right)/abs(right)*100). Left is current and right is previous for a change. Returns one new result row; bind its values in ComposeAnswer. No model-authored numeric operands are accepted.",
+      description: "Batch up to 32 exact calculations in one call using the calculations array. Each has a key, label, kind and left/right {resultId,rowIndex,columnKey}. Kinds: sum, difference (left-right), ratio (left/right), percent_of (left/right*100), percent_change ((left-right)/abs(right)*100). Left is current and right is previous for a change. A difference between percentages returns numeric percentage points. Returns ONE row (index 0) with one column per calculation; copy its exact column keys into final answer bindings. No model-authored numeric operands are accepted.",
       parameters: calculateValuesSchema,
       strict: true,
       errorFunction: reportInvalidToolCall("Calculation"),
@@ -1167,6 +1173,7 @@ export async function runGovernedAnalyticalTurn(
             columns: source.columns,
             rows: source.rows,
             provenance: source.provenance,
+            semantics: source.semantics,
             rowCount: source.rowCount,
           },
           state: chartState,
@@ -1481,6 +1488,9 @@ export async function runGovernedAnalyticalTurn(
           preferences,
           signal,
           ...(native ? { native: {
+            deadlineAt,
+            getProgress: () => ({ results: evidence.length, queries: queriesExecuted }),
+            onSynthesis: async () => { await emit({ type: "progress", status: "running", stage: "synthesis", label: "Preparing the answer from the recorded results" }); },
             question: `${todayLine}\n\n${turn.message}`,
             context: JSON.stringify({ organisation: turn.organisationName, timezone, currency: config.currency,
               businessContext: turn.businessContext?.slice(0, 8_000), topics: renderTopicIndex(catalogue), freshness: turn.connectorFreshness }),

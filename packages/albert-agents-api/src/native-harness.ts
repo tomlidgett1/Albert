@@ -8,6 +8,7 @@ import type { AnalyticalHarness } from "../../albert-omni/src/harness.js";
 import { AgentsApiError } from "./harness.js";
 import { ResultReferences } from "./references.js";
 import { NativeToolInputError } from "./tools.js";
+import { ManagedInvestigationBudget, MANAGED_GATHERING_TOOLS } from "./investigation-budget.js";
 import { emptyManagedSessionState, MANAGED_SESSION_IDLE_MS, MANAGED_SESSION_NAMESPACE, managedSessionScopeDigest, type ManagedSessionScope, type ManagedSessionState } from "./session-state.js";
 
 type RunInput = Parameters<AnalyticalHarness["run"]>[0];
@@ -31,7 +32,7 @@ export class NativeManagedHarness implements AnalyticalHarness {
   readonly references: ResultReferences;
   readonly metrics = {
     tools: 0, toolFailures: 0, answerRepairs: 0, providerTurns: 0,
-    sessionReused: false, usageAvailable: false,
+    sessionReused: false, usageAvailable: false, synthesisStarted: false,
     inputTokens: null as number | null, outputTokens: null as number | null,
     cachedInputTokens: null as number | null, reasoningTokens: null as number | null,
   };
@@ -41,6 +42,7 @@ export class NativeManagedHarness implements AnalyticalHarness {
   private active = false;
   private createdWithoutCheckpoint = false;
   private activeProviderTurn: string | undefined;
+  private investigationBudget: ManagedInvestigationBudget | undefined;
   private calls = new Map<string, { fingerprint: string; result: AgentSessionInputParam }>();
 
   constructor(private readonly options: Options) {
@@ -76,7 +78,10 @@ export class NativeManagedHarness implements AnalyticalHarness {
     if (!input.native) throw new AgentsApiError("missing_native_contract", "The managed answer contract is not configured.");
     input.signal.throwIfAborted();
     const native = input.native;
-    const tools = input.tools.filter((tool) => tool.name !== "ComposeAnswer" && tool.name !== "ManageTaskList");
+    this.investigationBudget = input.tools.some((tool) => tool.name === "ComposeDashboard")
+      ? undefined : new ManagedInvestigationBudget(Date.now(), native.deadlineAt);
+    const tools = input.tools.filter((tool) => tool.name !== "ComposeAnswer" && tool.name !== "ManageTaskList")
+      .map((tool) => ({ ...tool, description: tool.description.replaceAll("ComposeAnswer", "the final answer") }));
     if (tools.some((tool) => !tool.invokeNative)) throw new AgentsApiError("missing_native_tool", "A governed tool is not configured for the managed agent.");
     const profile = digest({ version: 2, instructions: input.instructions, preferences: input.preferences, tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })), schema: native.finalSchema });
     const contextDigest = digest(native.context);
@@ -174,6 +179,9 @@ export class NativeManagedHarness implements AnalyticalHarness {
       throw new AgentsApiError("answer_validation_failed", "The answer could not be validated.");
     } catch (error) {
       if (this.active && this.authorizedSession && this.state.sessionId) await this.cancelActive().catch(() => undefined);
+      if (input.signal.aborted && /timed out|timeout/iu.test(String(input.signal.reason?.message ?? input.signal.reason))) {
+        throw new AgentsApiError("analysis_timeout", "This analysis reached its time limit. Any completed query results remain in Evidence and checks.");
+      }
       throw error;
     } finally { stream?.controller.abort(); }
   }
@@ -257,9 +265,12 @@ export class NativeManagedHarness implements AnalyticalHarness {
     const base = { type: "agent.session.input.tool_result" as const, turn_id: action.turn_id, call_id: action.call_id };
     this.metrics.tools += 1;
     try {
+      const guidance = await this.executionGuidance(input);
+      if (guidance && MANAGED_GATHERING_TOOLS.has(action.name)) throw new Error(guidance);
       const tool = input.tools.find((candidate) => candidate.name === action.name);
       if (!tool?.invokeNative) throw new Error("Use an available governed analytics tool.");
       await input.native!.ensureResults(this.references.referencedIds(action.arguments));
+      input.signal.throwIfAborted();
       const output = await tool.invokeNative(this.references.decode(action.arguments));
       let result: unknown = output;
       if (typeof output === "string") { try { result = JSON.parse(output); } catch { /* Semantic definitions can be YAML. */ } }
@@ -268,7 +279,11 @@ export class NativeManagedHarness implements AnalyticalHarness {
         await input.native!.recordToolFailure(action.name, JSON.stringify(result).slice(0, 600));
         return { ...base, success: false, error: JSON.stringify(this.references.encode(result)).slice(0, 12_000) };
       }
-      return { ...base, success: true, output: typeof result === "string" ? result : JSON.stringify(this.references.encode(result)) };
+      const finish = await this.executionGuidance(input);
+      const encoded = this.references.encode(result);
+      const renderedOutput = typeof encoded === "string" ? `${encoded}${finish ? `\n\nExecution guidance: ${finish}` : ""}`
+        : JSON.stringify(finish && encoded && typeof encoded === "object" && !Array.isArray(encoded) ? { ...encoded, executionGuidance: finish } : encoded);
+      return { ...base, success: true, output: renderedOutput };
     } catch (error) {
       input.signal.throwIfAborted();
       if (error instanceof AgentsApiError) throw error;
@@ -278,6 +293,16 @@ export class NativeManagedHarness implements AnalyticalHarness {
         ? `Correct these argument fields and retry: ${error.message}`
         : error instanceof Error ? error.message.slice(0, 600) : "The tool could not complete. Check the available fields and results." };
     }
+  }
+
+  private async executionGuidance(input: RunInput): Promise<string | undefined> {
+    const progress = input.native?.getProgress?.();
+    const guidance = this.investigationBudget?.guidance(Date.now(), this.metrics.tools, (progress?.results ?? 0) > 0);
+    if (guidance && !this.metrics.synthesisStarted) {
+      this.metrics.synthesisStarted = true;
+      await input.native?.onSynthesis?.();
+    }
+    return guidance;
   }
 
   private async finalText(turnId: string, signal: AbortSignal): Promise<string> {

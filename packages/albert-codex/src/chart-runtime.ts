@@ -24,6 +24,7 @@ export type CodexChartEvidence = Readonly<{
   columns: readonly TraceTableColumn[];
   rows: readonly Readonly<Record<string, TraceCell>>[];
   provenance: TraceProvenance;
+  semantics?: Readonly<{ window: string }>;
   rowCount: number;
 }>;
 
@@ -123,7 +124,8 @@ function chartIntentAllowed(
     composition: /\b(?:mix|share|composition|breakdown|split|proportion|contribution|distribution)\b/iu,
   };
   if (patterns[purpose].test(question)) return true;
-  return /\b(?:analyse|analyze|analysis|review|report|health|performance|drivers?|explain|opportunit|investigate)\b/iu.test(question);
+  return /\b(?:analyse|analyze|analysis|review|report|health|performance|drivers?|explain|opportunit|investigate)\b/iu.test(question)
+    || /\bdriving\s+(?:(?:the|our|my)\s+)?(?:business|growth|sales|revenue|profit|performance)\b/iu.test(question);
 }
 
 function seriesLabel(value: TraceCell): string {

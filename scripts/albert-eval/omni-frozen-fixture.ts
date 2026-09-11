@@ -5,6 +5,8 @@ import type { CubeFilter, CubeQuery } from "../../packages/albert-v3/src/cube/ty
 export const FIXTURE_SIGNING_SECRET = "synthetic-omni-fixture-signing-key-not-a-credential";
 type Row = Record<string, string | number>;
 const SALES: readonly Row[] = [
+  { completed_at: "2026-05-05", store_name: "North", item_id: "sku-a", product_name: "Helmet", gross_takings: 80, gross_profit: 20, units_sold: 1 },
+  { completed_at: "2026-05-06", store_name: "South", item_id: "sku-b", product_name: "Road Bike", gross_takings: 120, gross_profit: 30, units_sold: 1 },
   { completed_at: "2026-07-06", store_name: "North", item_id: "sku-a", product_name: "Helmet", gross_takings: 80, gross_profit: 20, units_sold: 1 },
   { completed_at: "2026-07-07", store_name: "South", item_id: "sku-b", product_name: "Road Bike", gross_takings: 120, gross_profit: 30, units_sold: 1 },
   { completed_at: "2026-08-03", store_name: "North", item_id: "sku-a", product_name: "Helmet", gross_takings: 100, gross_profit: 30, units_sold: 2 },
@@ -12,6 +14,8 @@ const SALES: readonly Row[] = [
   { completed_at: "2026-08-05", store_name: "North", item_id: "sku-c", product_name: "Workshop Service", gross_takings: 300, gross_profit: 90, units_sold: 1 },
 ];
 const WORK: readonly Row[] = [
+  { worked_at: "2026-05-05", worked_hours: 4, wage_cost: 80, employee_name: "Alex" },
+  { worked_at: "2026-05-06", worked_hours: 6, wage_cost: 120, employee_name: "Priya" },
   { worked_at: "2026-07-06", worked_hours: 4, wage_cost: 80, employee_name: "Alex" },
   { worked_at: "2026-07-07", worked_hours: 6, wage_cost: 120, employee_name: "Priya" },
   { worked_at: "2026-08-03", worked_hours: 5, wage_cost: 100, employee_name: "Alex" },
@@ -27,7 +31,7 @@ export function frozenCubeMeta() {
     const workforce = name === "workforce_analytics";
     return {
       name, type: "view", title: workforce ? "Worked hours and wage costs" : name === "sales_analytics" ? "Sales Analytics" : "Product Sales Analytics",
-      description: workforce ? "Actual approved timesheet hours and wages. Dates cover July and August 2026." : "Completed sales including GST, gross profit excluding GST, product and store detail. Dates cover July and August 2026. Gross takings are the default sales lens.",
+      description: workforce ? "Actual approved timesheet hours and wages. Complete data coverage from March through September 2026, including days with no work." : "Completed sales including GST, gross profit excluding GST, product and store detail. Complete data coverage from March through September 2026, including days with no sales. Gross takings are the default sales lens.",
       measures: workforce ? [metaMember(name, "worked_hours", "number", "Worked hours"), metaMember(name, "wage_cost", "number", "Wage cost", "currency")]
         : [metaMember(name, "gross_takings", "number", "Gross takings", "currency"), metaMember(name, "gross_profit", "number", "Gross profit", "currency"), metaMember(name, "sale_count", "number", "Sales count"), metaMember(name, "units_sold", "number", "Units sold"), metaMember(name, "average_sale_value", "number", "Average sale value", "currency"), metaMember(name, "gross_margin_percent", "number", "Gross margin", "percent")],
       dimensions: workforce ? [metaMember(name, "worked_at", "time", "Worked date"), metaMember(name, "employee_name", "string", "Employee")]

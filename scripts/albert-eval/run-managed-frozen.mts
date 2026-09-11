@@ -6,7 +6,8 @@ import OpenAI from "openai";
 import { ulid } from "ulid";
 import { NativeManagedHarness } from "../../packages/albert-agents-api/src/native-harness.js";
 import { emptyManagedSessionState } from "../../packages/albert-agents-api/src/session-state.js";
-import { DEFAULT_AGENTS_API_PREFERENCES } from "../../packages/albert-agents-api/src/config.js";
+import { AGENTS_API_MODEL_IDS, DEFAULT_AGENTS_API_PREFERENCES } from "../../packages/albert-agents-api/src/config.js";
+import type { AgentRunPreferences } from "../../packages/shared/src/agent-runtime.js";
 import { runGovernedAnalyticalTurn } from "../../packages/albert-omni/src/runtime.js";
 import { omniPriorResults } from "../../packages/albert-omni/src/context.js";
 import { priorResultsFromTraceEvents } from "../../packages/albert-v3/src/engine/prior-results.js";
@@ -16,8 +17,9 @@ import type { TraceEvent, TraceAnswerEvent, TraceTableEvent } from "../../packag
 import { startFrozenCube, FIXTURE_SIGNING_SECRET } from "./omni-frozen-fixture.js";
 
 type Step = { question: string; values?: (number | string)[]; table?: boolean; chart?: boolean; noRefresh?: boolean; noData?: boolean; reconcile?: boolean };
-type Scenario = { id: string; steps: Step[]; failOnce?: boolean; injection?: boolean; businessContext?: string; freshnessUnknown?: boolean };
+type Scenario = { id: string; steps: Step[]; failOnce?: boolean; injection?: boolean; businessContext?: string; freshnessUnknown?: boolean; dataThrough?: string };
 const cases: Scenario[] = [
+  { id: "business-drivers", dataThrough: "2026-09-06", businessContext: "Synthetic retail fixture. All amounts are AUD. Not GST registered. Sales and workforce data are complete through 6 September 2026.", steps: [{ question: "whats been driving the business lately", values: [800, 200, 600, "Workshop Service"], table: true }] },
   { id: "continuity", steps: [
     { question: "What were total gross takings in August 2026? Show a supporting table.", values: [600], table: true },
     { question: "Break that August total down by store and verify the store total matches the overall total.", values: ["North", "South", 400, 200, 600], table: true, reconcile: true },
@@ -41,6 +43,10 @@ const args = process.argv.slice(2);
 const arg = (name: string, fallback: string) => args.includes(name) ? args[args.indexOf(name) + 1] ?? fallback : fallback;
 const run = arg("--run", `managed-${ulid().toLowerCase()}`);
 const ids = new Set(arg("--ids", "").split(",").filter(Boolean));
+const selectedModel = arg("--model", DEFAULT_AGENTS_API_PREFERENCES.model);
+const selectedEffort = arg("--effort", DEFAULT_AGENTS_API_PREFERENCES.reasoningEffort);
+if (!(AGENTS_API_MODEL_IDS as readonly string[]).includes(selectedModel) || !["low", "medium", "high", "xhigh", "max"].includes(selectedEffort)) throw new Error("Unsupported evaluation profile.");
+const preferences: AgentRunPreferences = { model: selectedModel as AgentRunPreferences["model"], reasoningEffort: selectedEffort as AgentRunPreferences["reasoningEffort"], fastMode: args.includes("--fast") };
 if (!/^[a-z0-9][a-z0-9_-]{0,100}$/u.test(run)) throw new Error("Invalid run name.");
 const apiKey = process.env.OPENAI_API_KEY;
 if (!apiKey) throw new Error("Configure OPENAI_API_KEY directly before running evaluations.");
@@ -50,7 +56,7 @@ const sourceFiles = ["answer.ts", "instructions.ts", "native-harness.ts", "refer
 const sources = await Promise.all(sourceFiles.map((name) => readFile(new URL(`../../packages/albert-agents-api/src/${name}`, import.meta.url))));
 sources.push(...await Promise.all(["../../packages/albert-omni/src/runtime.ts", "../../packages/albert-omni/src/calculate.ts", "../../packages/albert-codex/src/chart-runtime.ts", "../../packages/shared/src/reporting-dates.ts", "./omni-frozen-fixture.ts"].map((path) => readFile(new URL(path, import.meta.url)))));
 const sourceHash = createHash("sha256").update(Buffer.concat(sources)).digest("hex");
-await writeFile(join(directory, "manifest.json"), JSON.stringify({ sourceHash, preferences: DEFAULT_AGENTS_API_PREFERENCES, cases, createdAt: new Date().toISOString() }, null, 2), { flag: "wx" });
+await writeFile(join(directory, "manifest.json"), JSON.stringify({ sourceHash, preferences, cases, calendarNow: "2026-09-12T02:00:00Z", createdAt: new Date().toISOString() }, null, 2), { flag: "wx" });
 const cube = await startFrozenCube();
 const client = new OpenAI({ apiKey, baseURL: "https://api.openai.com/v1" });
 const records: { id: string; pass: boolean; durationMs: number; issues: string[] }[] = [];
@@ -99,8 +105,9 @@ async function evaluate(scenario: Scenario) {
       cube.register(turnId, tenantId, index === 0 ? scenario : {});
       const previous = priorResultsFromTraceEvents(history.map((turn, i) => ({ turnsAgo: history.length - i, events: turn.events })), { maxRows: 500, maxResultsPerTurn: 12 });
       const harness = new NativeManagedHarness({ apiKey: apiKey!, scope: { tenantId, actorId, conversationId, turnId }, state, saveState: async (saved) => { state = saved; } });
-      const emit = createTraceEmitter({ persist: async (event) => { events.push(event); }, deliver: () => {} });
-      const preferences = DEFAULT_AGENTS_API_PREFERENCES;
+      const emit = createTraceEmitter({ persist: async (event) => { events.push(event); }, deliver: (event) => {
+        if (event.type === "research" || event.type === "query" || event.type === "validation") console.log(`[managed] ${id} ${event.type} ${event.type === "validation" ? event.outcome : event.type === "query" ? event.name : event.label}`);
+      } });
       if (preferences.reasoningEffort === "none") throw new Error("The analyst evaluation requires reasoning.");
       const started = Date.now(); let result; let failure: string | undefined;
       console.log(`[managed] START ${id}`);
@@ -109,12 +116,13 @@ async function evaluate(scenario: Scenario) {
           turn: { protocolVersion: 1, requestId: ulid(), tenantId, actorId, role: "owner", conversationId, turnId, message: step.question,
             priorConversation: history.flatMap((entry) => [{ role: "user" as const, text: entry.message }, { role: "assistant" as const, text: entry.events.findLast((e) => e.type === "answer")?.text ?? "" }]),
             priorResults: omniPriorResults(previous), activeConnectors: ["lightspeed-r", "deputy"],
-            connectorFreshness: scenario.freshnessUnknown ? [] : [{ connector: "lightspeed-r", domain: "sales", dataThrough: "2026-08-31" }, { connector: "deputy", domain: "workforce", dataThrough: "2026-08-31" }],
+            connectorFreshness: scenario.freshnessUnknown ? [] : [{ connector: "lightspeed-r", domain: "sales", dataThrough: scenario.dataThrough ?? "2026-08-31" }, { connector: "deputy", domain: "workforce", dataThrough: scenario.dataThrough ?? "2026-08-31" }],
             businessContext: scenario.businessContext ?? "Synthetic retail fixture. All amounts are AUD. Not GST registered. July and August 2026 are complete.",
             timezone: "Australia/Melbourne", organisationName: "Fixture Retail", model: preferences.model, effort: preferences.reasoningEffort, fastMode: preferences.fastMode,
             cubeBearer: signCubeJwt({ secret: FIXTURE_SIGNING_SECRET, expiresInSeconds: 900, securityContext: { tenant_id: tenantId, role: "owner", conversation_id: conversationId, turn_id: turnId, specialist_agent_id: "general", specialist_agent_version: 1 } }),
           }, cubeApiUrl: cube.url, openai: { apiKey: apiKey!, baseUrl: "https://api.openai.com/v1" }, harness, emit,
-          loadResults: async (ids) => previous.filter((r) => ids.includes(r.resultId)), signal: AbortSignal.timeout(240_000),
+          calendarNow: new Date("2026-09-12T02:00:00Z"), deadlineAt: started + 360_000,
+          loadResults: async (ids) => previous.filter((r) => ids.includes(r.resultId)), signal: AbortSignal.timeout(360_000),
         });
       } catch (error) { failure = error instanceof Error ? error.message : String(error); }
       await emit.drain?.();
@@ -144,7 +152,7 @@ try {
     for (;;) { const scenario = queue.shift(); if (!scenario) return; await evaluate(scenario); }
   }));
 } finally { await cube.close(); }
-const summary = { sourceHash, expected, completed: records.length, passed: records.filter((r) => r.pass).length, failed: records.filter((r) => !r.pass).length, preferences: DEFAULT_AGENTS_API_PREFERENCES };
+const summary = { sourceHash, expected, completed: records.length, passed: records.filter((r) => r.pass).length, failed: records.filter((r) => !r.pass).length, preferences };
 await writeFile(join(directory, "summary.json"), JSON.stringify(summary, null, 2));
 console.log(JSON.stringify(summary));
 process.exitCode = summary.failed || summary.completed !== expected ? 1 : 0;

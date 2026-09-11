@@ -23,27 +23,65 @@ export function formatReportingPeriodLabel(value: string): string {
   return compared ? `${formatReportingRange(compared[1]!)} vs ${formatReportingRange(compared[2]!)}` : formatReportingRange(value);
 }
 
-export function protectReportingDates(text: string, sources: readonly { provenance: { timeRange: { start?: string; end?: string } } }[]) {
+type ReportingEvidence = { provenance: { timeRange: { start?: string; end?: string; label?: string } }; semantics?: { window?: string } };
+
+function reportingRanges(source: ReportingEvidence): [string, string][] {
+  const ranges: [string, string][] = [];
+  const add = (value: unknown) => {
+    if (Array.isArray(value) && value.length === 2 && value.every((v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(v))) ranges.push(value as [string, string]);
+  };
+  add([source.provenance.timeRange.start?.slice(0, 10), source.provenance.timeRange.end?.slice(0, 10)]);
+  // Comparison queries have no single start/end. Their trusted semantic window
+  // carries both actual ranges; a prose label alone must not grant numeric proof.
+  try {
+    const window: unknown = source.semantics?.window && source.semantics.window.length < 20_000 ? JSON.parse(source.semantics.window) : undefined;
+    if (window && typeof window === "object" && "ranges" in window && Array.isArray(window.ranges)) {
+      for (const range of window.ranges.slice(0, 30)) {
+        if (!range || typeof range !== "object") continue;
+        add(range.dateRange);
+        if (Array.isArray(range.compareDateRange)) range.compareDateRange.slice(0, 10).forEach(add);
+      }
+    }
+  } catch { /* Legacy non-JSON window labels carry no extra numeric authority. */ }
+  return ranges;
+}
+
+function smallNumberWords(value: number): string | undefined {
+  const small = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+  if (value < 20) return small[value];
+  if (value >= 100) return undefined;
+  const tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+  return `${tens[Math.floor(value / 10)]}${value % 10 ? `-${small[value % 10]}` : ""}`;
+}
+
+export function protectReportingDates(text: string, sources: readonly ReportingEvidence[]) {
   const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   const phrases = new Set<string>();
+  const forms = (month: string) => [...new Set([month, month.slice(0, 3), ...(month === "September" ? ["Sept"] : [])])];
   const parts = (raw: string | undefined) => {
     if (!raw || !/^\d{4}-\d{2}-\d{2}/u.test(raw)) return undefined;
     const date = new Date(`${raw.slice(0, 10)}T00:00:00Z`);
     if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== raw.slice(0, 10)) return undefined;
     const value = { day: date.getUTCDate(), month: months[date.getUTCMonth()]!, year: date.getUTCFullYear() };
     phrases.add(raw.slice(0, 10));
-    for (const month of [value.month, value.month.slice(0, 3)]) {
+    for (const month of forms(value.month)) {
       phrases.add(`${value.day} ${month} ${value.year}`);
       phrases.add(`${month} ${value.year}`);
     }
     return value;
   };
-  for (const source of sources) {
-    const start = parts(source.provenance.timeRange.start), end = parts(source.provenance.timeRange.end);
+  for (const [from, through] of sources.flatMap(reportingRanges)) {
+    const start = parts(from), end = parts(through);
     if (!start || !end) continue;
-    for (const short of [false, true]) {
-      const sm = short ? start.month.slice(0, 3) : start.month;
-      const em = short ? end.month.slice(0, 3) : end.month;
+    const weeks = (Date.parse(`${through}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`) + 86_400_000) / 604_800_000;
+    if (Number.isInteger(weeks) && weeks > 0 && weeks <= 104) {
+      for (const count of [String(weeks), smallNumberWords(weeks)].filter((value): value is string => Boolean(value))) {
+        phrases.add(`${count} ${weeks === 1 ? "week" : "weeks"}`);
+        phrases.add(`${count}-week`);
+        for (const qualifier of ["complete", "completed", "full"]) phrases.add(`${count} ${qualifier} ${weeks === 1 ? "week" : "weeks"}`);
+      }
+    }
+    for (const sm of forms(start.month)) for (const em of forms(end.month)) {
       for (const separator of ["–", "-", " to "]) {
         phrases.add(`${start.day} ${sm} ${start.year}${separator}${end.day} ${em} ${end.year}`);
         if (start.year === end.year) phrases.add(`${start.day} ${sm}${separator}${end.day} ${em} ${end.year}`);

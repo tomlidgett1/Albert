@@ -10,15 +10,16 @@ import { cleanupManagedSessions } from "../../packages/albert-agents-api/src/ret
 import type { AnalyticalHarness } from "../../packages/albert-omni/src/harness.js";
 
 type RequestLog = { method: string; path: string; body: Record<string, unknown> | null };
-function fixture(options: { invalidArguments?: boolean; failedTool?: boolean; disconnect?: boolean; incomplete?: boolean; rootFailed?: boolean; foreign?: boolean; deleteConflict?: boolean; checkpointFails?: boolean } = {}) {
+function fixture(options: { invalidArguments?: boolean; failedTool?: boolean; disconnect?: boolean; incomplete?: boolean; rootFailed?: boolean; foreign?: boolean; deleteConflict?: boolean; checkpointFails?: boolean; toolName?: string } = {}) {
   const requests: RequestLog[] = [];
   let state = emptyManagedSessionState(), sessionNumber = 0, turnNumber = 0, executions = 0, cancellations = 0;
   let pending = true;
   let metadata: Record<string, string> = {};
+  const toolName = options.toolName ?? "RecordedTotal";
   const scope = { tenantId: "01KZN20VTX2EWW1TQ2AA3MCPW6", actorId: "00000000-0000-4000-8000-000000000001", conversationId: "01M28X81ESKPQG2ZGQ1ABZTZM6", turnId: "01M28Y0BFHK4SBTVXG4FAZ94Z3" };
   const sessionId = () => `sess_${sessionNumber}`;
   const turn = (number = turnNumber) => ({ id: `turn_${number}`, session_id: sessionId(), subagent_id: null, status: options.incomplete ? "in_progress" : options.rootFailed ? "failed" : "completed", usage: { input_tokens: 100, output_tokens: 20, input_tokens_details: { cached_tokens: 50 }, output_tokens_details: { reasoning_tokens: 10 } } });
-  const session = () => ({ id: sessionId(), agent: { model: "gpt-5.6-sol" }, last_active_at: Date.now() / 1000, metadata: options.foreign ? { surface: "foreign" } : metadata, status: pending ? "requires_action" : "idle", required_actions: pending ? [{ type: "function_call", name: "RecordedTotal", arguments: { period: options.invalidArguments ? 7 : "August" }, turn_id: `turn_${turnNumber}`, call_id: "call_total" }] : [] });
+  const session = () => ({ id: sessionId(), agent: { model: "gpt-5.6-sol" }, last_active_at: Date.now() / 1000, metadata: options.foreign ? { surface: "foreign" } : metadata, status: pending ? "requires_action" : "idle", required_actions: pending ? [{ type: "function_call", name: toolName, arguments: { period: options.invalidArguments ? 7 : "August" }, turn_id: `turn_${turnNumber}`, call_id: "call_total" }] : [] });
   const events = (created: boolean, number = turnNumber) => [
     ...(created ? [{ type: "agent.session.created", session: session() }] : []),
     { type: "agent.session.turn.created", session_id: sessionId(), turn: { ...turn(number), status: "in_progress" } },
@@ -58,10 +59,10 @@ function fixture(options: { invalidArguments?: boolean; failedTool?: boolean; di
     return Response.json(session());
   };
   const registry = createGovernedToolRegistry();
-  registry.define({ name: "RecordedTotal", description: "Read recorded evidence", parameters: z.object({ period: z.string() }).strict(), strict: true,
+  registry.define({ name: toolName, description: "Read recorded evidence", parameters: z.object({ period: z.string() }).strict(), strict: true,
     execute: async () => { executions += 1; return JSON.stringify(options.failedTool ? { ok: false, error: "The source is temporarily unavailable." } : { value: 42 }); } });
   const failures: string[] = [];
-  const input: Parameters<AnalyticalHarness["run"]>[0] = { instructions: "Use recorded evidence.", tools: registry.get(["RecordedTotal"]), input: [user("Read the total.")], preferences: { model: "gpt-5.6-sol", reasoningEffort: "medium", fastMode: false }, signal: AbortSignal.timeout(10_000),
+  const input: Parameters<AnalyticalHarness["run"]>[0] = { instructions: "Use recorded evidence.", tools: registry.get([toolName]), input: [user("Read the total.")], preferences: { model: "gpt-5.6-sol", reasoningEffort: "medium", fastMode: false }, signal: AbortSignal.timeout(10_000),
     native: { question: "Read the total.", context: "Fixture", resultsContext: "", catalogueDigest: "catalogue", getInspectedTopics: () => ["sales"], resetInspectedTopics: () => {}, ensureResults: async () => {}, finalSchema: { type: "object" }, validateFinal: async (value) => (value as { answer?: string }).answer === "Recorded evidence" ? [] : ["Wrong answer"], recordToolFailure: async (_name, message) => { failures.push(message); } },
   };
   const make = () => new NativeManagedHarness({ apiKey: "synthetic-not-a-credential", scope, state, fetcher, saveState: async (next) => { if (options.checkpointFails) throw new Error("Store offline"); state = next; } });
@@ -155,6 +156,50 @@ test("already-aborted native work never reaches the provider", async () => {
   const f = fixture();
   await assert.rejects(f.make().run({ ...f.input, signal: AbortSignal.abort() }));
   assert.equal(f.requests.length, 0);
+});
+
+test("synthesis prevents a new data read while preserving a validated answer from saved evidence", async () => {
+  const f = fixture({ toolName: "GenerateSemanticQuery" }), harness = f.make();
+  let notifications = 0;
+  const result = await harness.run({ ...f.input, native: { ...f.input.native!, deadlineAt: Date.now() - 1,
+    getProgress: () => ({ results: 1, queries: 1 }), onSynthesis: async () => { notifications++; },
+  } });
+  assert.equal(f.executions(), 0);
+  assert.equal(notifications, 1);
+  assert.equal(harness.metrics.synthesisStarted, true);
+  assert.equal(result.text, '{"answer":"Recorded evidence"}');
+  const submitted = f.requests.flatMap((r) => r.body?.events as Record<string, unknown>[] ?? []).find((e) => e.type === "agent.session.input.tool_result")!;
+  assert.equal(submitted.success, false);
+  assert.match(String(submitted.error), /No further source queries/u);
+});
+
+test("synthesis still allows an exact calculation and tells the model to finish", async () => {
+  const f = fixture({ toolName: "CalculateValues" }), harness = f.make();
+  await harness.run({ ...f.input, native: { ...f.input.native!, deadlineAt: Date.now() - 1, getProgress: () => ({ results: 1, queries: 1 }) } });
+  assert.equal(f.executions(), 1);
+  const submitted = f.requests.flatMap((r) => r.body?.events as Record<string, unknown>[] ?? []).find((e) => e.type === "agent.session.input.tool_result")!;
+  const output = JSON.parse(String(submitted.output));
+  assert.equal(output.value, 42);
+  assert.match(output.executionGuidance, /Finish this response now/u);
+});
+
+test("dashboard construction retains its own investigation lifecycle", async () => {
+  const f = fixture({ toolName: "ComposeDashboard" }), harness = f.make();
+  await harness.run({ ...f.input, native: { ...f.input.native!, deadlineAt: Date.now() - 1, getProgress: () => ({ results: 1, queries: 1 }) } });
+  assert.equal(f.executions(), 1);
+  assert.equal(harness.metrics.synthesisStarted, false);
+});
+
+test("a deadline abort is classified explicitly and cannot start another data operation", async () => {
+  const f = fixture(), harness = f.make(), controller = new AbortController();
+  await assert.rejects(harness.run({ ...f.input, signal: controller.signal, native: { ...f.input.native!, ensureResults: async () => { controller.abort(new Error("The analysis timed out before finishing.")); } } }), (error: unknown) => {
+    assert.equal((error as { code: string }).code, "analysis_timeout");
+    assert.match((error as Error).message, /Evidence and checks/u);
+    return true;
+  });
+  assert.equal(f.executions(), 0);
+  assert.equal(f.state().idleConfirmed, false);
+  assert.ok(f.requests.some((r) => JSON.stringify(r.body).includes("input.cancel")));
 });
 
 test("retention rechecks activity, prefetches cursors and retries async cancellation", async () => {

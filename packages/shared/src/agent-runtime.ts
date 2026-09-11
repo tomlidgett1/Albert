@@ -423,6 +423,7 @@ export type TraceProgressStage =
   | "data_health"
   | "query"
   | "source_query"
+  | "synthesis"
   | "directory";
 
 export interface TraceProgressEvent extends TraceEventBase {

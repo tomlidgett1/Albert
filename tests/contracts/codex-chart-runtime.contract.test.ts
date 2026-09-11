@@ -92,6 +92,25 @@ test("Codex compiles an ordered governed trend into the existing Flint chart con
   assert.equal(decision.prepared.table.provenance.definitions.at(-1)?.metric, "albert.chart_transform");
 });
 
+test("business-driving questions can show a governed trend without requiring the word chart", () => {
+  const source = evidence({ columns: [month, sales], rows: [
+    { [month.key]: "2026-01-01", [sales.key]: 100 }, { [month.key]: "2026-02-01", [sales.key]: 140 }, { [month.key]: "2026-03-01", [sales.key]: 160 },
+  ] });
+  const request = { resultId: source.resultId, purpose: "trend" as const, caption: "Recorded sales trend", chartType: "line" as const, xKey: month.key, yKey: sales.key };
+  assert.equal(prepareCodexChart({ question: "whats been driving the business lately", source, state: state(), request }).ok, true);
+  assert.equal(prepareCodexChart({ question: "What is the price of a driving light?", source, state: state(), request }).ok, false);
+});
+
+test("comparison charts use recorded semantic ranges to ground their week-count captions", () => {
+  const source = { ...evidence({ columns: [category, sales], rows: [{ [category.key]: "North", [sales.key]: 400 }, { [category.key]: "South", [sales.key]: 200 }] }),
+    provenance: { ...provenance, timeRange: { ...provenance.timeRange, start: "unknown", end: "unknown" } },
+    semantics: { window: JSON.stringify({ ranges: [{ compareDateRange: [["2026-06-15", "2026-09-06"], ["2026-03-23", "2026-06-14"]] }] }) },
+  };
+  const request = { resultId: source.resultId, purpose: "comparison" as const, chartType: "bar" as const, xKey: category.key, yKey: sales.key };
+  assert.equal(prepareCodexChart({ question: "whats been driving the business lately", source, state: state(), request: { ...request, caption: "Store takings over the last 12 complete weeks" } }).ok, true);
+  assert.equal(prepareCodexChart({ question: "whats been driving the business lately", source, state: state(), request: { ...request, caption: "Store takings over the last 13 weeks" } }).ok, false);
+});
+
 test("Codex derives a governed cumulative running total as a line chart", () => {
   const source = evidence({
     columns: [month, sales],
