@@ -1585,7 +1585,7 @@ export async function runGovernedAnalyticalTurn(
     }
 
     if (!dashboardMode && !acceptedAnswer && !signal.aborted) {
-      items.push(user("The owner has not received an answer. Call ComposeAnswer now. Bind every analytical number with a value reference and every table with a result reference. Use explanation only for non-quantitative definitions, clarification for a blocking ambiguity, or unavailable for a missing capability."));
+      items.push(user(`The owner has not received an answer to this request: ${turn.message}\n\nCall ComposeAnswer now and address that request, including the requested breakdowns, checks and tables using the evidence already gathered. Bind every analytical number with a value reference and every table with a result reference. Use explanation only for non-quantitative definitions, clarification for a blocking ambiguity, or unavailable for a missing capability.`));
       rawFinal = await runAgentOnce();
     }
     if (!dashboardMode && !acceptedAnswer) {

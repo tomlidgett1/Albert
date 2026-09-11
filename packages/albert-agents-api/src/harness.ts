@@ -175,6 +175,18 @@ export class ManagedAgentsHarness implements AnalyticalHarness {
     if (!tool) return { ...base, success: false, error: "This tool is not available. Use a configured analytics tool." };
     try {
       const output = await tool.invoke(new RunContext(), JSON.stringify(action.arguments));
+      if (typeof output === "string") {
+        let parsed: unknown;
+        try { parsed = JSON.parse(output); } catch { /* Model searches can return YAML. */ }
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const result = parsed as Record<string, unknown>;
+          if (result.ok === false && typeof result.error === "string" && result.error.startsWith("Invalid arguments:")) {
+            // The tool SDK can redact Zod issue details. Return the public
+            // parameter contract instead of making the model guess again.
+            return { ...base, success: true, output: JSON.stringify({ ...result, parameterSchema: tool.parameters }) };
+          }
+        }
+      }
       return { ...base, success: true, output: typeof output === "string" ? output : JSON.stringify(output) };
     } catch {
       input.signal.throwIfAborted();

@@ -70,6 +70,9 @@ The existing `OPENAI_BASE_URL` and all other product runtimes are unaffected.
   evidence-table placeholder in its own Markdown header. Composition now rejects
   table placeholders outside standalone paragraphs so the agent repairs the
   layout before publication; numeric evidence and query results are unchanged.
+- When the tool SDK redacts validation details, the managed agent receives the
+  public parameter schema for repair. Final-answer repair restates the current
+  owner request so a follow-up cannot accidentally revert to the earlier ask.
 
 References: [quickstart](https://developers.openai.com/api/docs/guides/agents-api/quickstart),
 [function tools](https://developers.openai.com/api/docs/guides/agents-api/tools/functions),

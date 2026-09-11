@@ -6,11 +6,11 @@ import { ManagedAgentsHarness } from "../../packages/albert-agents-api/src/harne
 import { DEFAULT_AGENTS_API_PREFERENCES } from "../../packages/albert-agents-api/src/config.js";
 import { describeChatFailure } from "../../packages/shared/src/chat-failure.js";
 
-function fixture(options: { events?: unknown[]; pending?: boolean; completedBeforeStream?: boolean; cancelBeforeDelete?: boolean } = {}) {
+function fixture(options: { events?: unknown[]; pending?: boolean; invalidArguments?: boolean; completedBeforeStream?: boolean; cancelBeforeDelete?: boolean } = {}) {
   const requests: { method: string; path: string; body: Record<string, unknown> | null }[] = [];
   let pending = options.pending ?? false;
   let cancelled = false;
-  const action = { type: "function_call", name: "RecordedTotal", arguments: { period: "test" }, turn_id: "turn_test", call_id: "call_test" };
+  const action = { type: "function_call", name: "RecordedTotal", arguments: { period: options.invalidArguments ? 1 : "test" }, turn_id: "turn_test", call_id: "call_test" };
   const turn = { id: "turn_test", session_id: "sess_test", subagent_id: null, status: "completed", usage: { input_tokens: 100, output_tokens: 20, input_tokens_details: { cached_tokens: 50 }, output_tokens_details: { reasoning_tokens: 10 } } };
   const session = () => ({ id: "sess_test", agent: { model: "gpt-5.6-luna" }, status: pending ? "requires_action" : "in_progress", required_actions: pending ? [action] : [] });
   const fetcher: typeof fetch = async (raw, init) => {
@@ -50,7 +50,7 @@ function fixture(options: { events?: unknown[]; pending?: boolean; completedBefo
   };
   const harness = new ManagedAgentsHarness({ apiKey: "synthetic-test-key", fetcher });
   let executions = 0;
-  const recordedTotal = tool({ name: "RecordedTotal", description: "Read synthetic evidence", parameters: z.object({ period: z.string() }).strict(), execute: async () => { executions += 1; return "42"; } });
+  const recordedTotal = tool({ name: "RecordedTotal", description: "Read synthetic evidence", parameters: z.object({ period: z.string() }).strict(), errorFunction: () => JSON.stringify({ ok: false, error: "Invalid arguments: Invalid JSON input for tool" }), execute: async () => { executions += 1; return "42"; } });
   const input = { instructions: "Use recorded evidence.", tools: [recordedTotal], input: [user("Read the test total.")], preferences: DEFAULT_AGENTS_API_PREFERENCES, signal: AbortSignal.timeout(10_000) };
   return { harness, input, requests, executions: () => executions };
 }
@@ -82,6 +82,19 @@ test("saved completed turns recover output emitted before subscription", async (
   try { assert.equal((await f.harness.run(f.input)).text, "Recorded total: 42."); }
   finally { await f.harness.close(); }
   assert.equal(f.requests.filter((r) => r.method === "POST" && r.path.endsWith("/sessions")).length, 1);
+});
+
+test("redacted schema failures give the managed agent the public parameter contract", async () => {
+  const f = fixture({ pending: true, invalidArguments: true });
+  try {
+    await f.harness.run(f.input);
+    assert.equal(f.executions(), 0);
+    const event = (f.requests.find((r) => r.method === "POST" && r.path.endsWith("/events"))!.body!.events as { output: string }[])[0]!;
+    const feedback = JSON.parse(event.output);
+    assert.equal(feedback.ok, false);
+    assert.equal(feedback.parameterSchema.properties.period.type, "string");
+    assert.deepEqual(feedback.parameterSchema.required, ["period"]);
+  } finally { await f.harness.close(); }
 });
 
 test("idle and a closed stream never masquerade as a completed turn", async () => {
