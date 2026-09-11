@@ -1,7 +1,7 @@
 # ADR 0139: Separate managed Agents API page
 
 - Date: 2026-09-11
-- Status: implementation accepted; live-data activation requires owner approval
+- Status: accepted; owner approved US activation on 2026-09-11
 - Extends: ADRs 0001, 0110 and 0135
 
 ## Decision
@@ -47,8 +47,12 @@ needed, and no migrations are introduced.
 states that this beta supports US residency only and is not eligible for Zero Data
 Retention. This is materially different from ADR 0001's AU endpoint posture.
 The new endpoint fails closed unless `ALBERT_AGENTS_API_DATA_CONTROL_APPROVED=true`.
-The owner was asked to approve this exception specifically for the new page;
-until approval is recorded, all live model tests use synthetic fixtures only.
+The owner approved US activation specifically for the new page on 2026-09-11,
+after being informed that this beta uses US session storage without ZDR.
+`ALBERT_AGENTS_API_DATA_CONTROL_APPROVED=true` enables this exception in the
+production environment. The existing application key already has access to
+the US-managed API, so no additional OpenAI project, Vercel region, database,
+or execution sandbox is required for the application-function integration.
 The existing `OPENAI_BASE_URL` and all other product runtimes are unaffected.
 
 ## Verification
