@@ -12,6 +12,7 @@ import type { AnswerEvidence } from "../../packages/albert-omni/src/answer.js";
 import type { AgentSession } from "openai/resources/beta/agents/agents";
 import { renderAssistantMarkdown } from "../../app/dash/lib/render-assistant-markdown.js";
 import { calculateValues } from "../../packages/albert-omni/src/calculate.js";
+import { formatReportingRange, formatReportingPeriodLabel } from "../../packages/shared/src/reporting-dates.js";
 
 const id = ulid();
 const evidence: AnswerEvidence = {
@@ -48,6 +49,37 @@ test("native answer validation rejects invented money and unknown result handles
     { ...answer, values: [{ ...answer.values[0]!, result: "r99" }] },
     { ...answer, summary: "Gross takings were {{missing}}." },
   ]) assert.equal(compose(candidate).ok, false);
+});
+
+test("negative changes cannot be described as a decrease by a negative amount", () => {
+  const negative = new Map([[id, { ...evidence, rows: [{ store: "North", gross: -600 }] }]]);
+  const render = (summary: string) => composeManagedAnswer({ ...answer, summary }, negative, () => id, options);
+  assert.equal(render("Sales decreased by {{august_2026}}.").ok, false);
+  const result = render("Sales had a change of {{august_2026}}.");
+  assert.ok(result.ok);
+  assert.match(result.answer.text, /change of -\$600\.00/u);
+});
+
+test("comparison periods show readable months while preserving partial and intraday scope", () => {
+  assert.equal(formatReportingRange("2026-07-01T00:00:00.000 - 2026-07-31T23:59:59.999"), "July 2026");
+  assert.equal(formatReportingRange("2024-02-01 to 2024-02-29"), "February 2024");
+  assert.equal(formatReportingRange("2026-07-01 to 2026-07-15"), "1 July 2026–15 July 2026");
+  assert.equal(formatReportingPeriodLabel("Comparing 2026-07-01 to 2026-07-31 vs 2026-08-01 to 2026-08-31"), "July 2026 vs August 2026");
+  for (const value of ["2026-07-01T12:00:00.000 - 2026-07-31T23:59:59.999", "2026-02-01 to 2026-02-31", "2026-08-01 to 2026-07-31"]) assert.equal(formatReportingRange(value), value);
+});
+
+test("production Cube compareDateRange cells format as months without changing their numeric evidence", () => {
+  for (const key of ["compareDateRange", "compare_date_range"]) {
+    const source = { ...evidence, columns: [{ key, label: "Period", type: "string" as const }, evidence.columns[1]!], rows: [
+      { [key]: "2026-07-01T00:00:00.000 - 2026-07-31T23:59:59.999", gross: 200 },
+      { [key]: "2026-08-01T00:00:00.000 - 2026-08-31T23:59:59.999", gross: 600 },
+    ] };
+    const result = composeManagedAnswer({ ...answer, summary: "Monthly gross takings.", values: [], tables: [{ ...answer.tables[0]!, columns: [key, "gross"] }] }, new Map([[id, source]]), () => id, { ...options, question: "Show July and August 2026 gross takings." });
+    assert.ok(result.ok, result.ok ? "" : result.issues.join("; "));
+    assert.match(result.answer.text, /\| July 2026 \| \$200\.00 \|/u);
+    assert.match(result.answer.text, /\| August 2026 \| \$600\.00 \|/u);
+    assert.ok(!result.answer.text.includes("T00:00"));
+  }
 });
 
 test("known reporting date spans do not trigger false numeric failures", () => {

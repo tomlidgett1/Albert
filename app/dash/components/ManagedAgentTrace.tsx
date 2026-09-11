@@ -2,6 +2,7 @@
 
 import { lazy, Suspense, useEffect, useId, useMemo, useState } from "react";
 import type { TraceEvent, TraceTableEvent } from "../../../packages/shared/src/agent-runtime";
+import { formatReportingPeriodLabel } from "../../../packages/shared/src/reporting-dates";
 import { renderAssistantMarkdown } from "../lib/render-assistant-markdown";
 import { CONNECTOR_NAMES } from "./connectors";
 import OmniTrace from "./OmniTrace";
@@ -77,7 +78,7 @@ export default function ManagedAgentTrace({ events, streaming = false, dashboard
         <>
           <div className={styles.context}>
             {model.sources.length ? <span>{model.sources.join(" · ")}</span> : null}
-            {model.answer.provenance.timeRange.label ? <span>{model.answer.provenance.timeRange.label}</span> : null}
+            {model.answer.provenance.timeRange.label ? <span>{formatReportingPeriodLabel(model.answer.provenance.timeRange.label)}</span> : null}
             {model.reused ? <span className={styles.status}>Saved evidence</span>
               : model.answer.state === "Verified" && !model.error ? <span className={`${styles.status} ${styles.verified}`}>Figures checked</span>
                 : model.answer.state === "No data" ? <span className={styles.status}>No matching data</span> : null}
@@ -85,10 +86,9 @@ export default function ManagedAgentTrace({ events, streaming = false, dashboard
           <div className={`${proseStyles.prose} ${styles.answerBody}`} data-testid="managed-answer-content"
             dangerouslySetInnerHTML={{ __html: renderAssistantMarkdown(model.answer.text) }} />
           {model.charts.map((chart) => (
-            <figure className={styles.chart} key={chart.id}>
-              <figcaption>{chart.caption}</figcaption>
+            <div className={styles.chart} key={chart.id}>
               <Suspense fallback={<span>Preparing chart…</span>}><ResultChart event={chart} table={model.tables.get(chart.dataRef)} /></Suspense>
-            </figure>
+            </div>
           ))}
         </>
       ) : null}

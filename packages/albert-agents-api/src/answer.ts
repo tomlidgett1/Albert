@@ -58,6 +58,12 @@ export function composeManagedAnswer(
     return { id, resultId: idFor(binding.result), columnKey: binding.column, rowIndex: binding.row, format: "auto", decimals: null };
   });
   const sourceText = [answer.summary, answer.detail].filter(Boolean).join("\n\n");
+  for (const binding of answer.values) {
+    const cell = evidence.get(resolve(binding.result) ?? "")?.rows[binding.row]?.[binding.column];
+    if (cell !== null && Number(cell) < 0 && new RegExp(`\\b(?:decreased|declined|fell|dropped|down)\\s+by\\s+(?:\\*\\*)?\\{\\{${binding.name}\\}\\}`, "iu").test(sourceText)) {
+      issues.push(`The change {{${binding.name}}} is signed negative. Write "a change of {{${binding.name}}}" or compute a positive decline magnitude; do not say "decreased by" a negative amount.`);
+    }
+  }
   if (/^\s*\|.*\|\s*$/mu.test(sourceText)) issues.push("Put data tables in tables, not in summary or detail. Albert creates their headers and rows.");
   const plainProse = sourceText.replace(/\{\{[^}]+\}\}/gu, "");
   const financialTokens = plainProse.match(/[$£€¥]\s?\d[\d,.]*(?:\s?[kmb])?|\b(?:AUD|USD|EUR|GBP|JPY|CAD|NZD)\s+\d[\d,.]*|\b\d[\d,.]*\s?(?:%|AUD|USD|EUR|GBP|JPY|CAD|NZD)\b/giu) ?? [];
@@ -90,6 +96,7 @@ export const MANAGED_ANSWER_INSTRUCTIONS = `Return the final answer in the confi
 summary is the direct answer in one or two useful sentences. detail adds new drivers, context or implications only when needed. Use an empty detail when summary and tables already answer the question; never restate the summary in different words.
 Every analytical number in summary/detail is a {{named_value}} with a matching values entry. Copy result handles, column keys and zero-based row indexes from tool results. Never type an analytical figure from memory.
 Value placeholders already include their currency or percent formatting. Do not add another currency symbol or percent sign around them.
+For signed negative changes, use "a change of {{change}} ({{percent}})" or "August minus July: {{change}} ({{percent}})". Say "decreased by" only with a computed positive decline magnitude.
 Put each requested data table in tables with its result handle and exact column keys. Albert supplies the complete table; do not write table Markdown or table placeholders in prose.
 Use CalculateValues or DeriveResult for arithmetic. Include the resulting value references, not mental calculations.
 Address every part of the current question. A store breakdown needs store rows; a comparison needs both periods and the requested difference; a requested chart must be created with the chart tool.

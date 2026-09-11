@@ -29,7 +29,6 @@
 .answerBody { color: var(--dash-text-body); }
 .answerBody > p:first-child { margin-top: 0; color: var(--dash-text-strong); font-size: calc(15.5px * var(--text-scale, 1)); line-height: 1.62; font-weight: 600; letter-spacing: -0.011em; }
 .chart { min-width: 0; margin: 0; }
-.chart figcaption { margin-bottom: 10px; color: var(--dash-text-strong); font-size: 13px; font-weight: 600; }
 .error { padding: 12px 0; color: var(--dash-danger-text); font-size: 14px; line-height: 1.6; }
 .evidence { min-width: 0; border-top: 1px solid var(--dash-border-soft); padding-top: 8px; }
 

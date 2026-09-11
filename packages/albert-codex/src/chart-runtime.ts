@@ -1,6 +1,6 @@
 import { ulid } from "ulid";
 import { findUngroundedNumbers } from "../../../services/conversation/src/grounding.js";
-import { protectReportingDates } from "../../shared/src/reporting-dates.js";
+import { protectReportingDates, formatReportingRange } from "../../shared/src/reporting-dates.js";
 import {
   compileGroundedFlint,
   sanitizeTraceText,
@@ -438,6 +438,9 @@ export function prepareCodexChart(input: Readonly<{
     return rejected("ungrounded_caption", "Every figure in the chart caption must come from this result (or its host-derived chart rows); otherwise omit the figure.");
   }
   const wireType: "bar" | "line" = resolved === "line" ? "line" : "bar";
+  if (/(?:^|[._])(?:compare_date_range|compareDateRange)$/u.test(chartXKey)) {
+    rows = rows.map((row) => ({ ...row, [chartXKey]: typeof row[chartXKey] === "string" ? formatReportingRange(row[chartXKey]) : row[chartXKey]! }));
+  }
   const stacked = resolved === "stacked_bar";
   const orientation = wireType === "bar" && !timeAxis && !stacked ? "horizontal" as const : undefined;
   // The signature identifies the chart the owner would SEE — the plotted

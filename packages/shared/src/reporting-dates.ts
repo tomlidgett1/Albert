@@ -2,6 +2,27 @@ function letters(index: number): string {
   return index < 26 ? String.fromCharCode(97 + index) : `${letters(Math.floor(index / 26) - 1)}${letters(index % 26)}`;
 }
 
+/** Display full-day ISO ranges without inventing or discarding a partial window. */
+export function formatReportingRange(value: string): string {
+  const match = /^(\d{4}-\d{2}-\d{2})(?:T00:00:00(?:\.000)?Z?)?\s+(?:to|[-–])\s+(\d{4}-\d{2}-\d{2})(?:T23:59:59(?:\.999)?Z?)?$/u.exec(value);
+  if (!match) return value;
+  const start = new Date(`${match[1]}T00:00:00Z`), end = new Date(`${match[2]}T00:00:00Z`);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end
+    || start.toISOString().slice(0, 10) !== match[1] || end.toISOString().slice(0, 10) !== match[2]) return value;
+  const sameMonth = start.getUTCFullYear() === end.getUTCFullYear() && start.getUTCMonth() === end.getUTCMonth();
+  const lastDay = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)).getUTCDate();
+  if (sameMonth && start.getUTCDate() === 1 && end.getUTCDate() === lastDay) {
+    return new Intl.DateTimeFormat("en-AU", { month: "long", year: "numeric", timeZone: "UTC" }).format(start);
+  }
+  const date = (input: Date) => new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(input);
+  return start.getTime() === end.getTime() ? date(start) : `${date(start)}–${date(end)}`;
+}
+
+export function formatReportingPeriodLabel(value: string): string {
+  const compared = /^Comparing (.+) vs (.+)$/u.exec(value);
+  return compared ? `${formatReportingRange(compared[1]!)} vs ${formatReportingRange(compared[2]!)}` : formatReportingRange(value);
+}
+
 export function protectReportingDates(text: string, sources: readonly { provenance: { timeRange: { start?: string; end?: string } } }[]) {
   const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   const phrases = new Set<string>();

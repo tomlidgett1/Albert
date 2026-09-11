@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { formatReportingRange } from "../../shared/src/reporting-dates.js";
 import type { TraceAnswerEvent, TraceTableColumn, TraceRowFormat } from "../../shared/src/index.js";
 import { sanitizeAnswerText, sanitizeTraceText } from "../../shared/src/index.js";
 import { findUngroundedNumbersWithEvidence, ownerStatedGroundingValues } from "../../../services/conversation/src/grounding.js";
@@ -45,6 +46,7 @@ function escapeCell(value: string): string {
 
 function displayCell(value: unknown, column: TraceTableColumn, format: "auto" | "compact" = "auto", decimals: number | null = null): string {
   if (value === null || value === undefined) return "—";
+  if (typeof value === "string" && /(?:^|[._])(?:compare_date_range|compareDateRange)$/u.test(column.key)) return escapeCell(formatReportingRange(value));
   if (typeof value === "string" && ["date", "datetime"].includes(column.type)
     && /^\d{4}-\d{2}-\d{2}(?:[T ]00:00(?::00)?(?:\.0+)?(?:Z|[+-]\d{2}:?\d{2})?)?$/u.test(value)) {
     const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);

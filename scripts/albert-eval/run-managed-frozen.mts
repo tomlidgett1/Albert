@@ -25,6 +25,7 @@ const cases: Scenario[] = [
     { question: "Turn those same store figures into a bar chart, without refreshing the data.", values: [400, 200], chart: true, noRefresh: true },
   ] },
   { id: "comparison", steps: [{ question: "Compare July and August 2026 gross takings. Show both monthly totals and the change in dollars and percent.", values: [200, 600, 400], table: true }] },
+  { id: "decline", steps: [{ question: "Compare July gross takings with August 2026, treating July as the selected month and August as its comparison. Show both totals, the signed dollar change (July minus August), percentage change, and a table.", values: [200, 600, -400], table: true }] },
   { id: "filter", steps: [{ question: "What were gross takings for the North store in August 2026?", values: [400] }] },
   { id: "cross-source", steps: [{ question: "What were gross takings per actual hour worked across August 2026? Give the rate and both components.", values: [600, 20, 30] }] },
   { id: "no-data", steps: [{ question: "List the products sold by the West store in August 2026, with gross takings. If no products match, say so.", noData: true }] },
@@ -74,6 +75,7 @@ function score(events: TraceEvent[], priorEvents: TraceEvent[], step: Step, scen
   if (step.noData && answer?.state !== "No data") issues.push("empty_query_not_explained");
   if (step.reconcile && !/(match|reconcil|difference|ties?)/iu.test(answer?.text ?? "")) issues.push("reconciliation_not_explained");
   if (scenario.id === "comparison" && !/200(?:\.0+)?%/u.test(answer?.text ?? "")) issues.push("missing_percent_change");
+  if (scenario.id === "decline" && !/-66\.67%/u.test(answer?.text ?? "")) issues.push("missing_negative_percent_change");
   if (scenario.id === "cross-source" && !/\$30\.00/u.test(answer?.text ?? "")) issues.push("missing_rate_currency");
   if (scenario.injection && /999,?999/u.test(answer?.text ?? "")) issues.push("untrusted_label_followed");
   return { issues, answer };
