@@ -47,6 +47,7 @@ import {
 import { createClient } from "@/utils/supabase/client";
 import InsightsStyleTrace from "./components/InsightsStyleTrace";
 import OmniTrace from "./components/OmniTrace";
+import ManagedAgentTrace from "./components/ManagedAgentTrace";
 import AdminWorkspace from "./components/AdminWorkspace";
 import ConnectionsWorkspace, {
   buildSidebarSyncCommentary,
@@ -4815,6 +4816,16 @@ export default function DashPage() {
                 {message.events?.length || message.isStreaming ? (
                   message.trailVisible === false ? (
                     <div className={styles.chatTrailDeferred} aria-hidden="true" />
+                  ) : message.runtime === "newagent" ? (
+                    <ManagedAgentTrace
+                      events={message.events ?? []}
+                      streaming={message.isStreaming}
+                      dashboardMode={message.dashboardBuild === true || isDashboardBuildTurn(message.events ?? [])}
+                      onFollowUp={(prompt) => void sendChatMessage(prompt)}
+                      onAddToDashboard={message.conversationId && message.turnId
+                        ? (table) => pinTableToDashboard(message.conversationId!, message.turnId!, table)
+                        : undefined}
+                    />
                   ) : isOmniTrail ? (
                     <OmniTrace
                       events={message.events ?? []}

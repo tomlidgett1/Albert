@@ -46,6 +46,18 @@ function evidence(input: Readonly<{
   };
 }
 
+test("chart captions accept proven reporting dates without authorizing invented financial figures", () => {
+  const source = evidence({ columns: [category, sales], rows: [{ [category.key]: "North", [sales.key]: 400 }, { [category.key]: "South", [sales.key]: 200 }] });
+  source.provenance = { ...provenance, timeRange: { ...provenance.timeRange, start: "2026-08-01", end: "2026-08-31", label: "August 2026" } };
+  for (const caption of ["Gross takings by store — August 2026", "Gross takings by store, 1–31 August 2026"]) {
+    const decision = prepareCodexChart({ question: "Chart those stores", source, state: state(), request: { resultId: source.resultId, purpose: "comparison", caption, chartType: "bar", xKey: category.key, yKey: sales.key, limit: 2 } });
+    assert.ok(decision.ok, decision.ok ? "" : decision.error);
+    assert.equal(decision.prepared.chart.caption, caption);
+  }
+  const invalid = prepareCodexChart({ question: "Chart those stores", source, state: state(), request: { resultId: source.resultId, purpose: "comparison", caption: "August 2026 gross takings were $2026", chartType: "bar", xKey: category.key, yKey: sales.key } });
+  assert.equal(invalid.ok, false);
+});
+
 test("Codex compiles an ordered governed trend into the existing Flint chart contract", () => {
   const source = evidence({
     columns: [month, sales],

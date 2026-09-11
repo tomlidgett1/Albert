@@ -3,7 +3,6 @@ import test from "node:test";
 import { tool, user } from "@openai/agents";
 import { z } from "zod";
 import { ManagedAgentsHarness } from "../../packages/albert-agents-api/src/harness.js";
-import { DEFAULT_AGENTS_API_PREFERENCES } from "../../packages/albert-agents-api/src/config.js";
 import { describeChatFailure } from "../../packages/shared/src/chat-failure.js";
 
 function fixture(options: { events?: unknown[]; pending?: boolean; invalidArguments?: boolean; completedBeforeStream?: boolean; cancelBeforeDelete?: boolean } = {}) {
@@ -51,7 +50,7 @@ function fixture(options: { events?: unknown[]; pending?: boolean; invalidArgume
   const harness = new ManagedAgentsHarness({ apiKey: "synthetic-test-key", fetcher });
   let executions = 0;
   const recordedTotal = tool({ name: "RecordedTotal", description: "Read synthetic evidence", parameters: z.object({ period: z.string() }).strict(), errorFunction: () => JSON.stringify({ ok: false, error: "Invalid arguments: Invalid JSON input for tool" }), execute: async () => { executions += 1; return "42"; } });
-  const input = { instructions: "Use recorded evidence.", tools: [recordedTotal], input: [user("Read the test total.")], preferences: DEFAULT_AGENTS_API_PREFERENCES, signal: AbortSignal.timeout(10_000) };
+  const input = { instructions: "Use recorded evidence.", tools: [recordedTotal], input: [user("Read the test total.")], preferences: { model: "gpt-5.6-luna" as const, reasoningEffort: "high" as const, fastMode: false }, signal: AbortSignal.timeout(10_000) };
   return { harness, input, requests, executions: () => executions };
 }
 

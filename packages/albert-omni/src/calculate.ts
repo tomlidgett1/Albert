@@ -48,7 +48,8 @@ export function calculateValues(input: CalculateValuesInput, sources: ReadonlyMa
     if (["sum", "difference", "percent_change"].includes(calculation.kind) && (lc.type !== rc.type || lc.currency !== rc.currency)) { issues.push(`${calculation.key} requires matching units.`); continue; }
     if (left.semantics?.window !== right.semantics?.window && !(["difference", "percent_change"].includes(calculation.kind) && lc.key === rc.key)) { issues.push(`${calculation.key} mixes incompatible windows. Query the same scope or compare the same metric across explicit periods.`); continue; }
     used.set(left.resultId, left); used.set(right.resultId, right);
-    const type = ["percent_of", "percent_change"].includes(calculation.kind) ? "percent" : calculation.kind === "ratio" ? "number" : lc.type;
+    const type = ["percent_of", "percent_change"].includes(calculation.kind) ? "percent"
+      : calculation.kind === "ratio" ? (lc.type === "currency" && rc.type === "number" ? "currency" : "number") : lc.type;
     columns.push({ key: calculation.key, label: calculation.label, type, ...(type === "currency" && lc.currency ? { currency: lc.currency } : {}), ...(type === "percent" ? { percentScale: "percent" as const } : {}) });
     let value: TraceCell = null;
     try {

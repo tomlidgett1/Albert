@@ -17,7 +17,8 @@ for (const theme of ["light", "dark", "system"] as const) {
       requests.push(body);
       const events = [
         { type: "progress", status: "running", stage: "planning", label: "Checking the recorded evidence" },
-        { type: "answer", status: "complete", state: "Qualified", text: `Managed agent reply ${requests.length}.`, followUps: [], presentedResultIds: [], claims: [], provenance: {
+        { type: "validation", status: "warning", name: "Tool input", outcome: "failed", detail: "Fixture argument issue, subsequently corrected." },
+        { type: "answer", status: "complete", state: "Verified", text: `Managed agent reply ${requests.length}.\n\n| Store | Gross takings |\n| --- | ---: |\n| North | $400.00 |\n| South | $200.00 |`, followUps: [], presentedResultIds: [], claims: [], provenance: {
           sources: [], timeRange: { label: "Synthetic test", timezone: "Australia/Melbourne" }, definitions: [],
           semanticBundleHash: "synthetic-test", identityGraph: { version: 0, hash: "synthetic-test" },
         } },
@@ -36,18 +37,30 @@ for (const theme of ["light", "dark", "system"] as const) {
     await composer.fill("Check the synthetic evidence.");
     await composer.press("Enter");
     await expect(page.getByText("Managed agent reply 1.", { exact: true })).toBeVisible();
+    const answer = page.getByTestId("managed-answer-content").first();
+    await expect(answer.getByRole("table")).toBeVisible();
+    await expect(answer.getByRole("row")).toHaveCount(3);
+    await expect(page.getByText("Fixture argument issue, subsequently corrected.", { exact: true })).toHaveCount(0);
+    const evidence = page.getByRole("button", { name: /Evidence and checks/u }).first();
+    await expect(evidence).toHaveAttribute("aria-expanded", "false");
+    expect((await answer.boundingBox())!.y).toBeLessThan((await evidence.boundingBox())!.y);
+    await evidence.focus();
+    await evidence.press("Enter");
+    await expect(evidence).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByText("Fixture argument issue, subsequently corrected.", { exact: true })).toBeVisible();
+    await evidence.press("Enter");
     await composer.fill("Explain that result.");
     await composer.press("Enter");
     await expect(page.getByText("Managed agent reply 2.", { exact: true })).toBeVisible();
     expect(requests[1]?.conversationId).toBe(conversationId);
-    expect(requests[0]?.preferences).toEqual({ model: "gpt-5.6-luna", reasoningEffort: "high", fastMode: false });
+    expect(requests[0]?.preferences).toEqual({ model: "gpt-5.6-sol", reasoningEffort: "medium", fastMode: false });
     expect(omniCalls).toBe(0);
-    await page.locator('button[aria-keyshortcuts="Alt+N"]').click();
-    await expect(composer).toHaveValue("");
-    await expect(page.locator('[data-chat-runtime="newagent"]')).toBeVisible();
     await page.screenshot({ path: `.playwright/newagent-${theme}.png`, fullPage: true });
     const accessibility = await new AxeBuilder({ page }).include('[data-agent-harness="openai-agents-api"]').withTags(["wcag2a", "wcag2aa"]).analyze();
     expect(accessibility.violations.filter((issue) => issue.impact === "critical" || issue.impact === "serious")).toEqual([]);
+    await page.locator('button[aria-keyshortcuts="Alt+N"]').click();
+    await expect(composer).toHaveValue("");
+    await expect(page.locator('[data-chat-runtime="newagent"]')).toBeVisible();
   });
 }
 
@@ -71,5 +84,6 @@ test("newagent preserves the authenticated page boundary", async ({ browser, bas
     await expect(page).toHaveURL(/\/login\?next=%2Fnewagent/u);
     const rejected = await context.request.post("/api/newagent-conversation", { data: { message: "test" }, headers: { origin: "https://untrusted.example" } });
     expect(rejected.status()).toBe(403);
+    expect((await context.request.get("/api/managed-agent-cleanup")).status()).toBe(401);
   } finally { await context.close(); }
 });

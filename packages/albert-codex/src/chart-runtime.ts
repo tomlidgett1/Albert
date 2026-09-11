@@ -1,5 +1,6 @@
 import { ulid } from "ulid";
 import { findUngroundedNumbers } from "../../../services/conversation/src/grounding.js";
+import { protectReportingDates } from "../../shared/src/reporting-dates.js";
 import {
   compileGroundedFlint,
   sanitizeTraceText,
@@ -433,7 +434,7 @@ export function prepareCodexChart(input: Readonly<{
   }
   // Captions are validated against the governed cells plus the host-derived
   // chart rows, so a caption may cite a running total but never a new figure.
-  if (findUngroundedNumbers(caption, [...source.rows, ...rows]).length > 0) {
+  if (findUngroundedNumbers(protectReportingDates(caption, [source]).text, [...source.rows, ...rows]).length > 0) {
     return rejected("ungrounded_caption", "Every figure in the chart caption must come from this result (or its host-derived chart rows); otherwise omit the figure.");
   }
   const wireType: "bar" | "line" = resolved === "line" ? "line" : "bar";

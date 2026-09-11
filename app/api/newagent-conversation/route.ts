@@ -1,6 +1,7 @@
 import { ulid } from "ulid";
 import { z } from "zod";
-import { ManagedAgentsHarness, AgentsApiError } from "@/packages/albert-agents-api/src/harness";
+import { AgentsApiError } from "@/packages/albert-agents-api/src/harness";
+import { NativeManagedHarness } from "@/packages/albert-agents-api/src/native-harness";
 import { AGENTS_API_MODEL_IDS, AGENTS_API_RUNTIME, DEFAULT_AGENTS_API_PREFERENCES } from "@/packages/albert-agents-api/src/config";
 import { runGovernedAnalyticalTurn } from "@/packages/albert-omni/src/runtime";
 import { omniConversationRequestSchema, type OmniServiceTurn } from "@/packages/albert-omni/src/contracts";
@@ -14,6 +15,7 @@ import { loadBusinessContext } from "@/services/control-plane/src/business-conte
 import { createSupabaseAnalyticalQueryRecorder } from "@/services/control-plane/src/query-log-repository";
 import { appendConversationEvent, beginConversationTurn, failConversationTurn, loadConversationModelContext, loadPriorTurnResults, renewConversationTurnLease, assignConversationTitle } from "@/services/conversation/src/artifact-store";
 import { createLiveTraceSseResponse, createTraceEmitter } from "@/services/conversation/src";
+import { claimManagedAgentState } from "@/services/conversation/src/managed-agent-store";
 
 export const maxDuration = 800;
 
@@ -54,7 +56,8 @@ export async function POST(request: Request): Promise<Response> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   const cubeApiUrl = process.env.CUBE_API_URL?.trim();
   const cubeApiSecret = process.env.CUBEJS_API_SECRET?.trim();
-  if (!apiKey || !cubeApiUrl || !cubeApiSecret) return jsonError("The Agents API or governed data connection is not configured.", 503);
+  const serverKey = process.env.ALBERT_AGENTS_STATE_SECRET?.trim();
+  if (!apiKey || !cubeApiUrl || !cubeApiSecret || !serverKey) return jsonError("The managed agent or governed data connection is not configured.", 503);
   const preferences = parsed.preferences ?? DEFAULT_AGENTS_API_PREFERENCES;
   const turnId = ulid();
   let conversationId: string;
@@ -65,7 +68,7 @@ export async function POST(request: Request): Promise<Response> {
       message: parsed.message,
       runtimeProfile: {
         provider: "openai", runtime: AGENTS_API_RUNTIME,
-        analyticalRuntime: "cube-agents-api-v1", ...preferences,
+        analyticalRuntime: "cube-agents-api-v1", nativeVersion: 2, ...preferences,
       },
       replaceTurnId: parsed.replaceTurnId,
       supabase: auth.supabase,
@@ -81,12 +84,12 @@ export async function POST(request: Request): Promise<Response> {
   } });
   const response = createLiveTraceSseResponse({
     conversationId, turnId, signal: request.signal,
-    // Closing/stopping this page cancels managed work and removes the session.
+    // Closing/stopping cancels managed work; an interrupted session rotates on retry.
     run: async (stream, signal) => {
       const renewal = setInterval(() => {
         void renewConversationTurnLease({ supabase: auth.supabase, turnId });
       }, 120_000);
-      const harness = new ManagedAgentsHarness({ apiKey });
+      let harness: NativeManagedHarness | undefined;
       const emit = createTraceEmitter({
         persistenceAttempts: 4, requireDurableTerminal: true,
         persist: (event) => appendConversationEvent({ conversationId, turnId, event, supabase: auth.supabase }),
@@ -97,13 +100,18 @@ export async function POST(request: Request): Promise<Response> {
       const tableEvents = new Map<string, string>();
       try {
         await emit({ type: "progress", status: "running", stage: "planning", label: "Starting the new agent" });
-        const [history, routing, context, prior] = await Promise.all([
+        const [history, routing, context, prior, sessionStore] = await Promise.all([
           loadConversationModelContext(conversationId, auth.supabase),
           // Require routing metadata before contextualizing a managed session.
           loadConnectorRouting(auth.supabase),
           loadBusinessContext(auth.supabase),
           loadPriorTurnResults(conversationId, auth.supabase),
+          claimManagedAgentState({ supabase: auth.supabase, conversationId, turnId, serverKey }),
         ]);
+        harness = new NativeManagedHarness({
+          apiKey, scope: { tenantId: tenant.tenant_id, actorId: auth.user.id, conversationId, turnId },
+          state: sessionStore.state, saveState: sessionStore.save,
+        });
         if (!parsed.conversationId) {
           const title = parsed.message.replace(/\s+/gu, " ").slice(0, 100);
           const assigned = await assignConversationTitle({ conversationId, title, supabase: auth.supabase });
@@ -125,6 +133,7 @@ export async function POST(request: Request): Promise<Response> {
         const outcome = await runGovernedAnalyticalTurn({
           turn, cubeApiUrl, openai: { apiKey, baseUrl: "https://api.openai.com/v1" },
           harness, signal,
+          loadResults: sessionStore.loadResults,
           queryRecorder: createSupabaseAnalyticalQueryRecorder({ supabase: auth.supabase, conversationId, turnId, correlationId }),
           emit: async (event) => {
             if (event.type === "table" && event.dashboardReplay?.kind === "cube_v3") {
@@ -141,8 +150,11 @@ export async function POST(request: Request): Promise<Response> {
           },
         });
         await emit.drain?.();
-        await failConversationTurn({ conversationId, turnId, failureCode: "agents_api_answered", supabase: auth.supabase });
-        logger.info("agents_api.turn_completed", { conversationId, turnId, ...outcome }, correlationId);
+        await sessionStore.complete();
+        logger.info("agents_api.turn_completed", { conversationId, turnId,
+          answerState: outcome.answerState, queriesExecuted: outcome.queriesExecuted,
+          durationMs: outcome.durationMs, native: harness.metrics,
+        }, correlationId);
       } catch (error) {
         logger.error("agents_api.turn_failed", { conversationId, turnId, ...safeErrorEvidence(error) }, correlationId);
         if (!signal.aborted) await emit({ type: "error", status: "error", recoverable: true,
@@ -153,7 +165,7 @@ export async function POST(request: Request): Promise<Response> {
       } finally {
         clearInterval(renewal);
         // Also covers failures before the governed runtime takes ownership.
-        await harness.close().catch((error) => logger.error("agents_api.cleanup_failed", { conversationId, turnId, ...safeErrorEvidence(error) }, correlationId));
+        await harness?.close().catch((error) => logger.error("agents_api.cleanup_failed", { conversationId, turnId, ...safeErrorEvidence(error) }, correlationId));
       }
     },
   });

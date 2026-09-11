@@ -117,6 +117,7 @@ export function executeFrozenQuery(query: CubeQuery, injection = false): Record<
 
 export async function startFrozenCube() {
   const scopes = new Map<string, { tenantId: string; failOnce?: boolean; injection?: boolean }>();
+  const reads = new Map<string, number>();
   const server = createServer((request, response) => {
     try {
       const token = request.headers.authorization ?? "";
@@ -130,11 +131,12 @@ export async function startFrozenCube() {
       const url = new URL(request.url ?? "/", "http://localhost");
       response.setHeader("content-type", "application/json");
       if (url.pathname.endsWith("/meta")) { response.end(JSON.stringify(frozenCubeMeta())); return; }
+      reads.set(context.turn_id, (reads.get(context.turn_id) ?? 0) + 1);
       if (scope.failOnce) { scope.failOnce = false; response.statusCode = 503; response.end(JSON.stringify({ error: "Temporary fixture outage; retry the same query." })); return; }
       response.end(JSON.stringify(executeFrozenQuery(JSON.parse(url.searchParams.get("query") ?? "{}"), scope.injection)));
     } catch (error) { response.statusCode = 400; response.end(JSON.stringify({ error: error instanceof Error ? error.message : "Invalid fixture request" })); }
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address(); if (!address || typeof address === "string") throw new Error("No fixture listener.");
-  return { url: `http://127.0.0.1:${address.port}`, register: (turnId: string, tenantId: string, options: { failOnce?: boolean; injection?: boolean } = {}) => scopes.set(turnId, { tenantId, ...options }), close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+  return { url: `http://127.0.0.1:${address.port}`, register: (turnId: string, tenantId: string, options: { failOnce?: boolean; injection?: boolean } = {}) => scopes.set(turnId, { tenantId, ...options }), dataReads: (turnId: string) => reads.get(turnId) ?? 0, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }

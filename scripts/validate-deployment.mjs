@@ -473,6 +473,7 @@ assert.deepEqual(
   installCommand: "npm ci",
   regions: ["syd1"],
   functions: { "app/api/omni-conversation/route.ts": { regions: ["syd1"] } },
+  crons: [{ path: "/api/managed-agent-cleanup", schedule: "17 * * * *" }],
   },
   "Vercel project configuration drifted.",
 );

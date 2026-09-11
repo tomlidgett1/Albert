@@ -6,7 +6,11 @@ export { OMNI_IMESSAGE_DELIVERY_INSTRUCTIONS } from "./prompts.js";
 import { createHash } from "node:crypto";
 import { ulid } from "ulid";
 import { z } from "zod";
-import { Agent, Runner, tool, user, assistant, type AgentInputItem } from "@openai/agents";
+import { Agent, Runner, user, assistant, type AgentInputItem } from "@openai/agents";
+import { createGovernedToolRegistry } from "../../albert-agents-api/src/tools.js";
+import { composeManagedAnswer, MANAGED_ANSWER_JSON_SCHEMA, MANAGED_ANSWER_INSTRUCTIONS } from "../../albert-agents-api/src/answer.js";
+import { MANAGED_ANALYST_INSTRUCTIONS } from "../../albert-agents-api/src/instructions.js";
+import type { PriorTurnResult } from "../../albert-v3/src/engine/prior-results.js";
 import {
   normalizeAgentPreferences,
   containsAnswerTemplate,
@@ -98,6 +102,7 @@ export type OmniSemanticTurnOptions = Readonly<{
   deadlineAt?: number;
   /** A managed harness can use the same governed tools without the Omni runner. */
   harness?: AnalyticalHarness;
+  loadResults?: (ids: readonly string[]) => Promise<readonly PriorTurnResult[]>;
 }>;
 
 const MAX_AGENT_TURNS = 48;
@@ -355,7 +360,7 @@ export async function runGovernedAnalyticalTurn(
     // Topics whose field definitions the model has actually loaded this turn.
     // A query against any other topic is refused: every hallucinated member
     // name in production came from querying a topic from memory.
-    const inspectedTopics = new Set<string>(options.resume?.inspectedTopics ?? []);
+    const inspectedTopics = new Set<string>(options.resume?.inspectedTopics ?? options.harness?.knownTopics?.(catalogueDigest) ?? []);
     const chartState: CodexChartState = { emitted: options.resume?.charts.emitted ?? 0, maxCharts: 2, signatures: new Set(options.resume?.charts.signatures ?? []) };
     const seenQueryDigests = new Set<string>(options.resume?.seenQueryDigests ?? []);
 
@@ -376,6 +381,32 @@ export async function runGovernedAnalyticalTurn(
         status: "running",
         items: tasks.map((task) => ({ ...task })),
       });
+    };
+
+    const toolRegistry = createGovernedToolRegistry();
+    const tool = toolRegistry.define;
+
+    const ensureResults = async (ids: readonly string[]) => {
+      const needed = [...new Set(ids)].filter((id) => {
+        const known = evidence.find((result) => result.resultId === id);
+        return !known || (known.priorTurn && known.rows.length < known.rowCount);
+      });
+      if (!needed.length || !options.loadResults) return;
+      for (const prior of await options.loadResults(needed)) {
+        if (!prior.provenance) continue;
+        const restored: OmniEvidenceResult = {
+          resultId: prior.resultId, topic: prior.caption,
+          view: prior.view ?? "prior_result", connector: prior.connector ?? prior.provenance.sources[0]?.connector ?? "lightspeed",
+          query: {}, queryYaml: prior.queryYaml ?? "Earlier governed result", columns: prior.columns,
+          rows: prior.rows, rowCount: prior.rowCount, provenance: prior.provenance,
+          semantics: prior.semantics, executionMs: 0, priorTurn: true, rowFormats: prior.rowFormats,
+        };
+        const existing = evidence.findIndex((result) => result.resultId === prior.resultId);
+        if (existing >= 0) evidence.splice(existing, 1, restored); else evidence.push(restored);
+        unreplayableResultIds.add(prior.resultId);
+        await emit({ type: "table", status: "complete", resultId: prior.resultId, caption: `Earlier result · ${prior.caption}`,
+          columns: prior.columns, rows: prior.rows, provenance: prior.provenance, semantics: prior.semantics, rowFormats: prior.rowFormats, presentation: "evidence" });
+      }
     };
 
     // A tool call whose arguments fail the schema never reaches the executor:
@@ -1096,7 +1127,7 @@ export async function runGovernedAnalyticalTurn(
         yKey: z.string().min(1).max(120),
         seriesKey: z.string().min(1).max(120).nullable(),
         extraYKeys: z.array(z.string().min(1).max(120)).max(3).nullable(),
-        limit: z.number().int().min(3).max(15).nullable(),
+        limit: z.number().int().min(options.harness?.native ? 2 : 3).max(15).nullable(),
         transform: z.enum(["cumulative"]).nullable(),
       }).strict(),
       strict: true,
@@ -1302,7 +1333,9 @@ export async function runGovernedAnalyticalTurn(
     });
     const agent = new Agent({
       name: dashboardMode ? "Albert dashboard architect" : "Albert Omni analyst",
-      instructions: dashboardEditMode
+      instructions: options.harness?.native && !dashboardMode
+        ? MANAGED_ANALYST_INSTRUCTIONS
+        : dashboardEditMode
         ? renderOmniDashboardEditInstructions({ ...instructionsInput, topicDocument: editTopicDocument }) + `\n\n${OMNI_ANALYTICAL_RULES}`
         : dashboardMode
           ? renderOmniDashboardInstructions(instructionsInput) + `\n\n${OMNI_ANALYTICAL_RULES}`
@@ -1434,12 +1467,46 @@ export async function runGovernedAnalyticalTurn(
     const runAgentOnce = async (): Promise<string> => {
       if (modelRequests >= MAX_AGENT_TURNS) throw new Error("Max turns reached before completing the analysis.");
       if (options.harness) {
+        const native = options.harness.native;
+        const references = options.harness.references;
+        if (native && !references) throw new Error("Native result handles are not configured.");
+        if (native) for (const result of evidence) references!.register(result.resultId);
+        const selectedTools = agent.tools.filter((entry) => entry.type === "function");
+        const nativeTools = native ? new Map(toolRegistry.get(selectedTools.map((entry) => entry.name)).map((entry) => [entry.name, entry])) : undefined;
         const result = await options.harness.run({
-          instructions: typeof agent.instructions === "string" ? agent.instructions : "",
-          tools: agent.tools.filter((entry) => entry.type === "function"),
+          instructions: (typeof agent.instructions === "string" ? agent.instructions : "")
+            + (native && dashboardMode ? `\n\nCall ComposeDashboard to deliver the plan, then use outcome explanation for the hand-over.\n${MANAGED_ANSWER_INSTRUCTIONS}` : ""),
+          tools: selectedTools.map((entry) => native ? { ...entry, ...nativeTools!.get(entry.name) } : entry),
           input: items,
           preferences,
           signal,
+          ...(native ? { native: {
+            question: `${todayLine}\n\n${turn.message}`,
+            context: JSON.stringify({ organisation: turn.organisationName, timezone, currency: config.currency,
+              businessContext: turn.businessContext?.slice(0, 8_000), topics: renderTopicIndex(catalogue), freshness: turn.connectorFreshness }),
+            resultsContext: JSON.stringify(references!.encode(evidence.map((source) => ({ resultId: source.resultId, name: source.topic, columns: source.columns, rowCount: source.rowCount, period: source.provenance.timeRange, completeness: source.semantics?.completeness })))),
+            catalogueDigest,
+            getInspectedTopics: () => [...inspectedTopics],
+            resetInspectedTopics: () => inspectedTopics.clear(),
+            ensureResults,
+            recordToolFailure: async (name: string, detail: string) => {
+              await emit({ type: "validation", status: "warning", name: "Tool input", outcome: "failed", detail: sanitizeTraceText(`${name}: ${detail}`, 500) });
+            },
+            validateFinal: async (value: unknown): Promise<readonly string[]> => {
+              if (dashboardMode && !acceptedPlan) return ["Call ComposeDashboard with a valid, evidence-backed plan before finishing."];
+              const composed = composeManagedAnswer(value, new Map(evidence.map((source) => [source.resultId, source])), (alias) => references!.resolve(alias), {
+                question: turn.message, today: todayLine, hadQueryFailures,
+              });
+              if (!composed.ok) {
+                await emit({ type: "validation", status: "warning", name: "Answer evidence", outcome: "failed", detail: sanitizeTraceText(composed.issues.join(" "), 500) });
+                return composed.issues;
+              }
+              acceptedAnswer = composed.answer;
+              await emit({ type: "validation", status: "complete", name: "Answer evidence", outcome: composed.answer.state === "Verified" ? "passed" : "qualified", detail: "The answer's figures and tables are bound to recorded result cells." });
+              return [];
+            },
+            finalSchema: MANAGED_ANSWER_JSON_SCHEMA,
+          } } : {}),
         });
         modelRequests += 1;
         usage.requests += 1;
