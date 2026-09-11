@@ -101,6 +101,14 @@ export function composeAnswer(
     } catch (error) { issues.push(error instanceof Error ? error.message : "Invalid value."); }
   }
   for (const table of input.tables) {
+    const placeholder = `{{${table.id}}}`;
+    const lines = input.markdown.replace(/\r\n?/gu, "\n").split("\n");
+    for (const [index, line] of lines.entries()) {
+      if (!line.includes(placeholder)) continue;
+      if (line.trim() !== placeholder || lines[index - 1]?.trim() || lines[index + 1]?.trim()) {
+        issues.push(`Table ${table.id} must be a standalone paragraph: put ${placeholder} alone on a line with a blank line before and after it. Do not wrap it in a hand-written table header, row, or formatting.`);
+      }
+    }
     const source = evidence.get(table.resultId);
     if (!source) { issues.push(`Table ${table.id} references an unknown result.`); continue; }
     if (options.imessage) { issues.push("iMessage answers use value placeholders and short paragraphs, not tables."); continue; }
@@ -167,7 +175,7 @@ export const COMPOSE_ANSWER_INSTRUCTIONS = `# Composing the final answer
 
 Use ComposeAnswer to deliver the answer. Its accepted content is exactly what the owner receives.
 Write normal polished markdown in markdown, replacing EVERY analytical figure with a named placeholder like {{sales}}. Define it in values using the resultId, zero-based rowIndex and exact columnKey returned by a tool; format auto (or compact for texting), decimals null unless a precision matters. Do not type the value yourself.
-For tables, put {{weekly_table}} alone on a line and define it in tables with resultId, columnKeys and limit. The server formats the actual result rows. Never hand-copy or transpose a numerical table. ComposePivotTable and DeriveResult prepare new shapes and arithmetic before composition. CalculateValues computes exact arithmetic between any two result cells, including period-on-period change across two rows of a comparison query.
+For tables, put {{weekly_table}} in its own paragraph, alone on a line with a blank line before and after, and define it in tables with resultId, columnKeys and limit. Do not wrap that placeholder in a Markdown table or add your own header or separator row. The server supplies the complete table, including headers, separators and actual result rows. Never hand-copy or transpose a numerical table. ComposePivotTable and DeriveResult prepare new shapes and arithmetic before composition. CalculateValues computes exact arithmetic between any two result cells, including period-on-period change across two rows of a comparison query.
 Use citedResultIds for every result that supports the conclusion. State any missing source, proxy, incompatible period or uncertainty in limitations. These disclosures are appended to the answer. The harness decides the answer state; you cannot promote an answer to Verified.
 outcome answer presents query evidence; explanation answers a definition question without figures; clarification asks the one blocking question; no_data cites the executed empty result; unavailable names the missing capability. Do not use explanation to avoid retrieving business figures.
 If composition reports issues, repair the references or run the necessary query or derivation, then compose again. After acceptance, finish with a brief hand-over; do not rewrite the accepted answer.`;

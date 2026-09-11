@@ -66,6 +66,10 @@ The existing `OPENAI_BASE_URL` and all other product runtimes are unaffected.
 - Browser tests use the production Next.js build, the view2 layout, light/dark/
   system themes, a narrow canvas, follow-ups, new-chat reset and the auth boundary.
 - Existing Omni regressions and deployment checks protect the shared tools.
+- Live activation exposed a malformed table when a model wrapped a complete
+  evidence-table placeholder in its own Markdown header. Composition now rejects
+  table placeholders outside standalone paragraphs so the agent repairs the
+  layout before publication; numeric evidence and query results are unchanged.
 
 References: [quickstart](https://developers.openai.com/api/docs/guides/agents-api/quickstart),
 [function tools](https://developers.openai.com/api/docs/guides/agents-api/tools/functions),

@@ -63,6 +63,30 @@ test("tables are materialized from result cells and carry real claims", () => {
   assert.equal(result.answer.claims.length, 2);
 });
 
+test("a materialized table cannot be nested in a model-written table shell", () => {
+  const tables = [{ id: "evidence_table", resultId: source.resultId, columnKeys: ["product_id", "amount"], limit: 10 }];
+  for (const markdown of [
+    "| Period | Value |\n|---|---|\n{{evidence_table}}",
+    "| Period | {{evidence_table}} |",
+    "{{evidence_table}}\n| Total | Result |",
+    "**{{evidence_table}}**",
+  ]) {
+    const result = composeAnswer({ ...answerInput, markdown, values: [], tables }, new Map([[source.resultId, source]]), answerOptions);
+    assert.equal(result.ok, false);
+    assert.match(result.ok ? "" : result.issues.join(" "), /standalone paragraph/u);
+  }
+});
+
+test("standalone table references render one header and only the recorded rows", () => {
+  const result = composeAnswer({ ...answerInput, markdown: "Supporting evidence:\n\n{{evidence_table}}\n\nThese are the recorded figures.", values: [], tables: [{ id: "evidence_table", resultId: source.resultId, columnKeys: ["product_id", "amount"], limit: 10 }] }, new Map([[source.resultId, source]]), answerOptions);
+  assert.ok(result.ok);
+  const html = renderAssistantMarkdown(result.answer.text);
+  assert.equal((html.match(/<thead>/gu) ?? []).length, 1);
+  assert.equal((html.match(/<tr>/gu) ?? []).length, 2);
+  assert.ok(!html.includes("<td>---"));
+  assert.match(html, /\$100\.00/u);
+});
+
 test("limited and reused evidence cannot silently receive Verified", () => {
   for (const candidate of [{ ...source, semantics: semantics(1, "limited") }, { ...source, priorTurn: true }]) {
     const result = composeAnswer(answerInput, new Map([[source.resultId, candidate]]), answerOptions);
