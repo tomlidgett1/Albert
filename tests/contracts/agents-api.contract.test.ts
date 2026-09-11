@@ -4,6 +4,7 @@ import { tool, user } from "@openai/agents";
 import { z } from "zod";
 import { ManagedAgentsHarness } from "../../packages/albert-agents-api/src/harness.js";
 import { DEFAULT_AGENTS_API_PREFERENCES } from "../../packages/albert-agents-api/src/config.js";
+import { describeChatFailure } from "../../packages/shared/src/chat-failure.js";
 
 function fixture(options: { events?: unknown[]; pending?: boolean; completedBeforeStream?: boolean; cancelBeforeDelete?: boolean } = {}) {
   const requests: { method: string; path: string; body: Record<string, unknown> | null }[] = [];
@@ -112,4 +113,11 @@ test("already-aborted work never creates a provider session", async () => {
   await assert.rejects(f.harness.run({ ...f.input, signal: AbortSignal.abort() }));
   await f.harness.close();
   assert.equal(f.requests.length, 0);
+});
+
+test("a pending data-control approval is not reported as a provider outage", () => {
+  const message = "The new Agents API is awaiting approval for US session storage. Your message has not been sent to OpenAI.";
+  const result = describeChatFailure(message, { runtime: "newagent", phase: "start", httpStatus: 503 });
+  assert.ok(result.startsWith(message.slice(0, -1)));
+  assert.ok(!result.includes("not connected"));
 });

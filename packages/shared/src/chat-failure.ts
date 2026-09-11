@@ -132,6 +132,10 @@ export function describeChatFailure(error: unknown, context: ChatFailureContext 
   const haystack = `${raw} ${context.detail ?? ""}`.trim();
   const status = context.httpStatus;
 
+  // The managed endpoint returns bounded, public diagnostics. In particular,
+  // pending data-control approval is not an OpenAI connectivity failure.
+  if (context.runtime === "newagent" && raw) return withStatus(raw, status);
+
   if (/abort(?:ed|error)|this operation was aborted/iu.test(haystack) && !/timeout/iu.test(haystack)) {
     return "The analysis was cancelled.";
   }
