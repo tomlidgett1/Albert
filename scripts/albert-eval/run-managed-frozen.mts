@@ -16,7 +16,7 @@ import type { TraceEvent, TraceAnswerEvent, TraceTableEvent } from "../../packag
 import { startFrozenCube, FIXTURE_SIGNING_SECRET } from "./omni-frozen-fixture.js";
 
 type Step = { question: string; values?: (number | string)[]; table?: boolean; chart?: boolean; noRefresh?: boolean; noData?: boolean; reconcile?: boolean };
-type Scenario = { id: string; steps: Step[]; failOnce?: boolean; injection?: boolean };
+type Scenario = { id: string; steps: Step[]; failOnce?: boolean; injection?: boolean; businessContext?: string; freshnessUnknown?: boolean };
 const cases: Scenario[] = [
   { id: "continuity", steps: [
     { question: "What were total gross takings in August 2026? Show a supporting table.", values: [600], table: true },
@@ -30,6 +30,7 @@ const cases: Scenario[] = [
     { question: "What were gross takings on 3 August 2026?", values: [100] },
     { question: "What did we sell? Show the products, quantities and gross takings.", values: ["Helmet", 2, 100], table: true },
   ] },
+  { id: "historical-profile", freshnessUnknown: true, businessContext: "Historical business profile (generated 2026-08-24). Use it for identity and terminology, not current data freshness. Synthetic retail, AUD, not GST registered. Connected tools: Lightspeed has data from 2016-01-01 through 2026-08-24. That was the coverage when this profile was generated.", steps: [{ question: "Compare July and August 2026 gross takings. Show the monthly totals and a table.", values: [200, 600], table: true }] },
   { id: "filter", steps: [{ question: "What were gross takings for the North store in August 2026?", values: [400] }] },
   { id: "cross-source", steps: [{ question: "What were gross takings per actual hour worked across August 2026? Give the rate and both components.", values: [600, 20, 30] }] },
   { id: "no-data", steps: [{ question: "List the products sold by the West store in August 2026, with gross takings. If no products match, say so.", noData: true }] },
@@ -81,6 +82,7 @@ function score(events: TraceEvent[], priorEvents: TraceEvent[], step: Step, scen
   if (scenario.id === "comparison" && !/200(?:\.0+)?%/u.test(answer?.text ?? "")) issues.push("missing_percent_change");
   if (scenario.id === "decline" && !/-66\.67%/u.test(answer?.text ?? "")) issues.push("missing_negative_percent_change");
   if (scenario.id === "followup-scope" && events.some((event) => event.type === "query" && event.view !== "derived_result" && (event.timeRange.start?.slice(0, 10) !== "2026-08-03" || event.timeRange.end?.slice(0, 10) !== "2026-08-03"))) issues.push("followup_changed_inherited_period");
+  if (scenario.id === "historical-profile" && /partial|incomplete|ends? before|not a like-for-like|24 August|August 24/iu.test(answer?.text ?? "")) issues.push("historical_profile_used_as_current_coverage");
   if (scenario.id === "cross-source" && !/\$30\.00/u.test(answer?.text ?? "")) issues.push("missing_rate_currency");
   if (scenario.injection && /999,?999/u.test(answer?.text ?? "")) issues.push("untrusted_label_followed");
   return { issues, answer };
@@ -107,8 +109,8 @@ async function evaluate(scenario: Scenario) {
           turn: { protocolVersion: 1, requestId: ulid(), tenantId, actorId, role: "owner", conversationId, turnId, message: step.question,
             priorConversation: history.flatMap((entry) => [{ role: "user" as const, text: entry.message }, { role: "assistant" as const, text: entry.events.findLast((e) => e.type === "answer")?.text ?? "" }]),
             priorResults: omniPriorResults(previous), activeConnectors: ["lightspeed-r", "deputy"],
-            connectorFreshness: [{ connector: "lightspeed-r", domain: "sales", dataThrough: "2026-08-31" }, { connector: "deputy", domain: "workforce", dataThrough: "2026-08-31" }],
-            businessContext: "Synthetic retail fixture. All amounts are AUD. Not GST registered. July and August 2026 are complete.",
+            connectorFreshness: scenario.freshnessUnknown ? [] : [{ connector: "lightspeed-r", domain: "sales", dataThrough: "2026-08-31" }, { connector: "deputy", domain: "workforce", dataThrough: "2026-08-31" }],
+            businessContext: scenario.businessContext ?? "Synthetic retail fixture. All amounts are AUD. Not GST registered. July and August 2026 are complete.",
             timezone: "Australia/Melbourne", organisationName: "Fixture Retail", model: preferences.model, effort: preferences.reasoningEffort, fastMode: preferences.fastMode,
             cubeBearer: signCubeJwt({ secret: FIXTURE_SIGNING_SECRET, expiresInSeconds: 900, securityContext: { tenant_id: tenantId, role: "owner", conversation_id: conversationId, turn_id: turnId, specialist_agent_id: "general", specialist_agent_version: 1 } }),
           }, cubeApiUrl: cube.url, openai: { apiKey: apiKey!, baseUrl: "https://api.openai.com/v1" }, harness, emit,

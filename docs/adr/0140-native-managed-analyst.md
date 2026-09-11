@@ -17,6 +17,9 @@ number and materializes tables from immutable results before publishing an answe
 Native tools parse their original Zod contracts directly, return useful field
 errors as `success:false`, and use compact conversation-scoped result handles.
 Unused nullable parameters may be omitted without weakening any actual constraint.
+Business profiles carry their generation timestamp and are explicitly historical.
+Their coverage notes cannot establish current freshness; a missing watermark does
+not establish a data cutoff or prove that a reporting month is incomplete.
 
 The existing governed Cube executors, exact arithmetic, provenance, row-limit
 semantics and tenant claims remain authoritative. The model receives no database

@@ -124,7 +124,7 @@ export async function POST(request: Request): Promise<Response> {
           priorConversation: history.slice(-12).map(({ role, text }) => ({ role, text: text.slice(0, 24_000) })),
           priorResults: omniPriorResults(prior),
           activeConnectors: [...routing.activeConnectors], connectorFreshness: [...routing.freshness],
-          ...(context ? { businessContext: context.rendered.slice(0, 20_000) } : {}),
+          ...(context ? { businessContext: `Historical business profile (generated ${context.generatedAt ?? context.updatedAt}). Use it for business identity, terminology and preferences. Its dated connector-coverage notes describe that snapshot, not current data freshness.\n\n${context.rendered.slice(0, 19_500)}` } : {}),
           timezone: tenant.timezone, organisationName: tenant.tenant_name.slice(0, 160),
           cubeBearer, model: preferences.model, effort: preferences.reasoningEffort as OmniServiceTurn["effort"], fastMode: preferences.fastMode,
           ...(parsed.dashboardBuild ? { dashboardBuild: true } : {}),
