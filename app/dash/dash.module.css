@@ -18625,6 +18625,7 @@
 }
 
 .view2NavRight {
+  flex: 0 0 auto;
   gap: 12px;
   justify-content: flex-end;
   overflow: visible;
@@ -19205,6 +19206,7 @@
 
 .view2NewAnalysis {
   display: inline-flex;
+  flex-shrink: 0;
   height: 30px;
   align-items: center;
   gap: 6px;
