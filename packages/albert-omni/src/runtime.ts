@@ -1,3 +1,4 @@
+import type { AnalyticalHarness } from "./harness.js";
 import { extractOmniFollowUps } from "./follow-ups.js";
 export { extractOmniFollowUps } from "./follow-ups.js";
 import { renderOmniInstructions, renderOmniDashboardInstructions, renderOmniDashboardEditInstructions, OMNI_IMESSAGE_DELIVERY_INSTRUCTIONS, OMNI_ANALYTICAL_RULES } from "./prompts.js";
@@ -95,6 +96,8 @@ export type OmniSemanticTurnOptions = Readonly<{
   checkpoint?: (state: OmniTurnCheckpoint) => Promise<void>;
   /** Queue wait counts toward the turn's deadline. */
   deadlineAt?: number;
+  /** A managed harness can use the same governed tools without the Omni runner. */
+  harness?: AnalyticalHarness;
 }>;
 
 const MAX_AGENT_TURNS = 48;
@@ -252,7 +255,10 @@ function isTransitionMessage(text: string): boolean {
   return trimmed.length < 160 && (/[:…]$/u.test(trimmed) || /^(?:let me|now (?:let me|i)|i'll|i will|next,?)\b/iu.test(trimmed));
 }
 
-export async function runOmniSemanticTurn(
+export const runOmniSemanticTurn = (options: OmniSemanticTurnOptions): Promise<OmniSemanticTurnResult> =>
+  runGovernedAnalyticalTurn(options);
+
+export async function runGovernedAnalyticalTurn(
   options: OmniSemanticTurnOptions,
 ): Promise<OmniSemanticTurnResult> {
   const { turn, emit } = options;
@@ -1360,7 +1366,7 @@ export async function runOmniSemanticTurn(
           getCurrentTime,
         ],
     });
-    const runner = new Runner({
+    const runner = options.harness ? null : new Runner({
       modelProvider: createAlbertModelProvider(transport),
       tracingDisabled: true,
       workflowName: "albert-omni",
@@ -1427,13 +1433,29 @@ export async function runOmniSemanticTurn(
     };
     const runAgentOnce = async (): Promise<string> => {
       if (modelRequests >= MAX_AGENT_TURNS) throw new Error("Max turns reached before completing the analysis.");
+      if (options.harness) {
+        const result = await options.harness.run({
+          instructions: typeof agent.instructions === "string" ? agent.instructions : "",
+          tools: agent.tools.filter((entry) => entry.type === "function"),
+          input: items,
+          preferences,
+          signal,
+        });
+        modelRequests += 1;
+        usage.requests += 1;
+        usage.inputTokens += result.inputTokens;
+        usage.outputTokens += result.outputTokens;
+        usage.cachedInputTokens += result.cachedInputTokens;
+        usage.reasoningTokens += result.reasoningTokens;
+        return result.text;
+      }
       pendingMessage = null;
       // The answer is everything the model said after its last successful
       // tool result, not only its last message: a model that writes the
       // answer, then loses a tool call, then adds "as shown above" would
       // otherwise hand the owner only the postscript.
       let answerParts: string[] = [];
-      const stream = await runner.run(agent, [...items], {
+      const stream = await runner!.run(agent, [...items], {
         stream: true,
         maxTurns: MAX_AGENT_TURNS - modelRequests,
         signal,
@@ -1509,7 +1531,7 @@ export async function runOmniSemanticTurn(
       } catch (error) {
         const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
         const backoffMs = TRANSIENT_RETRY_BACKOFF_MS[attempt];
-        if (signal.aborted || backoffMs === undefined || !TRANSIENT_RUN_FAILURE.test(message)) {
+        if (options.harness || signal.aborted || backoffMs === undefined || !TRANSIENT_RUN_FAILURE.test(message)) {
           throw error;
         }
         await emit({
@@ -1621,5 +1643,6 @@ export async function runOmniSemanticTurn(
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener("abort", upstreamAbort);
+    await options.harness?.close();
   }
 }

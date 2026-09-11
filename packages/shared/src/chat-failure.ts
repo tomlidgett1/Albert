@@ -1,6 +1,6 @@
 import { sanitizeTraceText } from "./agent-runtime.js";
 
-export type ChatFailureRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "omni" | "compare";
+export type ChatFailureRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "omni" | "newagent" | "compare";
 
 export type ChatFailureContext = Readonly<{
   runtime?: ChatFailureRuntime;
@@ -101,6 +101,7 @@ function alreadyDiagnostic(text: string): boolean {
 }
 
 function runtimeLabel(runtime: ChatFailureRuntime | undefined): string {
+  if (runtime === "newagent") return "OpenAI Agents API";
   if (runtime === "cubecore") return "Cubecore";
   if (runtime === "v3") return "Albert v3 (Cubecore)";
   if (runtime === "xero_mcp") return "Xero MCP";

@@ -1,5 +1,7 @@
 "use client";
 
+import { AGENTS_API_MODEL_IDS, DEFAULT_AGENTS_API_PREFERENCES } from "@/packages/albert-agents-api/src/config";
+
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SVGProps } from "react";
 import { AnimatePresence, animate, motion, useReducedMotion } from "framer-motion";
 import Image from "next/image";
@@ -418,11 +420,12 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
   }
 }
 
-type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "omni" | "compare";
+type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "omni" | "newagent" | "compare";
 
 function chatRuntimeFromProfile(value: unknown): Exclude<ChatRuntime, "fixture"> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "openai";
   const profile = value as Record<string, unknown>;
+  if (profile.runtime === "openai-agents-api") return "newagent";
   if (profile.runtime === "omni-agent" || profile.analyticalRuntime === "cube-omni-v1") {
     return "omni";
   }
@@ -915,7 +918,9 @@ function saveConversationSidebarPrefs(email: string, prefs: ConversationSidebarP
 export default function DashPage() {
   const router = useRouter();
   const pathname = usePathname();
-  const isView2 = pathname === "/view2";
+  const isNewAgent = pathname === "/newagent";
+  const isView2 = pathname === "/view2" || isNewAgent;
+  const defaultPreferences = isNewAgent ? DEFAULT_AGENTS_API_PREFERENCES : DEFAULT_OMNI_PREFERENCES;
   const supabase = useMemo(() => createClient(), []);
   const [accountEmail, setAccountEmail] = useState("");
   const [accountOrganisation, setAccountOrganisation] = useState<{
@@ -955,11 +960,11 @@ export default function DashPage() {
   const [chatDraft, setChatDraft] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
-  const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>("omni");
+  const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>(isNewAgent ? "newagent" : "omni");
   /** Chat is the conversation; Discover the grid of questions worth asking; Scheduled the reports Albert texts on a timer. */
   const [chatSurface, setChatSurface] = useState<ChatSurface>("chat");
   const [specialistAgentId, setSpecialistAgentId] = useState<SpecialistAgentId>("general");
-  const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(DEFAULT_OMNI_PREFERENCES);
+  const [agentPreferences, setAgentPreferences] = useState<AgentRunPreferences>(defaultPreferences);
   const [codexSolPlannerEnabled, setCodexSolPlannerEnabled] = useState(DEFAULT_CODEX_SOL_PLANNER);
   const [codexProModeEnabled, setCodexProModeEnabled] = useState(DEFAULT_CODEX_PRO_MODE);
   const [isChatResponding, setIsChatResponding] = useState(false);
@@ -1197,7 +1202,7 @@ export default function DashPage() {
     turnId?: string;
   }>());
   const activeConversationIdRef = useRef<string | undefined>(undefined);
-  const activeChatRuntimeRef = useRef<Exclude<ChatRuntime, "fixture">>("omni");
+  const activeChatRuntimeRef = useRef<Exclude<ChatRuntime, "fixture">>(isNewAgent ? "newagent" : "omni");
   const specialistAgentIdRef = useRef<SpecialistAgentId>("general");
   const viewingKeyRef = useRef<string | null>(null);
   const agentPreferencesRef = useRef(agentPreferences);
@@ -1901,7 +1906,7 @@ export default function DashPage() {
       for (const conversation of parsed) {
         seenSidebarConversationIdsRef.current.add(conversation.conversationId);
       }
-      setConversationSummaries(parsed);
+      setConversationSummaries(isNewAgent ? parsed.filter((entry) => entry.runtime === "newagent") : parsed);
       setConversationHistoryStatus({ kind: "ready" });
       // Backfill missing AI titles for existing threads (cheap nano model).
       const pending = parsed.filter((item) => item.titlePending).slice(0, 8);
@@ -1939,7 +1944,7 @@ export default function DashPage() {
         message: error instanceof Error ? error.message : "Conversation history could not be loaded.",
       });
     }
-  }, []);
+  }, [isNewAgent]);
 
   useEffect(() => {
     void loadConversationSummaries();
@@ -2976,7 +2981,9 @@ export default function DashPage() {
       && !options?.swarmKind;
     const runDashboardTargetId = runDashboardBuild ? dashboardModeDashboardIdRef.current : null;
     const runDashboardEdit = runDashboardBuild ? options?.dashboardEdit ?? null : null;
-    const runRuntime = runDashboardBuild
+    const runRuntime = isNewAgent
+      ? "newagent"
+      : runDashboardBuild
       ? "omni"
       : swarmEnabledRef.current && !superAgentEnabledRef.current && activeChatRuntimeRef.current === "omni"
       ? "omni"
@@ -3165,7 +3172,7 @@ export default function DashPage() {
     let swarmFleetStarted = false;
     let dashboardRunToken: number | null = null;
     try {
-      if (swarmEnabledRef.current || superAgentEnabledRef.current) {
+      if (!isNewAgent && (swarmEnabledRef.current || superAgentEnabledRef.current)) {
         const swarmKind = options?.swarmKind
           ?? (superAgentEnabledRef.current ? SUPER_AGENT_KIND : undefined);
         const swarmRuntime = runRuntime === "omni" ? "omni" as const : "codex" as const;
@@ -3358,7 +3365,7 @@ export default function DashPage() {
       }
       const requestBody = {
         message: requestMessage,
-        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "omni" || runRuntime === "xero_mcp" ? { preferences: requestPreferences } : {}),
+        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "omni" || runRuntime === "newagent" || runRuntime === "xero_mcp" ? { preferences: requestPreferences } : {}),
         ...(runRuntime === "codex" ? { solPlanner: runSolPlanner } : {}),
         ...(runRuntime === "codex" ? { proMode: runProMode } : {}),
         ...(requestConversationId ? { conversationId: requestConversationId } : {}),
@@ -3370,7 +3377,9 @@ export default function DashPage() {
         ...(runDashboardBuild && runDashboardEdit && dashboardEditTopic ? { dashboardEditTopic } : {}),
         confirmedOption,
       };
-      const endpoint = runRuntime === "codex"
+      const endpoint = runRuntime === "newagent"
+        ? "/api/newagent-conversation"
+        : runRuntime === "codex"
         ? "/api/codex-conversation"
         : runRuntime === "omni"
         ? "/api/omni-conversation"
@@ -3405,7 +3414,9 @@ export default function DashPage() {
       }
 
       const runtimeHeader = response.headers.get("X-Albert-Runtime");
-      const runtime: ChatRuntime = runtimeHeader === "fixture"
+      const runtime: ChatRuntime = runtimeHeader === "newagent"
+        ? "newagent"
+        : runtimeHeader === "fixture"
         ? "fixture"
         : runtimeHeader === "codex"
           ? "codex"
@@ -3434,7 +3445,7 @@ export default function DashPage() {
         await response.body?.cancel("runtime_lock_mismatch");
         throw new Error("The conversation runtime did not match the selected method.");
       }
-      if ((runtime === "codex" || runtime === "omni") && response.headers.get("X-Albert-Model") !== requestPreferences.model) {
+      if ((runtime === "codex" || runtime === "omni" || runtime === "newagent") && response.headers.get("X-Albert-Model") !== requestPreferences.model) {
         await response.body?.cancel("codex_model_mismatch");
         throw new Error("The conversation did not use the selected model.");
       }
@@ -4239,6 +4250,7 @@ export default function DashPage() {
     runtime: Exclude<ChatRuntime, "fixture">,
     nextSpecialistAgentId: SpecialistAgentId = "general",
   ) => {
+    if (isNewAgent) runtime = "newagent";
     snapshotViewedConversation();
     chatPinAnimationsRef.current.forEach((animation) => animation.stop());
     chatPinAnimationsRef.current = [];
@@ -4298,8 +4310,8 @@ export default function DashPage() {
       resetChat("xero_mcp", "general");
       return;
     }
-    setAgentPreferences(DEFAULT_OMNI_PREFERENCES);
-    agentPreferencesRef.current = DEFAULT_OMNI_PREFERENCES;
+    setAgentPreferences(defaultPreferences);
+    agentPreferencesRef.current = defaultPreferences;
     setCodexSolPlannerEnabled(DEFAULT_CODEX_SOL_PLANNER);
     codexSolPlannerEnabledRef.current = DEFAULT_CODEX_SOL_PLANNER;
     setCodexProModeEnabled(DEFAULT_CODEX_PRO_MODE);
@@ -4324,8 +4336,8 @@ export default function DashPage() {
     resetChat("compare", "general");
   };
   const startOmniChat = () => {
-    setAgentPreferences(DEFAULT_OMNI_PREFERENCES);
-    agentPreferencesRef.current = DEFAULT_OMNI_PREFERENCES;
+    setAgentPreferences(defaultPreferences);
+    agentPreferencesRef.current = defaultPreferences;
     resetChat("omni", "general");
     window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
   };
@@ -4426,7 +4438,7 @@ export default function DashPage() {
     leaveDashboardMode();
     setSwarmMode(true);
   };
-  const runModeControlProps = {
+  const runModeControlProps = isNewAgent ? {} : {
     superAgentEnabled,
     onSuperAgentChange: handleSuperAgentChange,
     swarmEnabled,
@@ -4482,11 +4494,12 @@ export default function DashPage() {
   // Omni is the only harness the chat offers. `?runtime=albert|codex|compare`
   // remains as an internal entry to the other runtimes for verification.
   useEffect(() => {
+    if (isNewAgent) return;
     const requested = new URL(window.location.href).searchParams.get("runtime");
     if (requested !== "albert" && requested !== "codex" && requested !== "compare") return;
     const task = window.setTimeout(() => selectConversationRuntimeRef.current(requested), 0);
     return () => window.clearTimeout(task);
-  }, []);
+  }, [isNewAgent]);
 
   /** A Discover card starts a fresh Omni analysis with the card's question. */
   const askFromDiscover = (prompt: string) => {
@@ -4738,11 +4751,11 @@ export default function DashPage() {
                               popoverPlacement="below"
                               popoverAlign="shell-start"
                             />
-                          ) : activeChatRuntime === "omni" ? (
+                          ) : (activeChatRuntime === "omni" || activeChatRuntime === "newagent") ? (
                             <ModelRunControls
                               value={agentPreferences}
                               onChange={setAgentPreferences}
-                              allowedModelIds={OMNI_MODEL_IDS}
+                              allowedModelIds={activeChatRuntime === "newagent" ? AGENTS_API_MODEL_IDS : OMNI_MODEL_IDS}
                               allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
                               {...runModeControlProps}
                               popoverPlacement="below"
@@ -4784,7 +4797,7 @@ export default function DashPage() {
           {turn.replies.map((message) => {
             const suppressEnter = Boolean(reduceMotion || message.suppressEnter);
             const messageKey = `${activeConversationId ?? "draft"}:${message.id}`;
-            const isOmniTrail = message.runtime === "omni" && !message.events?.some((event) => (
+            const isOmniTrail = (message.runtime === "omni" || message.runtime === "newagent") && !message.events?.some((event) => (
               event.type === "plan" && event.id.startsWith("swarm_")
             ));
             return (
@@ -4864,6 +4877,7 @@ export default function DashPage() {
 
   return (
     <main
+      data-agent-harness={isNewAgent ? "openai-agents-api" : undefined}
       className={`${styles.dash} ${isView2 ? styles.view2 : collapsed ? styles.collapsed : ""}`}
       data-theme={theme}
     >
@@ -5106,6 +5120,7 @@ export default function DashPage() {
           </div>
 
           <div className={styles.view2NavRight}>
+            {isNewAgent ? <span className={styles.chatRuntimeIndicator}>Agents API</span> : null}
             <View2ConnectedTools
               providers={connectionsData.providers}
               onOpenConnections={() => selectView2Page("Connections")}
@@ -6275,6 +6290,8 @@ export default function DashPage() {
                         ? "Ask Xero anything"
                         : activeChatRuntime === "codex"
                           ? "Ask Codex about your business"
+                        : activeChatRuntime === "newagent"
+                          ? "Ask the new agent about your business"
                         : activeChatRuntime === "omni"
                           ? "Ask Omni about your business"
                         : isCustomerAgent
@@ -6298,7 +6315,7 @@ export default function DashPage() {
                         ? chatMessages.length > 0
                           ? "Ask Codex a follow-up…"
                           : "Ask Codex anything about your connected data…"
-                      : activeChatRuntime === "omni"
+                      : (activeChatRuntime === "omni" || activeChatRuntime === "newagent")
                         ? chatMessages.length > 0
                           ? "Ask a follow-up…"
                           : "Ask anything about your connected data…"
@@ -6378,11 +6395,11 @@ export default function DashPage() {
                       {...runModeControlProps}
                       {...developerControlProps}
                     />
-                  ) : activeChatRuntime === "omni" ? (
+                  ) : (activeChatRuntime === "omni" || activeChatRuntime === "newagent") ? (
                     <ModelRunControls
                       value={agentPreferences}
                       onChange={setAgentPreferences}
-                      allowedModelIds={OMNI_MODEL_IDS}
+                      allowedModelIds={activeChatRuntime === "newagent" ? AGENTS_API_MODEL_IDS : OMNI_MODEL_IDS}
                       allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
                       {...runModeControlProps}
                       {...developerControlProps}
