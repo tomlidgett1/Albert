@@ -88,7 +88,7 @@ test("the lean element-edit mode travels on the turn with its topic, and the bri
   const runtime = readFileSync(new URL("../../packages/albert-omni/src/runtime.ts", import.meta.url), "utf8");
   assert.match(runtime, /const dashboardEditMode = dashboardMode && turn\.dashboardEdit === true;/u);
   assert.match(runtime, /if \(editTopicView\) inspectedTopics\.add\(editTopicView\.name\);/u, "the inlined topic passes the query guard");
-  assert.match(runtime, /tools: dashboardEditMode\s*\?\s*\[\s*searchSemanticModel,\s*fetchFieldValues,\s*generateSemanticQuery,\s*composeDashboard,\s*getCurrentTime,\s*\]/u, "no task list, derive or pivot tools in edit mode");
+  assert.match(runtime, /const tools: Tool\[\] = dashboardEditMode\s*\?\s*\[\s*searchSemanticModel,\s*fetchFieldValues,\s*generateSemanticQuery,\s*composeDashboard,\s*getCurrentTime,\s*\]/u, "no task list, derive or pivot tools in edit mode");
   const prompts = readFileSync(new URL("../../packages/albert-omni/src/prompts.ts", import.meta.url), "utf8");
   assert.match(prompts, /Call GenerateSemanticQuery ONCE/u);
   assert.match(prompts, /Call ComposeDashboard with exactly ONE tile/u);

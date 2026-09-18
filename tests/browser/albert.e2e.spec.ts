@@ -15,13 +15,14 @@ async function openDashboard(page: Parameters<typeof installAppApiRoutes>[0]) {
   return capture;
 }
 
-type AnalysisRuntime = "Albert" | "Codex" | "Omni" | "Compare";
+type AnalysisRuntime = "Albert" | "Codex" | "Omni" | "OAI Codex" | "Compare";
 
 /** `?runtime=` values the dash accepts. */
 const RUNTIME_PARAMS: Record<AnalysisRuntime, string> = {
   Albert: "albert",
   Codex: "codex",
   Omni: "omni",
+  "OAI Codex": "oai-codex",
   Compare: "compare",
 };
 
@@ -30,6 +31,7 @@ const RUNTIME_STAMPS: Record<Exclude<AnalysisRuntime, "Compare">, string> = {
   Albert: "v3",
   Codex: "codex",
   Omni: "omni",
+  "OAI Codex": "oai_codex",
 };
 
 /** The chat workspace stamps its runtime; Compare replaces the workspace with its own header. */
@@ -46,8 +48,9 @@ async function expectAnalysisRuntime(
 }
 
 /**
- * The chat offers only Omni (ADR 0130). Albert, Codex and Compare stay
- * reachable for verification through the internal `?runtime=` entry.
+ * The chat offers Omni, OAI Codex and their comparison through the harness
+ * selector (ADR 0141). Albert, Codex and the engine Compare stay reachable
+ * for verification through the internal `?runtime=` entry.
  */
 async function selectAnalysisRuntime(
   page: Parameters<typeof installAppApiRoutes>[0],
@@ -1998,4 +2001,82 @@ test("Dashboard Master runs a session through the omni harness and renders the r
     return -1;
   });
   expect(scrolled).toBeGreaterThan(0);
+});
+
+test("the harness selector switches the chat to OAI Codex and streams the turn through its endpoint", async ({ page }) => {
+  const capture = await installAppApiRoutes(page);
+  await page.goto("/dash");
+  await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
+
+  const selector = page.getByRole("group", { name: "Analysis harness" });
+  await expect(selector.getByTestId("harness-select-omni")).toHaveAttribute("aria-pressed", "true");
+  await selector.getByTestId("harness-select-oai_codex").click();
+  await expect(page.locator('[data-chat-runtime="oai_codex"]')).toBeVisible();
+  await expect(selector.getByTestId("harness-select-oai_codex")).toHaveAttribute("aria-pressed", "true");
+
+  // The managed harness runs OpenAI models only: Luna is the default, Claude is absent.
+  const settings = page.getByTestId("model-run-controls-trigger");
+  await expect(settings).toHaveAttribute("aria-label", "Run settings: GPT 5.6 Luna, Standard speed, max reasoning, Super agent off, Swarm off");
+  await settings.click();
+  await expect(page.getByRole("radio", { name: "GPT 5.6 Luna" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: "Claude Haiku 4.5" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  const composer = page.getByRole("textbox", { name: "Ask OAI Codex about your business" });
+  await composer.fill("Show me revenue by week for the last 12 complete weeks.");
+  await composer.press("Enter");
+
+  await expect.poll(() => capture.oaiCodexConversationPayloads.length).toBe(1);
+  expect(capture.omniConversationPayloads.length).toBe(0);
+  const payload = capture.oaiCodexConversationPayloads[0] as Record<string, unknown>;
+  expect(payload.message).toBe("Show me revenue by week for the last 12 complete weeks.");
+  expect((payload.preferences as Record<string, unknown>).model).toBe("gpt-5.6-luna");
+
+  // The same Omni-style trail renders for the managed harness.
+  await expect(page.getByText("The lift came from stronger weekend trade.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "How does this compare to last year?" })).toBeVisible();
+  await page.screenshot({ path: ".playwright/oai-codex-harness-turn.png", fullPage: true });
+  await selectAnalysisRuntime(page, "OAI Codex");
+});
+
+test("Compare from the harness selector runs Omni and OAI Codex on the same prompt", async ({ page }) => {
+  const capture = await installAppApiRoutes(page);
+  await page.goto("/dash");
+  await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();
+  await page.getByRole("group", { name: "Analysis harness" }).getByTestId("harness-select-compare").click();
+
+  await expect(page.getByRole("heading", { name: "Ask once. Watch both analyse.", level: 2 })).toBeVisible();
+  await expect(page.getByText("Same governed tools", { exact: true })).toBeVisible();
+  await expect(page.getByText("Independent agent loops", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("compare-pane-runtime-left")).toHaveValue("omni");
+  await expect(page.getByTestId("compare-pane-runtime-right")).toHaveValue("oai_codex");
+
+  const prompt = "Show me revenue by week for the last 12 complete weeks.";
+  await page.getByRole("textbox", { name: "Ask both Omni and OAI Codex" }).fill(prompt);
+  await page.getByRole("button", { name: "Compare answers", exact: true }).click();
+
+  await expect.poll(() => capture.omniConversationPayloads.length).toBe(1);
+  await expect.poll(() => capture.oaiCodexConversationPayloads.length).toBe(1);
+  expect(capture.omniConversationPayloads[0]).toEqual({
+    message: prompt,
+    preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: true },
+  });
+  expect(capture.oaiCodexConversationPayloads[0]).toEqual({
+    message: prompt,
+    preferences: { model: "gpt-5.6-luna", reasoningEffort: "max", fastMode: true },
+  });
+
+  const omniPane = page.getByRole("region", { name: "Omni comparison result" });
+  const managedPane = page.getByRole("region", { name: "OAI Codex comparison result" });
+  await expect(omniPane.getByText("The lift came from stronger weekend trade.")).toBeVisible();
+  await expect(managedPane.getByText("The lift came from stronger weekend trade.")).toBeVisible();
+  await expect(omniPane.getByText("Complete", { exact: true })).toBeVisible();
+  await expect(managedPane.getByText("Complete", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Observed answer times · Omni .* · OAI Codex/u)).toBeVisible();
+  await expectNoWcagViolations(page, "Harness compare completed panes");
+  await page.screenshot({ path: ".playwright/harness-compare.png", fullPage: true });
+
+  // The selector on the Compare header returns to a fresh Omni analysis.
+  await page.getByRole("group", { name: "Analysis harness" }).getByTestId("harness-select-omni").click();
+  await expect(page.locator('[data-chat-runtime="omni"]')).toBeVisible();
 });

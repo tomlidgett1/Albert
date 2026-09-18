@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import {
   createDeterministicFixtureTrace,
   FIXTURE_RESULT_ID,
@@ -159,6 +159,7 @@ export type AppApiCapture = {
   conversationPayloads: unknown[];
   codexConversationPayloads: unknown[];
   omniConversationPayloads: unknown[];
+  oaiCodexConversationPayloads: unknown[];
   swarmPayloads: unknown[];
   dashboardMasterPayloads: unknown[];
   dashboardBuildPayloads: unknown[];
@@ -825,6 +826,7 @@ export async function installAppApiRoutes(
     conversationPayloads: [],
     codexConversationPayloads: [],
     omniConversationPayloads: [],
+    oaiCodexConversationPayloads: [],
     swarmPayloads: [],
     dashboardMasterPayloads: [],
     dashboardBuildPayloads: [],
@@ -2396,9 +2398,11 @@ export async function installAppApiRoutes(
     }).catch(() => undefined);
   });
 
-  await page.route(/\/api\/omni-conversation$/u, async (route) => {
+  // Omni and OAI Codex (ADR 0141) share one conversation contract; the
+  // fixture answers both from the same trace, stamped with the runtime asked for.
+  const fulfilOmniStyleConversation = async (route: Route, runtimeHeader: "omni" | "oai_codex") => {
     const requestPayload = route.request().postDataJSON() as Record<string, unknown>;
-    capture.omniConversationPayloads.push(requestPayload);
+    (runtimeHeader === "oai_codex" ? capture.oaiCodexConversationPayloads : capture.omniConversationPayloads).push(requestPayload);
     if (
       requestPayload.dashboardBuild === true
       && typeof requestPayload.message === "string"
@@ -2480,7 +2484,7 @@ export async function installAppApiRoutes(
         headers: {
           "Cache-Control": "no-store",
           "Content-Type": "text/event-stream; charset=utf-8",
-          "X-Albert-Runtime": "omni",
+          "X-Albert-Runtime": runtimeHeader,
           "X-Albert-Model": "gpt-5.6-luna",
           "X-Albert-Conversation-Id": "01J00000000000000000DBCV02",
           "X-Albert-Turn-Id": "01J00000000000000000DBTN02",
@@ -2579,7 +2583,7 @@ export async function installAppApiRoutes(
         headers: {
           "Cache-Control": "no-store",
           "Content-Type": "text/event-stream; charset=utf-8",
-          "X-Albert-Runtime": "omni",
+          "X-Albert-Runtime": runtimeHeader,
           "X-Albert-Model": "gpt-5.6-luna",
           "X-Albert-Conversation-Id": "01J00000000000000000DBCV01",
           "X-Albert-Turn-Id": "01J00000000000000000DBTN01",
@@ -2748,13 +2752,15 @@ export async function installAppApiRoutes(
       headers: {
         "Cache-Control": "no-store",
         "Content-Type": "text/event-stream; charset=utf-8",
-        "X-Albert-Runtime": "omni",
+        "X-Albert-Runtime": runtimeHeader,
         "X-Albert-Model": typeof requestedPreferences.model === "string" ? requestedPreferences.model : "gpt-5.6-luna",
         "X-Albert-Conversation-Id": "01J00000000000000000000041",
         "X-Albert-Turn-Id": "01J00000000000000000000042",
       },
     }).catch(() => undefined);
-  });
+  };
+  await page.route(/\/api\/omni-conversation$/u, (route) => fulfilOmniStyleConversation(route, "omni"));
+  await page.route(/\/api\/oai-codex-conversation$/u, (route) => fulfilOmniStyleConversation(route, "oai_codex"));
 
   await page.route(/\/api\/anthropic-conversation$/u, async (route) => {
     capture.anthropicConversationPayloads.push(route.request().postDataJSON());

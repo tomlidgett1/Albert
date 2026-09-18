@@ -20,8 +20,9 @@ import {
   type CodexSemanticTurnResult,
   type CodexTraceEventInput,
 } from "../../../packages/albert-codex/src/semantic-runtime.js";
-import { omniServiceTurnSchema, type OmniServiceTurn, type OmniSemanticTurnResult } from "../../../packages/albert-omni/src/contracts.js";
+import { ALBERT_OMNI_DEFAULT_HARNESS, omniServiceTurnSchema, type OmniHarness, type OmniServiceTurn, type OmniSemanticTurnResult } from "../../../packages/albert-omni/src/contracts.js";
 import { runOmniSemanticTurn } from "../../../packages/albert-omni/src/runtime.js";
+import { ALBERT_OAI_CODEX_HARNESS, createOaiCodexDriver } from "../../../packages/albert-oai-codex/src/index.js";
 import { providerForModel } from "../../../packages/shared/src/agent-runtime.js";
 import type { AnalyticalQueryRecorder } from "../../../packages/shared/src/query-audit.js";
 import type { CodexRuntimeConfig } from "./config.js";
@@ -139,7 +140,11 @@ function omniPublicFailure(error: unknown): Readonly<{ code: string; message: st
   if (/Cube|semantic|catalogue/iu.test(message)) {
     return { code: "omni_semantic_unavailable", message: "The governed semantic layer was unavailable." };
   }
-  if (/401|429|api key|authentication|quota/iu.test(message)) {
+  // The managed Agents API names its failure categories (ADR 0141).
+  if (/context_length_exceeded|session_budget_exceeded/iu.test(message)) {
+    return { code: "omni_turn_budget", message: "The analysis outgrew the model's context before finishing." };
+  }
+  if (/401|429|api key|authentication|quota|usage_limit_exceeded|credit_balance_exhausted|cyber_policy|invalid_request|resource_not_found|authentication_error|executor_version_incompatible/iu.test(message)) {
     return { code: "omni_model_rejected", message: "The model request was rejected by the provider." };
   }
   if (/without a final answer/iu.test(message)) {
@@ -229,7 +234,8 @@ export class CodexRuntimeHttpHandler {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/v1/omni/readyz") {
       const ready = Boolean(this.config.omniOpenAi || this.config.omniAnthropic) && (!this.config.omniDurabilityRequired || Boolean(this.omniStore));
-      return Response.json({ ready, releaseSha: this.config.releaseSha, buildHash: this.omniBuildHash, authenticationMode: "api", durableJobs: Boolean(this.omniStore), models: ALBERT_OMNI_MODEL_IDS }, { status: ready ? 200 : 503, headers: { "cache-control": "no-store" } });
+      const harnesses: OmniHarness[] = [ALBERT_OMNI_DEFAULT_HARNESS, ...(this.config.oaiCodex ? [ALBERT_OAI_CODEX_HARNESS] : [])];
+      return Response.json({ ready, releaseSha: this.config.releaseSha, buildHash: this.omniBuildHash, authenticationMode: "api", durableJobs: Boolean(this.omniStore), models: ALBERT_OMNI_MODEL_IDS, harnesses }, { status: ready ? 200 : 503, headers: { "cache-control": "no-store" } });
     }
     if (request.method === "GET" && url.pathname === "/livez") {
       return Response.json({ ok: true, service: "albert-codex-runtime" }, { headers: { "cache-control": "no-store" } });
@@ -299,11 +305,20 @@ export class CodexRuntimeHttpHandler {
       const omniParsed = omniServiceTurnSchema.safeParse(payload);
       if (!omniParsed.success) return jsonError("invalid_request", 400, "The Omni turn request is invalid.");
       const omniProvider = providerForModel(omniParsed.data.model as (typeof ALBERT_OMNI_MODEL_IDS)[number]);
-      const omniCredentials = omniProvider === "anthropic"
-        ? this.config.omniAnthropic
-        : this.config.omniOpenAi;
+      const omniHarness: OmniHarness = omniParsed.data.harness ?? ALBERT_OMNI_DEFAULT_HARNESS;
+      // The managed harness runs OpenAI models only (ADR 0141).
+      if (omniHarness === ALBERT_OAI_CODEX_HARNESS && omniProvider !== "openai") {
+        return jsonError("invalid_request", 400, "The OAI Codex harness runs OpenAI models only.");
+      }
+      const omniCredentials = omniHarness === ALBERT_OAI_CODEX_HARNESS
+        ? this.config.oaiCodex
+        : omniProvider === "anthropic"
+          ? this.config.omniAnthropic
+          : this.config.omniOpenAi;
       if (!omniCredentials) {
-        return jsonError("omni_unavailable", 503, "The Omni runtime is not configured on this environment.");
+        return jsonError("omni_unavailable", 503, omniHarness === ALBERT_OAI_CODEX_HARNESS
+          ? "The OAI Codex harness is not configured on this environment."
+          : "The Omni runtime is not configured on this environment.");
       }
       if (this.config.omniDurabilityRequired && !this.omniStore) return jsonError("omni_unavailable", 503, "The durable Omni job store is not configured.");
       this.pruneReplayIds();
@@ -587,11 +602,22 @@ export class CodexRuntimeHttpHandler {
         if (job.writeError) throw job.writeError;
       },
     };
+    const harness: OmniHarness = turn.harness ?? ALBERT_OMNI_DEFAULT_HARNESS;
+    const oaiCodex = this.config.oaiCodex;
     job.completion = runOmniSemanticTurn({
       turn,
       cubeApiUrl: this.config.cubeApiUrl,
       ...(this.config.omniOpenAi ? { openai: this.config.omniOpenAi } : {}),
       ...(this.config.omniAnthropic ? { anthropic: this.config.omniAnthropic } : {}),
+      // OAI Codex: the same governed tools, driven by OpenAI's managed
+      // Codex harness through the Agents API (ADR 0141).
+      ...(harness === ALBERT_OAI_CODEX_HARNESS && oaiCodex ? {
+        driver: createOaiCodexDriver({
+          apiKey: oaiCodex.apiKey,
+          baseUrl: oaiCodex.baseUrl,
+          retainSessions: oaiCodex.retainSessions,
+        }),
+      } : {}),
       signal: job.abort.signal,
       deadlineAt: job.deadlineAt,
       ...(job.checkpoint ? { resume: job.checkpoint } : {}),
@@ -606,6 +632,7 @@ export class CodexRuntimeHttpHandler {
       process.stdout.write(`${JSON.stringify({
         event: "omni_job_completed",
         jobId: job.id,
+        harness,
         model: turn.model,
         effort: turn.effort,
         answerState: result.answerState,
@@ -622,6 +649,7 @@ export class CodexRuntimeHttpHandler {
       await this.saveOmniJob(job).catch(() => undefined);
       process.stdout.write(`${JSON.stringify({
         event: "omni_job_failed",
+        harness,
         code: failure.code,
         diagnosticCode: diagnosticFailureCode(error),
         errorClass: error instanceof Error ? error.name : "unknown",

@@ -17,6 +17,15 @@ export const ALBERT_OMNI_MODEL_IDS = [
   CLAUDE_SONNET_5_MODEL_ID,
   CLAUDE_HAIKU_4_5_MODEL_ID,
 ] as const;
+/**
+ * The agent loops that can drive an Omni-style turn (ADR 0141): the
+ * in-process `@openai/agents` Runner ("omni", the default) or OpenAI's
+ * managed Codex harness through the Agents API ("oai-codex"). Tools, evidence
+ * registry, answer contract and trace are identical across harnesses.
+ */
+export const ALBERT_OMNI_HARNESSES = ["omni", "oai-codex"] as const;
+export type OmniHarness = (typeof ALBERT_OMNI_HARNESSES)[number];
+export const ALBERT_OMNI_DEFAULT_HARNESS = "omni" as const;
 export const ALBERT_OMNI_DEFAULT_MODEL = CLAUDE_HAIKU_4_5_MODEL_ID;
 export const ALBERT_OMNI_DEFAULT_EFFORT = "max" as const;
 export const ALBERT_OMNI_DEFAULT_FAST_MODE = false as const;
@@ -111,6 +120,14 @@ export const omniServiceTurnSchema = z.object({
    * unaffected; the runtime must deploy before any caller sends it.
    */
   channel: z.enum(["imessage"]).optional(),
+  /**
+   * The agent loop for this turn (ADR 0141). Absent means the in-process
+   * Omni loop, so existing callers are unaffected; "oai-codex" runs the same
+   * tools on OpenAI's managed Codex harness and requires an OpenAI model.
+   * Optional so a runtime deployed ahead of its callers keeps accepting
+   * turns; the runtime must deploy before any caller sends it.
+   */
+  harness: z.enum(ALBERT_OMNI_HARNESSES).optional(),
 }).strict();
 
 export type OmniServiceTurn = z.infer<typeof omniServiceTurnSchema>;
@@ -266,6 +283,8 @@ export const omniSemanticTurnResultSchema = z.object({
   usage: omniTurnUsageSchema.optional(),
   buildHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   semanticModelDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+  /** Which agent loop produced the answer; absent from older runtimes. */
+  harness: z.enum(ALBERT_OMNI_HARNESSES).optional(),
 // Result metadata is additive across independently deployed callers. Keep
 // validating known fields, and strip future metadata rather than failing a
 // completed analysis (ADR 0137). Request/tool schemas remain strict.

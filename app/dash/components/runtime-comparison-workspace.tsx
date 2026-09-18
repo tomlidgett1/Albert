@@ -9,11 +9,23 @@ import {
   type TraceEvent,
 } from "@/packages/shared/src";
 import InsightsStyleTrace from "./InsightsStyleTrace";
+import OmniTrace from "./OmniTrace";
+import { HarnessSelector } from "./HarnessSelector";
 import { ModelRunControls } from "./ModelRunControls";
 import styles from "../dash.module.css";
 
 /** The analytical runtimes a conversation can run on. Omni is the product default. */
-export type ConversationRuntimeTab = "albert" | "codex" | "omni" | "compare";
+export type ConversationRuntimeTab = "albert" | "codex" | "omni" | "oai_codex" | "compare";
+
+/** A runtime that can occupy one side of the split view. */
+export type ComparePaneRuntime = Exclude<ConversationRuntimeTab, "compare">;
+
+export type ComparePair = readonly [ComparePaneRuntime, ComparePaneRuntime];
+
+/** The split view the harness selector opens: Omni against OAI Codex (ADR 0141). */
+export const HARNESS_COMPARE_PAIR: ComparePair = ["omni", "oai_codex"];
+/** The original engine comparison, still reachable through `?runtime=compare`. */
+export const ENGINE_COMPARE_PAIR: ComparePair = ["albert", "codex"];
 
 const COMPARE_DEFAULT_PREFERENCES: AgentRunPreferences = Object.freeze({
   model: "gpt-5.6-luna",
@@ -33,13 +45,73 @@ const COMPARE_REASONING_EFFORTS = Object.freeze([
   "max",
 ] as const satisfies readonly ReasoningEffort[]);
 
+type PaneRuntimeProfile = Readonly<{
+  label: string;
+  subtitle: string;
+  mark: string;
+  endpoint: string;
+  /** The `X-Albert-Runtime` value the route must answer with. */
+  runtimeHeader: string;
+  trace: "insights" | "omni";
+  /** Engine panes share a frozen analytical brief; harness panes share the governed tool set. */
+  sharesBrief: boolean;
+  body: (message: string, preferences: AgentRunPreferences) => Record<string, unknown>;
+}>;
+
+const PANE_PROFILES: Readonly<Record<ComparePaneRuntime, PaneRuntimeProfile>> = Object.freeze({
+  albert: {
+    label: "Albert",
+    subtitle: "Albert V3",
+    mark: "A",
+    endpoint: "/api/v3-conversation",
+    runtimeHeader: "v3",
+    trace: "insights",
+    sharesBrief: true,
+    body: (message, preferences) => ({ message, preferences, specialistAgentId: "general", comparisonMode: true }),
+  },
+  codex: {
+    label: "Codex",
+    subtitle: "Codex app-server",
+    mark: "C",
+    endpoint: "/api/codex-conversation",
+    runtimeHeader: "codex",
+    trace: "insights",
+    sharesBrief: true,
+    body: (message, preferences) => ({ message, preferences, comparisonMode: true }),
+  },
+  omni: {
+    label: "Omni",
+    subtitle: "In-process agent loop",
+    mark: "O",
+    endpoint: "/api/omni-conversation",
+    runtimeHeader: "omni",
+    trace: "omni",
+    sharesBrief: false,
+    body: (message, preferences) => ({ message, preferences }),
+  },
+  oai_codex: {
+    label: "OAI Codex",
+    subtitle: "OpenAI managed Codex harness · Agents API",
+    mark: "X",
+    endpoint: "/api/oai-codex-conversation",
+    runtimeHeader: "oai_codex",
+    trace: "omni",
+    sharesBrief: false,
+    body: (message, preferences) => ({ message, preferences }),
+  },
+});
+
+const PANE_RUNTIME_OPTIONS: readonly ComparePaneRuntime[] = ["omni", "oai_codex", "albert", "codex"];
+
 const traceEventTypes = new Set([
   "progress", "narrative", "plan", "query", "table", "chart",
   "validation", "answer", "clarification", "error",
+  "tasks", "research", "dashboard_plan",
 ]);
 const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 
-type PaneKey = "albert" | "codex";
+type PaneKey = "left" | "right";
+const PANE_KEYS: readonly PaneKey[] = ["left", "right"];
 type PaneStatus = "idle" | "starting" | "running" | "complete" | "error" | "stopped";
 
 type PaneState = Readonly<{
@@ -144,17 +216,21 @@ async function responseError(response: Response): Promise<string> {
 
 export default function RuntimeComparisonWorkspace(props: Readonly<{
   organisationName: string;
+  /** Which two runtimes the view opens with; either side can be changed while idle. */
+  defaultPair?: ComparePair;
   onSelectRuntime: (runtime: ConversationRuntimeTab) => void;
   onConversationsChanged: () => void | Promise<void>;
 }>): React.ReactNode {
+  const [pair, setPair] = useState<ComparePair>(props.defaultPair ?? HARNESS_COMPARE_PAIR);
   const [draft, setDraft] = useState("");
   const [question, setQuestion] = useState("");
   const [preferences, setPreferences] = useState<AgentRunPreferences>(COMPARE_DEFAULT_PREFERENCES);
   const [runPreferences, setRunPreferences] = useState<AgentRunPreferences>(COMPARE_DEFAULT_PREFERENCES);
+  const [runPair, setRunPair] = useState<ComparePair>(props.defaultPair ?? HARNESS_COMPARE_PAIR);
   const [runId, setRunId] = useState(0);
   const [panes, setPanes] = useState<Readonly<Record<PaneKey, PaneState>>>({
-    albert: emptyPane,
-    codex: emptyPane,
+    left: emptyPane,
+    right: emptyPane,
   });
   const [now, setNow] = useState(() => Date.now());
   const controllersRef = useRef<Readonly<Record<PaneKey, AbortController>> | null>(null);
@@ -162,11 +238,15 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
   const activeRunIdRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const isRunning = panes.albert.status === "starting"
-    || panes.albert.status === "running"
-    || panes.codex.status === "starting"
-    || panes.codex.status === "running";
+  const isRunning = panes.left.status === "starting"
+    || panes.left.status === "running"
+    || panes.right.status === "starting"
+    || panes.right.status === "running";
   const hasRun = runId > 0;
+  const displayedPair = hasRun ? runPair : pair;
+  const leftProfile = PANE_PROFILES[displayedPair[0]];
+  const rightProfile = PANE_PROFILES[displayedPair[1]];
+  const sharesBrief = leftProfile.sharesBrief && rightProfile.sharesBrief;
 
   useEffect(() => {
     if (!isRunning) return;
@@ -175,8 +255,8 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
   }, [isRunning]);
 
   useEffect(() => () => {
-    controllersRef.current?.albert.abort("comparison_unmounted");
-    controllersRef.current?.codex.abort("comparison_unmounted");
+    controllersRef.current?.left.abort("comparison_unmounted");
+    controllersRef.current?.right.abort("comparison_unmounted");
   }, []);
 
   const updatePane = useCallback((
@@ -192,50 +272,48 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
 
   const executePane = useCallback(async (input: Readonly<{
     key: PaneKey;
+    runtime: ComparePaneRuntime;
+    otherRuntime: ComparePaneRuntime;
     expectedRunId: number;
     message: string;
     startedAt: number;
     controller: AbortController;
     preferences: AgentRunPreferences;
   }>) => {
-    const expectedRuntime = input.key === "albert" ? "v3" : "codex";
-    const endpoint = input.key === "albert" ? "/api/v3-conversation" : "/api/codex-conversation";
-    const body = input.key === "albert"
-      ? {
-          message: input.message,
-          preferences: input.preferences,
-          specialistAgentId: "general",
-          comparisonMode: true,
-        }
-      : { message: input.message, preferences: input.preferences, comparisonMode: true };
+    const profile = PANE_PROFILES[input.runtime];
+    const otherProfile = PANE_PROFILES[input.otherRuntime];
     const received: TraceEvent[] = [];
     try {
-      const response = await fetch(endpoint, {
+      const response = await fetch(profile.endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(profile.body(input.message, input.preferences)),
         signal: input.controller.signal,
       });
       if (!response.ok) throw new Error(await responseError(response));
-      if (response.headers.get("X-Albert-Runtime") !== expectedRuntime) {
+      if (response.headers.get("X-Albert-Runtime") !== profile.runtimeHeader) {
         await response.body?.cancel("comparison_runtime_mismatch");
-        throw new Error(`${input.key === "albert" ? "Albert" : "Codex"} returned the wrong runtime.`);
+        throw new Error(`${profile.label} returned the wrong runtime.`);
       }
       if (response.headers.get("X-Albert-Model") !== input.preferences.model) {
         await response.body?.cancel("comparison_model_mismatch");
-        throw new Error(`${input.key === "albert" ? "Albert" : "Codex"} did not use the shared comparison model.`);
+        throw new Error(`${profile.label} did not use the shared comparison model.`);
       }
-      if (input.key === "albert" && response.headers.get("X-Albert-Specialist-Agent") !== "general") {
+      if (input.runtime === "albert" && response.headers.get("X-Albert-Specialist-Agent") !== "general") {
         await response.body?.cancel("comparison_specialist_mismatch");
         throw new Error("Albert did not use the general comparison profile.");
       }
-      const briefDigest = response.headers.get("X-Albert-Analysis-Brief") ?? "";
-      briefDigestsRef.current[input.key] = briefDigest;
-      const otherKey: PaneKey = input.key === "albert" ? "codex" : "albert";
-      const otherDigest = briefDigestsRef.current[otherKey];
-      if (otherDigest !== undefined && otherDigest !== briefDigest) {
-        await response.body?.cancel("comparison_brief_mismatch");
-        throw new Error("The runtimes did not receive the same frozen analytical brief.");
+      // Engine panes prove they analysed the same frozen brief; harness
+      // panes share the governed tool set instead and carry no brief.
+      if (profile.sharesBrief && otherProfile.sharesBrief) {
+        const briefDigest = response.headers.get("X-Albert-Analysis-Brief") ?? "";
+        briefDigestsRef.current[input.key] = briefDigest;
+        const otherKey: PaneKey = input.key === "left" ? "right" : "left";
+        const otherDigest = briefDigestsRef.current[otherKey];
+        if (otherDigest !== undefined && otherDigest !== briefDigest) {
+          await response.body?.cancel("comparison_brief_mismatch");
+          throw new Error("The runtimes did not receive the same frozen analytical brief.");
+        }
       }
       const conversationId = response.headers.get("X-Albert-Conversation-Id") ?? "";
       const turnId = response.headers.get("X-Albert-Turn-Id") ?? "";
@@ -332,50 +410,56 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
   const startComparison = useCallback((messageOverride?: string) => {
     const message = (messageOverride ?? draft).trim();
     if (!message || isRunning) return;
-    controllersRef.current?.albert.abort("comparison_replaced");
-    controllersRef.current?.codex.abort("comparison_replaced");
+    controllersRef.current?.left.abort("comparison_replaced");
+    controllersRef.current?.right.abort("comparison_replaced");
     const nextRunId = runId + 1;
     const startedAt = Date.now();
     const preferencesSnapshot = Object.freeze({ ...preferences });
+    const pairSnapshot: ComparePair = [pair[0], pair[1]];
     const controllers = Object.freeze({
-      albert: new AbortController(),
-      codex: new AbortController(),
+      left: new AbortController(),
+      right: new AbortController(),
     });
     controllersRef.current = controllers;
     briefDigestsRef.current = {};
     activeRunIdRef.current = nextRunId;
     setQuestion(message);
     setRunPreferences(preferencesSnapshot);
+    setRunPair(pairSnapshot);
     setDraft("");
     setRunId(nextRunId);
     setNow(startedAt);
     setPanes({
-      albert: { status: "starting", events: [], startedAt },
-      codex: { status: "starting", events: [], startedAt },
+      left: { status: "starting", events: [], startedAt },
+      right: { status: "starting", events: [], startedAt },
     });
     void Promise.allSettled([
       executePane({
-        key: "albert",
+        key: "left",
+        runtime: pairSnapshot[0],
+        otherRuntime: pairSnapshot[1],
         expectedRunId: nextRunId,
         message,
         startedAt,
-        controller: controllers.albert,
+        controller: controllers.left,
         preferences: preferencesSnapshot,
       }),
       executePane({
-        key: "codex",
+        key: "right",
+        runtime: pairSnapshot[1],
+        otherRuntime: pairSnapshot[0],
         expectedRunId: nextRunId,
         message,
         startedAt,
-        controller: controllers.codex,
+        controller: controllers.right,
         preferences: preferencesSnapshot,
       }),
     ]).then(() => props.onConversationsChanged());
-  }, [draft, executePane, isRunning, preferences, props, runId]);
+  }, [draft, executePane, isRunning, pair, preferences, props, runId]);
 
   const stopBoth = useCallback(() => {
-    controllersRef.current?.albert.abort("comparison_stopped");
-    controllersRef.current?.codex.abort("comparison_stopped");
+    controllersRef.current?.left.abort("comparison_stopped");
+    controllersRef.current?.right.abort("comparison_stopped");
   }, []);
 
   const resetComparison = useCallback(() => {
@@ -384,39 +468,61 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
     setDraft("");
     setRunId(0);
     activeRunIdRef.current = 0;
-    setPanes({ albert: emptyPane, codex: emptyPane });
+    setPanes({ left: emptyPane, right: emptyPane });
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   }, [stopBoth]);
 
   const comparisonSummary = useMemo(() => {
-    if (panes.albert.status !== "complete" || panes.codex.status !== "complete") return null;
-    const albert = paneTiming(panes.albert, now).answer;
-    const codex = paneTiming(panes.codex, now).answer;
-    if (albert === undefined || codex === undefined) return null;
-    return `Observed answer times · Albert ${durationLabel(albert)} · Codex ${durationLabel(codex)}`;
-  }, [now, panes]);
+    if (panes.left.status !== "complete" || panes.right.status !== "complete") return null;
+    const left = paneTiming(panes.left, now).answer;
+    const right = paneTiming(panes.right, now).answer;
+    if (left === undefined || right === undefined) return null;
+    return `Observed answer times · ${leftProfile.label} ${durationLabel(left)} · ${rightProfile.label} ${durationLabel(right)}`;
+  }, [leftProfile.label, now, panes, rightProfile.label]);
 
   const displayedPreferences = hasRun ? runPreferences : preferences;
   const displayedPreferenceLabel = preferenceLabel(displayedPreferences);
+  const composerLabel = `Ask both ${leftProfile.label} and ${rightProfile.label}`;
+
+  const changePaneRuntime = (key: PaneKey, runtime: ComparePaneRuntime) => {
+    if (isRunning) return;
+    setPair((current) => (key === "left" ? [runtime, current[1]] : [current[0], runtime]));
+  };
 
   const renderPane = (key: PaneKey) => {
     const pane = panes[key];
     const timing = paneTiming(pane, now);
-    const label = key === "albert" ? "Albert" : "Codex";
+    const runtime = key === "left" ? displayedPair[0] : displayedPair[1];
+    const profile = PANE_PROFILES[runtime];
+    const label = profile.label;
     return (
       <section className={styles.comparePane} aria-label={`${label} comparison result`}>
         <header className={styles.comparePaneHeader}>
           <div>
             <div className={styles.comparePaneIdentity}>
-              <span className={styles.comparePaneMark} data-runtime={key} aria-hidden="true" />
+              <span className={styles.comparePaneMark} data-runtime={runtime} aria-hidden="true" />
               <h2>{label}</h2>
               <span className={styles.comparePaneStatus} data-status={pane.status}>
                 {statusLabel(pane.status)}
               </span>
             </div>
-            <p>{key === "albert" ? "Albert V3" : "Codex app-server"} · {displayedPreferenceLabel}</p>
+            <p>{profile.subtitle} · {displayedPreferenceLabel}</p>
           </div>
           <div className={styles.comparePaneHeaderActions}>
+            {!hasRun ? (
+              <select
+                className={styles.comparePaneSelect}
+                aria-label={`${key === "left" ? "Left" : "Right"} pane runtime`}
+                data-testid={`compare-pane-runtime-${key}`}
+                value={runtime}
+                disabled={isRunning}
+                onChange={(event) => changePaneRuntime(key, event.target.value as ComparePaneRuntime)}
+              >
+                {PANE_RUNTIME_OPTIONS.map((option) => (
+                  <option key={option} value={option}>{PANE_PROFILES[option].label}</option>
+                ))}
+              </select>
+            ) : null}
             {pane.startedAt ? (
               <dl className={styles.comparePaneTiming} aria-label={`${label} timings`}>
                 <div><dt>Evidence</dt><dd>{durationLabel(timing.firstEvidence)}</dd></div>
@@ -437,20 +543,31 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
         </header>
         <div className={styles.comparePaneBody}>
           {pane.events.length > 0 || pane.status === "starting" || pane.status === "running" ? (
-            <InsightsStyleTrace
-              events={pane.events}
-              streaming={pane.status === "starting" || pane.status === "running"}
-              detailedMode={false}
-              runtime={key === "albert" ? "v3" : "codex"}
-              onFollowUp={(prompt) => {
-                setDraft(prompt);
-                window.requestAnimationFrame(() => textareaRef.current?.focus());
-              }}
-              onAddToChat={(text) => setDraft((current) => current ? `${current}\n\n${text}` : text)}
-            />
+            profile.trace === "omni" ? (
+              <OmniTrace
+                events={pane.events}
+                streaming={pane.status === "starting" || pane.status === "running"}
+                onFollowUp={(prompt) => {
+                  setDraft(prompt);
+                  window.requestAnimationFrame(() => textareaRef.current?.focus());
+                }}
+              />
+            ) : (
+              <InsightsStyleTrace
+                events={pane.events}
+                streaming={pane.status === "starting" || pane.status === "running"}
+                detailedMode={false}
+                runtime={runtime === "albert" ? "v3" : runtime}
+                onFollowUp={(prompt) => {
+                  setDraft(prompt);
+                  window.requestAnimationFrame(() => textareaRef.current?.focus());
+                }}
+                onAddToChat={(text) => setDraft((current) => current ? `${current}\n\n${text}` : text)}
+              />
+            )
           ) : (
             <div className={styles.comparePaneEmpty}>
-              <span aria-hidden="true">{key === "albert" ? "A" : "C"}</span>
+              <span aria-hidden="true">{profile.mark}</span>
               <p>{label} will begin at the same moment.</p>
             </div>
           )}
@@ -469,7 +586,10 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
           <h1 id="dash-title">Compare · {props.organisationName}</h1>
         </div>
         <div className={styles.compareTopActions}>
-          <button type="button" onClick={() => props.onSelectRuntime("omni")}>Back to Omni</button>
+          <HarnessSelector
+            value="compare"
+            onChange={(choice) => props.onSelectRuntime(choice)}
+          />
           {hasRun && !isRunning ? (
             <button type="button" onClick={resetComparison}>New comparison</button>
           ) : null}
@@ -484,7 +604,9 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
           <span className={styles.compareEyebrow}>Side-by-side analysis</span>
           <h2>Ask once. Watch both analyse.</h2>
           <p>
-            Albert and Codex receive the exact same question, model, reasoning level and Fast tier, then investigate independently through Albert’s governed data boundaries.
+            {sharesBrief
+              ? `${leftProfile.label} and ${rightProfile.label} receive the exact same question, model, reasoning level and Fast tier, then investigate independently through Albert’s governed data boundaries.`
+              : `${leftProfile.label} and ${rightProfile.label} receive the exact same question, model, reasoning level and Fast tier, and work the same governed semantic tools; only the agent loop driving the model differs.`}
           </p>
           <small>Runs two governed turns. Each answer is saved as its own runtime-locked conversation.</small>
         </div>
@@ -496,15 +618,16 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
       )}
 
       <div className={styles.compareGrid}>
-        {renderPane("albert")}
-        {renderPane("codex")}
+        {PANE_KEYS.map((key) => (
+          <div key={key} style={{ display: "contents" }}>{renderPane(key)}</div>
+        ))}
       </div>
 
       <div className={styles.compareConditions} aria-label="Comparison conditions">
         <span>Same prompt</span>
-        <span>Same analytical brief</span>
+        <span>{sharesBrief ? "Same analytical brief" : "Same governed tools"}</span>
         <span>Same settings · {displayedPreferenceLabel}</span>
-        <span>Independent prompts and tool sets</span>
+        <span>{sharesBrief ? "Independent prompts and tool sets" : "Independent agent loops"}</span>
         <span>Live reads · not a frozen benchmark</span>
       </div>
 
@@ -533,7 +656,7 @@ export default function RuntimeComparisonWorkspace(props: Readonly<{
         <textarea
           ref={textareaRef}
           rows={1}
-          aria-label="Ask both Albert and Codex"
+          aria-label={composerLabel}
           placeholder={hasRun ? "Compare another question…" : "Ask both agents the same question…"}
           value={draft}
           disabled={isRunning}

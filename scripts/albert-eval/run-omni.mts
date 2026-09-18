@@ -71,6 +71,8 @@ type Args = {
   effort: "low" | "medium" | "high" | "xhigh" | "max";
   corpus: "omni20" | "hard30" | "daily60";
   trials: number;
+  /** Which agent loop runs the turn (ADR 0141). */
+  harness: "omni" | "oai-codex";
 };
 
 function parseArgs(argv: string[]): Args {
@@ -85,6 +87,7 @@ function parseArgs(argv: string[]): Args {
     effort: "max",
     corpus: "omni20",
     trials: 1,
+    harness: "omni",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i]!;
@@ -102,8 +105,10 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--effort") args.effort = next() as Args["effort"];
     else if (a === "--corpus") args.corpus = next() as Args["corpus"];
     else if (a === "--trials") args.trials = Number(next());
+    else if (a === "--harness") args.harness = next() as Args["harness"];
     else throw new Error(`Unknown argument ${a}`);
   }
+  if (args.harness !== "omni" && args.harness !== "oai-codex") throw new Error("--harness must be omni or oai-codex");
   if (args.corpus !== "omni20" && args.corpus !== "hard30" && args.corpus !== "daily60") {
     throw new Error("--corpus must be omni20, hard30 or daily60");
   }
@@ -399,6 +404,8 @@ async function runTurnOnce(
       model: args.model,
       effort: args.effort,
       fastMode: args.fastMode,
+      // OAI Codex (ADR 0141) runs the same turn on OpenAI's managed harness.
+      ...(args.harness === "oai-codex" ? { harness: "oai-codex" as const } : {}),
     };
     const receiveEvent = async (event: OmniTraceEventInput) => {
       const at = Date.now() - t0;

@@ -8,6 +8,9 @@
   "functions": {
     "app/api/omni-conversation/route.ts": {
       "regions": ["syd1"]
+    },
+    "app/api/oai-codex-conversation/route.ts": {
+      "regions": ["syd1"]
     }
   }
 }

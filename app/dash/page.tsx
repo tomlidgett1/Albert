@@ -73,7 +73,13 @@ import { DAILY_BRIEF_CONVERSATION_TITLE_PREFIX } from "@/services/recommended-an
 import { ChatSurfaceTabs, type ChatSurface } from "./components/ChatSurfaceTabs";
 import { View2ConnectedTools } from "./components/View2ConnectedTools";
 import { CollapsibleUserQuestion } from "./components/CollapsibleUserQuestion";
-import RuntimeComparisonWorkspace, { type ConversationRuntimeTab } from "./components/runtime-comparison-workspace";
+import RuntimeComparisonWorkspace, {
+  ENGINE_COMPARE_PAIR,
+  HARNESS_COMPARE_PAIR,
+  type ComparePair,
+  type ConversationRuntimeTab,
+} from "./components/runtime-comparison-workspace";
+import { HarnessSelector } from "./components/HarnessSelector";
 import OrganizationWorkspace from "./components/OrganizationWorkspace";
 import BusinessContextWorkspace from "./components/BusinessContextWorkspace";
 import SemanticMemoryWorkspace from "./components/SemanticMemoryWorkspace";
@@ -233,6 +239,17 @@ const OMNI_MODEL_IDS = Object.freeze([
   CLAUDE_SONNET_5_MODEL_ID,
   CLAUDE_HAIKU_4_5_MODEL_ID,
 ] as const satisfies readonly AlbertModelId[]);
+/** OAI Codex runs OpenAI's managed Codex harness, so OpenAI models only (ADR 0141). */
+const OAI_CODEX_MODEL_IDS = Object.freeze([
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+] as const satisfies readonly AlbertModelId[]);
+const DEFAULT_OAI_CODEX_PREFERENCES: AgentRunPreferences = Object.freeze({
+  model: "gpt-5.6-luna",
+  reasoningEffort: "max",
+  fastMode: false,
+});
 const V3_MODEL_IDS = Object.freeze([
   "gpt-5.6-luna",
   "gpt-5.6-terra",
@@ -421,12 +438,24 @@ function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) 
   }
 }
 
-type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "omni" | "newagent" | "compare";
+type ChatRuntime = "fixture" | "openai" | "anthropic" | "cubecore" | "v3" | "xero_mcp" | "codex" | "omni" | "newagent" | "oai_codex" | "compare";
+
+/**
+ * Omni and OAI Codex (ADR 0141) share the Omni conversation contract: the
+ * same governed tools, trace events and composer; only the agent loop
+ * behind the runtime service differs.
+ */
+function isOmniStyleRuntime(runtime: ChatRuntime | undefined): runtime is "omni" | "oai_codex" {
+  return runtime === "omni" || runtime === "oai_codex";
+}
 
 function chatRuntimeFromProfile(value: unknown): Exclude<ChatRuntime, "fixture"> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "openai";
   const profile = value as Record<string, unknown>;
   if (profile.runtime === "openai-agents-api") return "newagent";
+  if (profile.runtime === "oai-codex-agent" || profile.analyticalRuntime === "cube-oai-codex-v1") {
+    return "oai_codex";
+  }
   if (profile.runtime === "omni-agent" || profile.analyticalRuntime === "cube-omni-v1") {
     return "omni";
   }
@@ -962,6 +991,8 @@ export default function DashPage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | undefined>();
   const [activeChatRuntime, setActiveChatRuntime] = useState<Exclude<ChatRuntime, "fixture">>(isNewAgent ? "newagent" : "omni");
+  /** Which two runtimes the Compare view opens with (ADR 0141). */
+  const [comparePair, setComparePair] = useState<ComparePair>(HARNESS_COMPARE_PAIR);
   /** Chat is the conversation; Discover the grid of questions worth asking; Scheduled the reports Albert texts on a timer. */
   const [chatSurface, setChatSurface] = useState<ChatSurface>("chat");
   const [specialistAgentId, setSpecialistAgentId] = useState<SpecialistAgentId>("general");
@@ -2996,6 +3027,8 @@ export default function DashPage() {
       ? "codex"
       : activeChatRuntimeRef.current === "omni"
       ? "omni"
+      : activeChatRuntimeRef.current === "oai_codex"
+      ? "oai_codex"
       : isAnthropicModel(runPreferences.model)
       ? "v3"
       : activeChatRuntimeRef.current === "xero_mcp"
@@ -3366,7 +3399,7 @@ export default function DashPage() {
       }
       const requestBody = {
         message: requestMessage,
-        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || runRuntime === "omni" || runRuntime === "newagent" || runRuntime === "xero_mcp" ? { preferences: requestPreferences } : {}),
+        ...(runRuntime === "openai" || runRuntime === "v3" || runRuntime === "codex" || isOmniStyleRuntime(runRuntime) || runRuntime === "newagent" || runRuntime === "xero_mcp" ? { preferences: requestPreferences } : {}),
         ...(runRuntime === "codex" ? { solPlanner: runSolPlanner } : {}),
         ...(runRuntime === "codex" ? { proMode: runProMode } : {}),
         ...(requestConversationId ? { conversationId: requestConversationId } : {}),
@@ -3384,6 +3417,8 @@ export default function DashPage() {
         ? "/api/codex-conversation"
         : runRuntime === "omni"
         ? "/api/omni-conversation"
+        : runRuntime === "oai_codex"
+        ? "/api/oai-codex-conversation"
         : runRuntime === "anthropic"
         ? "/api/anthropic-conversation"
         : runRuntime === "cubecore"
@@ -3423,6 +3458,8 @@ export default function DashPage() {
           ? "codex"
         : runtimeHeader === "omni"
           ? "omni"
+        : runtimeHeader === "oai_codex"
+          ? "oai_codex"
         : runtimeHeader === "anthropic"
           ? "anthropic"
           : runtimeHeader === "cubecore"
@@ -3446,7 +3483,7 @@ export default function DashPage() {
         await response.body?.cancel("runtime_lock_mismatch");
         throw new Error("The conversation runtime did not match the selected method.");
       }
-      if ((runtime === "codex" || runtime === "omni" || runtime === "newagent") && response.headers.get("X-Albert-Model") !== requestPreferences.model) {
+      if ((runtime === "codex" || isOmniStyleRuntime(runtime) || runtime === "newagent") && response.headers.get("X-Albert-Model") !== requestPreferences.model) {
         await response.body?.cancel("codex_model_mismatch");
         throw new Error("The conversation did not use the selected model.");
       }
@@ -3794,7 +3831,7 @@ export default function DashPage() {
             ? {
               ...item,
               lastTurnStatus: controller.signal.aborted
-                ? (runRuntime === "codex" || runRuntime === "omni" ? "running" : "cancelled")
+                ? (runRuntime === "codex" || isOmniStyleRuntime(runRuntime) ? "running" : "cancelled")
                 : "completed",
             }
             : item
@@ -3977,7 +4014,7 @@ export default function DashPage() {
       liveTurnsRef.current.delete(key);
     }
     setIsChatResponding(false);
-    const continuesInBackground = Boolean(live && (live.runtime === "codex" || live.runtime === "omni") && !swarmHere);
+    const continuesInBackground = Boolean(live && (live.runtime === "codex" || isOmniStyleRuntime(live.runtime)) && !swarmHere);
     setChatMessages((messages) => {
       const next = finalizeStreamingMessages(
         messages,
@@ -4333,13 +4370,22 @@ export default function DashPage() {
     resetChat("codex", "general");
     window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
   };
-  const startCompareChat = () => {
+  /** The split view opens on the given pair: harnesses from the selector, engines from `?runtime=compare`. */
+  const startCompareChat = (pair: ComparePair = HARNESS_COMPARE_PAIR) => {
+    setComparePair(pair);
     resetChat("compare", "general");
   };
   const startOmniChat = () => {
     setAgentPreferences(defaultPreferences);
     agentPreferencesRef.current = defaultPreferences;
     resetChat("omni", "general");
+    window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
+  };
+  /** OAI Codex (ADR 0141): Omni's tools on OpenAI's managed Codex harness. */
+  const startOaiCodexChat = () => {
+    setAgentPreferences(DEFAULT_OAI_CODEX_PREFERENCES);
+    agentPreferencesRef.current = DEFAULT_OAI_CODEX_PREFERENCES;
+    resetChat("oai_codex", "general");
     window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
   };
   /**
@@ -4469,9 +4515,10 @@ export default function DashPage() {
       swarmKind: "sales-deep",
     });
   };
-  const selectConversationRuntime = (tab: ConversationRuntimeTab) => {
+  const selectConversationRuntime = (tab: ConversationRuntimeTab, pair?: ComparePair) => {
     if (tab === "compare") {
-      if (activeChatRuntimeRef.current !== "compare") startCompareChat();
+      if (activeChatRuntimeRef.current !== "compare") startCompareChat(pair);
+      else if (pair) setComparePair(pair);
       return;
     }
     if (tab === "codex") {
@@ -4482,7 +4529,11 @@ export default function DashPage() {
       if (activeChatRuntimeRef.current !== "omni") startOmniChat();
       return;
     }
-    if (activeChatRuntimeRef.current === "codex" || activeChatRuntimeRef.current === "omni" || activeChatRuntimeRef.current === "compare") {
+    if (tab === "oai_codex") {
+      if (activeChatRuntimeRef.current !== "oai_codex") startOaiCodexChat();
+      return;
+    }
+    if (activeChatRuntimeRef.current === "codex" || isOmniStyleRuntime(activeChatRuntimeRef.current) || activeChatRuntimeRef.current === "compare") {
       resetChat("v3", "general");
       window.requestAnimationFrame(() => chatTextareaRef.current?.focus());
     }
@@ -4492,13 +4543,18 @@ export default function DashPage() {
   const selectConversationRuntimeRef = useRef(selectConversationRuntime);
   selectConversationRuntimeRef.current = selectConversationRuntime;
 
-  // Omni is the only harness the chat offers. `?runtime=albert|codex|compare`
-  // remains as an internal entry to the other runtimes for verification.
+  // The chat offers Omni, OAI Codex and their side-by-side comparison through
+  // the harness selector (ADR 0141). `?runtime=albert|codex|oai-codex|compare`
+  // remains as an internal entry: `compare` opens the original Albert-vs-Codex
+  // engine comparison for verification.
   useEffect(() => {
     if (isNewAgent) return;
     const requested = new URL(window.location.href).searchParams.get("runtime");
-    if (requested !== "albert" && requested !== "codex" && requested !== "compare") return;
-    const task = window.setTimeout(() => selectConversationRuntimeRef.current(requested), 0);
+    const task = window.setTimeout(() => {
+      if (requested === "albert" || requested === "codex") selectConversationRuntimeRef.current(requested);
+      else if (requested === "oai-codex") selectConversationRuntimeRef.current("oai_codex");
+      else if (requested === "compare") selectConversationRuntimeRef.current("compare", ENGINE_COMPARE_PAIR);
+    }, 0);
     return () => window.clearTimeout(task);
   }, [isNewAgent]);
 
@@ -4752,11 +4808,11 @@ export default function DashPage() {
                               popoverPlacement="below"
                               popoverAlign="shell-start"
                             />
-                          ) : (activeChatRuntime === "omni" || activeChatRuntime === "newagent") ? (
+                          ) : (isOmniStyleRuntime(activeChatRuntime) || activeChatRuntime === "newagent") ? (
                             <ModelRunControls
                               value={agentPreferences}
                               onChange={setAgentPreferences}
-                              allowedModelIds={activeChatRuntime === "newagent" ? AGENTS_API_MODEL_IDS : OMNI_MODEL_IDS}
+                              allowedModelIds={activeChatRuntime === "newagent" ? AGENTS_API_MODEL_IDS : activeChatRuntime === "oai_codex" ? OAI_CODEX_MODEL_IDS : OMNI_MODEL_IDS}
                               allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
                               {...runModeControlProps}
                               popoverPlacement="below"
@@ -4798,7 +4854,7 @@ export default function DashPage() {
           {turn.replies.map((message) => {
             const suppressEnter = Boolean(reduceMotion || message.suppressEnter);
             const messageKey = `${activeConversationId ?? "draft"}:${message.id}`;
-            const isOmniTrail = (message.runtime === "omni" || message.runtime === "newagent") && !message.events?.some((event) => (
+            const isOmniTrail = (isOmniStyleRuntime(message.runtime) || message.runtime === "newagent") && !message.events?.some((event) => (
               event.type === "plan" && event.id.startsWith("swarm_")
             ));
             return (
@@ -5815,7 +5871,9 @@ export default function DashPage() {
           <TenantDeletionWorkspace initialReceipt={tenantDeletionReceipt} />
         ) : activeItem === "Chat" && activeChatRuntime === "compare" ? (
           <RuntimeComparisonWorkspace
+            key={comparePair.join(":")}
             organisationName={accountOrganisation.name}
+            defaultPair={comparePair}
             onSelectRuntime={selectConversationRuntime}
             onConversationsChanged={loadConversationSummaries}
           />
@@ -5872,6 +5930,13 @@ export default function DashPage() {
                 </AnimatePresence>
               </div>
               <div className={styles.chatTopActions}>
+                {chatSurface === "chat" && !isCustomerAgent && isOmniStyleRuntime(activeChatRuntime) ? (
+                  <HarnessSelector
+                    value={activeChatRuntime}
+                    onChange={(choice) => selectConversationRuntime(choice)}
+                    disabled={isChatResponding}
+                  />
+                ) : null}
                 {chatMessages.length > 0 ? (
                   <button
                     className={`${styles.chatTakeawaysToggle} ${chatDetailedMode ? styles.chatTakeawaysToggleActive : ""}`}
@@ -6060,7 +6125,7 @@ export default function DashPage() {
                     <h2 className={styles.chatHeroTitle}>
                       {activeChatRuntime === "xero_mcp"
                         ? "Ask Xero anything"
-                        : activeChatRuntime === "codex" || activeChatRuntime === "omni" || activeChatRuntime === "newagent"
+                        : activeChatRuntime === "codex" || isOmniStyleRuntime(activeChatRuntime) || activeChatRuntime === "newagent"
                           ? "Ask about your business"
                         : isCustomerAgent
                           ? activeSpecialistAgent.ui.emptyStateTitle
@@ -6305,6 +6370,8 @@ export default function DashPage() {
                           ? "Ask the new agent about your business"
                         : activeChatRuntime === "omni"
                           ? "Ask Omni about your business"
+                        : activeChatRuntime === "oai_codex"
+                          ? "Ask OAI Codex about your business"
                         : isCustomerAgent
                           ? "Ask the Customer Agent"
                           : "Ask me anything"
@@ -6330,6 +6397,10 @@ export default function DashPage() {
                         ? chatMessages.length > 0
                           ? "Ask a follow-up…"
                           : "Ask anything about your connected data…"
+                      : activeChatRuntime === "oai_codex"
+                        ? chatMessages.length > 0
+                          ? "Ask OAI Codex a follow-up…"
+                          : "Ask OAI Codex anything about your connected data…"
                       : isCustomerAgent
                         ? chatMessages.length > 0
                           ? "Ask a follow-up about your customers…"
@@ -6406,11 +6477,11 @@ export default function DashPage() {
                       {...runModeControlProps}
                       {...developerControlProps}
                     />
-                  ) : (activeChatRuntime === "omni" || activeChatRuntime === "newagent") ? (
+                  ) : (isOmniStyleRuntime(activeChatRuntime) || activeChatRuntime === "newagent") ? (
                     <ModelRunControls
                       value={agentPreferences}
                       onChange={setAgentPreferences}
-                      allowedModelIds={activeChatRuntime === "newagent" ? AGENTS_API_MODEL_IDS : OMNI_MODEL_IDS}
+                      allowedModelIds={activeChatRuntime === "newagent" ? AGENTS_API_MODEL_IDS : activeChatRuntime === "oai_codex" ? OAI_CODEX_MODEL_IDS : OMNI_MODEL_IDS}
                       allowedReasoningEfforts={CODEX_REASONING_EFFORTS}
                       {...runModeControlProps}
                       {...developerControlProps}

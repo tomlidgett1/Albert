@@ -2608,7 +2608,7 @@
 .chatTopBar {
   display: grid;
   flex: 0 0 auto;
-  /* Chat/Discover slider | title | actions: the slider sits at the top-left
+  /* Surface tabs | title | actions: navigation sits at the top-left
      of the card, the title truncates beside it, the actions hug the right. */
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -3206,36 +3206,35 @@
   display: inline-flex;
   height: var(--dash-control-height);
   align-items: center;
+  gap: 24px;
   justify-self: start;
-  border-radius: 999px;
-  background: var(--dash-control);
-  padding: 3px;
 }
 
 .chatSurfaceTab {
   position: relative;
   z-index: 1;
   display: inline-flex;
-  height: 30px;
-  min-width: 72px;
+  height: var(--dash-control-height);
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
-  color: var(--dash-control-text);
+  color: var(--dash-text-muted);
   cursor: pointer;
   font: inherit;
   font-size: calc(13px * var(--text-scale));
   font-weight: 450;
   letter-spacing: -0.03em;
-  padding: 0 14px;
+  line-height: 1.1;
+  padding: 0;
+  white-space: nowrap;
   transition: color 180ms ease;
 }
 
 .chatSurfaceTab:hover,
 .chatSurfaceTabActive {
-  color: var(--dash-active-text);
+  color: var(--dash-text-heading);
 }
 
 .chatSurfaceTabActive {
@@ -3249,15 +3248,14 @@
 
 .chatSurfaceTabsIndicator {
   position: absolute;
-  z-index: 0;
-  top: 3px;
+  z-index: 2;
+  bottom: 0;
   left: 0;
-  height: 30px;
+  height: 2px;
   border-radius: 999px;
-  background: var(--dash-control-active);
-  box-shadow: 0 1px 3px rgba(26, 27, 30, 0.16), 0 0 0 1px rgba(26, 27, 30, 0.03);
+  background: var(--dash-contrast);
   pointer-events: none;
-  transition: left 260ms cubic-bezier(0.22, 1, 0.36, 1), width 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms ease;
+  transition: left 260ms cubic-bezier(0.22, 1, 0.36, 1), width 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .chatNewMethod {
@@ -3324,11 +3322,6 @@
   .chatTopActions {
     flex-wrap: wrap;
     justify-content: flex-end;
-  }
-
-  .chatSurfaceTab {
-    min-width: 0;
-    padding: 0 11px;
   }
 }
 
@@ -19452,3 +19445,83 @@
 .chatShellDashboardExpanded .chatWorkspace,
 .chatShellDashboardExpanded .dashboardSplitHandle { display: none; }
 .chatShellDashboardExpanded .takeawaysPanel { width: 100%; flex-basis: 100%; transition: none; }
+
+/* ---- Analysis harness selector (ADR 0141) ------------------------------- */
+
+.harnessSelector {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 999px;
+  background: var(--dash-surface-soft);
+  padding: 2px;
+}
+
+.harnessOption {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dash-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  padding: 0 10px;
+  white-space: nowrap;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.harnessOption:hover {
+  color: var(--dash-text-heading);
+}
+
+.harnessOptionActive {
+  background: var(--dash-chat-surface);
+  color: var(--dash-text-heading);
+  font-weight: 600;
+  box-shadow: 0 1px 2px light-dark(rgba(30, 30, 32, 0.08), rgba(0, 0, 0, 0.3));
+}
+
+.harnessOption:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 1px;
+}
+
+.harnessOption:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.comparePaneMark[data-runtime="omni"] {
+  background: light-dark(#0f766e, #5eead4);
+}
+
+.comparePaneMark[data-runtime="oai_codex"] {
+  background: light-dark(#7c3aed, #c4b5fd);
+}
+
+/* Per-pane runtime pick: a quiet select in the pane header, only when idle. */
+.comparePaneSelect {
+  max-width: 140px;
+  height: 26px;
+  border: 1px solid var(--dash-border-soft);
+  border-radius: 8px;
+  background: var(--dash-chat-surface);
+  color: var(--dash-text-body);
+  font: inherit;
+  font-size: 11px;
+  padding: 0 6px;
+}
+
+.comparePaneSelect:focus-visible {
+  outline: 2px solid var(--dash-focus);
+  outline-offset: 2px;
+}

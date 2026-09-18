@@ -16,6 +16,8 @@ export type OmniTurnCheckpoint = Readonly<{
   startedAt: number;
   catalogueDigest: string;
   history: readonly AgentInputItem[];
+  /** Opaque continuation state of a non-default driver (ADR 0141), e.g. a managed session identity. */
+  driverState?: unknown;
   evidence: readonly OmniEvidenceResult[];
   tasks: readonly Readonly<{ id: string; label: string; completed: boolean }>[];
   queriesExecuted: number;

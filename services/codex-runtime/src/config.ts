@@ -22,6 +22,12 @@ export type CodexRuntimeConfig = Readonly<{
   omniOpenAi?: Readonly<{ apiKey: string; baseUrl: string }>;
   /** Native Anthropic Messages credentials for Omni turns on Claude models. */
   omniAnthropic?: Readonly<{ apiKey: string; baseUrl: string }>;
+  /**
+   * OpenAI Agents API credentials for the OAI Codex harness (ADR 0141). The
+   * same deployer key as Omni; the base URL may be pinned separately because
+   * the managed harness is a distinct (beta) surface from Responses.
+   */
+  oaiCodex?: Readonly<{ apiKey: string; baseUrl: string; retainSessions: boolean }>;
   omniJobDatabaseUrl?: string;
   omniJobDirectory?: string;
   omniDurabilityRequired?: boolean;
@@ -99,6 +105,12 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
     ? required(source, "OPENAI_API_KEY")
     : source.OPENAI_API_KEY?.trim();
   const omniBaseUrl = source.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1";
+  // The OAI Codex harness talks to the managed Agents API with the same key.
+  // It follows the Responses base URL (regional hosts accept the beta
+  // surface) unless pinned, and deletes its sessions after each turn unless
+  // retention is explicitly switched on for debugging.
+  const oaiCodexBaseUrl = source.ALBERT_OAI_CODEX_BASE_URL?.trim() || omniBaseUrl;
+  const oaiCodexRetainSessions = source.ALBERT_OAI_CODEX_RETAIN_SESSIONS?.trim() === "true";
   // Claude models run Omni turns over the native Anthropic Messages API. In
   // production the credentials are honoured only with the same explicit APP 8
   // and ZDR approvals the web runtime requires for Anthropic processing.
@@ -131,6 +143,11 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
       omniOpenAi: Object.freeze({
         apiKey: omniApiKey,
         baseUrl: serviceUrl(omniBaseUrl, "OPENAI_BASE_URL"),
+      }),
+      oaiCodex: Object.freeze({
+        apiKey: omniApiKey,
+        baseUrl: serviceUrl(oaiCodexBaseUrl, "ALBERT_OAI_CODEX_BASE_URL"),
+        retainSessions: oaiCodexRetainSessions,
       }),
     } : {}),
     ...(anthropicApiKey ? {

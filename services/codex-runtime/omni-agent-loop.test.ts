@@ -78,3 +78,67 @@ test("field-value lookup cannot bypass the hidden-member boundary", async (conte
     assert.equal(load.mock.callCount(), 0);
   });
 });
+
+test("an injected driver receives the governed tools, is nudged to compose, and stamps its harness on the result", async (context) => {
+  const run = context.mock.method(Runner.prototype, "run", async () => { throw new Error("The in-process runner must not run when a driver is injected."); });
+  const seen: { instructions: string[]; toolNames: string[]; continuations: string[]; narrated: string[] } = { instructions: [], toolNames: [], continuations: [], narrated: [] };
+  const driver = (input: import("../../packages/albert-omni/src/driver.js").OmniAgentDriverInput) => {
+    seen.instructions.push(input.instructions);
+    seen.toolNames = input.tools.map((tool) => tool.name);
+    let runs = 0;
+    const call = async (name: string, args: unknown) => {
+      const candidate = input.tools.find((tool) => tool.name === name);
+      assert.ok(candidate && candidate.type === "function");
+      return String(await candidate.invoke(new RunContext(), JSON.stringify(args)));
+    };
+    return {
+      run: async (continuation?: { assistantText: string; userText: string }) => {
+        runs += 1;
+        if (continuation) seen.continuations.push(continuation.userText);
+        if (runs === 1) {
+          await input.onNarrative("Looking at sales first:");
+          return "Sales were fine.";
+        }
+        await call("SearchSemanticModel", { topicName: "sales_analytics", searchPattern: null });
+        const queried = JSON.parse(await call("GenerateSemanticQuery", { name: "August sales", topic: "sales_analytics", query: { measures: ["sales_analytics.gross_takings"], dimensions: null, segments: null, timeDimensions: [{ dimension: "sales_analytics.completed_at", granularity: null, dateRange: "2026-08-01 to 2026-08-31", compareDateRange: null }], filters: null, order: null, limit: null } }));
+        assert.equal(queried.ok, true);
+        await input.onCheckpoint();
+        const composed = JSON.parse(await call("ComposeAnswer", { outcome: "answer", markdown: "Gross takings were {{sales}}.", values: [{ id: "sales", resultId: queried.resultId, rowIndex: 0, columnKey: "sales_analytics_gross_takings", format: "auto", decimals: null }], tables: [], citedResultIds: [queried.resultId], limitations: [], followUps: [] }));
+        assert.equal(composed.ok, true);
+        return "";
+      },
+      modelRequests: () => runs,
+      usage: () => ({ requests: runs, inputTokens: 10 * runs, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: runs, reasoningTokens: 0 }),
+      checkpointState: () => ({ history: [], driverState: { version: 1, harness: "oai-codex", sessionId: "sess_fixture", baseUrl: "https://api.example.test/v1" } }),
+      close: async () => { seen.narrated.push("closed"); },
+    };
+  };
+  await fixture(async (turn, url) => {
+    const events: OmniTraceEventInput[] = [];
+    const checkpoints: Array<{ driverState?: unknown; modelRequests: number }> = [];
+    const result = await runOmniSemanticTurn({
+      turn: { ...turn, harness: "oai-codex" },
+      cubeApiUrl: url,
+      openai: { apiKey: "synthetic-fixture", baseUrl: "https://provider.example.test" },
+      driver,
+      checkpoint: async (state) => { checkpoints.push({ driverState: state.driverState, modelRequests: state.modelRequests }); },
+      emit: (event) => { events.push(event); },
+    });
+    assert.equal(run.mock.callCount(), 0);
+    assert.equal(result.answerState, "Verified");
+    assert.equal(result.harness, "oai-codex");
+    assert.equal(result.modelRequests, 2);
+    assert.equal(result.usage?.inputTokens, 20);
+    assert.match(seen.instructions[0] ?? "", /Core Identity & Purpose/u);
+    assert.deepEqual(seen.toolNames, ["ManageTaskList", "SearchSemanticModel", "FetchFieldValues", "GenerateSemanticQuery", "SummarizeFullResults", "ComposePivotTable", "DeriveResult", "CalculateValues", "VisualizeQueryResults", "ComposeAnswer", "GetCurrentTime"]);
+    assert.equal(seen.continuations.length, 1);
+    assert.match(seen.continuations[0]!, /Call ComposeAnswer now/u);
+    assert.deepEqual(seen.narrated, ["closed"]);
+    const narrative = events.find((event) => event.type === "narrative");
+    assert.equal(narrative?.text, "Looking at sales first:");
+    const answer = events.find((event) => event.type === "answer");
+    assert.equal(answer?.text, "Gross takings were $600.00.");
+    assert.ok(checkpoints.length >= 1);
+    assert.deepEqual(checkpoints.at(-1)?.driverState, { version: 1, harness: "oai-codex", sessionId: "sess_fixture", baseUrl: "https://api.example.test/v1" });
+  });
+});

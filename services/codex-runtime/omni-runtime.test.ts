@@ -222,6 +222,7 @@ function omniHandler(credentials: Readonly<{ openai?: boolean; anthropic?: boole
     deploymentId: "test",
     ...(credentials.openai ? {
       omniOpenAi: Object.freeze({ apiKey: "sk-fixture", baseUrl: "https://au.api.openai.com/v1" }),
+      oaiCodex: Object.freeze({ apiKey: "sk-fixture", baseUrl: "https://au.api.openai.com/v1", retainSessions: false }),
     } : {}),
     ...(credentials.anthropic ? {
       omniAnthropic: Object.freeze({ apiKey: "sk-ant-fixture", baseUrl: "https://api.anthropic.com" }),
@@ -417,4 +418,55 @@ test("Omni query normalizer reclassifies misfiled members and rejects text opera
   assert.equal(timeMisuse.errors.length, 1);
   assert.match(timeMisuse.errors[0]!, /time field/u);
   assert.match(timeMisuse.errors[0]!, /inDateRange/u);
+});
+
+test("Omni jobs endpoint runs the OAI Codex harness only with OpenAI credentials and OpenAI models", async () => {
+  const withOpenAi = omniHandler({ openai: true });
+  const accepted = await withOpenAi.handle(await signedOmniRequest(JSON.stringify({ ...fixtureOmniTurn(), harness: "oai-codex" })));
+  assert.equal(accepted.status, 202);
+
+  const claudeOnManaged = await withOpenAi.handle(await signedOmniRequest(JSON.stringify({ ...fixtureOmniTurn(), harness: "oai-codex", model: CLAUDE_HAIKU_4_5_MODEL_ID })));
+  assert.equal(claudeOnManaged.status, 400);
+
+  const anthropicOnly = omniHandler({ anthropic: true });
+  const unavailable = await anthropicOnly.handle(await signedOmniRequest(JSON.stringify({ ...fixtureOmniTurn(), harness: "oai-codex" })));
+  assert.equal(unavailable.status, 503);
+  const payload = await unavailable.json() as { error?: { code?: string; message?: string } };
+  assert.equal(payload.error?.code, "omni_unavailable");
+  assert.match(payload.error?.message ?? "", /OAI Codex/u);
+
+  const unknownHarness = await withOpenAi.handle(await signedOmniRequest(JSON.stringify({ ...fixtureOmniTurn(), harness: "made-up" })));
+  assert.equal(unknownHarness.status, 400);
+});
+
+test("Omni readiness attests which harnesses this runtime can run", async () => {
+  const withOpenAi = omniHandler({ openai: true });
+  const ready = await withOpenAi.handle(new Request("http://127.0.0.1:8792/v1/omni/readyz"));
+  const payload = await ready.json() as { harnesses?: string[] };
+  assert.deepEqual(payload.harnesses, ["omni", "oai-codex"]);
+
+  const anthropicOnly = omniHandler({ anthropic: true });
+  const partial = await anthropicOnly.handle(new Request("http://127.0.0.1:8792/v1/omni/readyz"));
+  assert.deepEqual(((await partial.json()) as { harnesses?: string[] }).harnesses, ["omni"]);
+});
+
+test("Omni runtime config derives the OAI Codex harness credentials from the deployer key", () => {
+  const config = loadCodexRuntimeConfig({
+    NODE_ENV: "test",
+    ALBERT_CODEX_RUNTIME_SIGNING_SECRET: signingSecret,
+    CUBE_API_URL: "https://cube.example.test",
+    OPENAI_API_KEY: "sk-test",
+    OPENAI_BASE_URL: "https://au.api.openai.com/v1",
+  });
+  assert.deepEqual(config.oaiCodex, { apiKey: "sk-test", baseUrl: "https://au.api.openai.com/v1", retainSessions: false });
+  const pinned = loadCodexRuntimeConfig({
+    NODE_ENV: "test",
+    ALBERT_CODEX_RUNTIME_SIGNING_SECRET: signingSecret,
+    CUBE_API_URL: "https://cube.example.test",
+    OPENAI_API_KEY: "sk-test",
+    OPENAI_BASE_URL: "https://au.api.openai.com/v1",
+    ALBERT_OAI_CODEX_BASE_URL: "https://api.openai.com/v1/",
+    ALBERT_OAI_CODEX_RETAIN_SESSIONS: "true",
+  });
+  assert.deepEqual(pinned.oaiCodex, { apiKey: "sk-test", baseUrl: "https://api.openai.com/v1", retainSessions: true });
 });
