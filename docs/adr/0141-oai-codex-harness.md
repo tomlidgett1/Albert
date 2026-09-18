@@ -89,7 +89,24 @@ organisation but is not in Albert's model registry yet.
   original engine comparison stays reachable at `?runtime=compare`.
 - Eval: `scripts/albert-eval/run-omni.mts --harness oai-codex`.
 
+## Integration note
+
+Production was found to run `codex/newagent-agents-api` (ADR 0139's
+`/newagent` page, ADR 0140's native mode) while the main checkout was fifteen
+commits behind it. The mainline was rebased onto that branch before this
+harness deployed, so the `/newagent` page, the recommendations work and the
+later Omni fixes all remain in production. The managed harness of ADR 0139
+now plugs into the same driver seam as OAI Codex; its behaviour is unchanged.
+
 ## Observations from the first live turns
+
+Two defects surfaced only against the live API and are fixed in this ADR's
+follow-up commits: turn usage is attached a few seconds after the terminal
+event (fetched at session idle, with one retry, never invented), and a client
+request timeout must cover only the connection phase of the event stream — a
+stream bounded by the full timeout cut every managed turn longer than a
+minute.
+
 
 A trivial managed turn (one tool call) took about 18 seconds end to end,
 with roughly 6 seconds before the turn was created and about 4 seconds
