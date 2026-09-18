@@ -64,3 +64,12 @@ runtime process for the probes; warm turns pay nothing. Older runtimes ignore
 the new turn field. The probes are declared in the agent config, so a new
 connector needs a probe entry to gain a data-derived anchor; without one it
 falls back to the control-plane watermark or "unknown", exactly as before.
+
+## Verification
+
+Re-run against production after the deploy (runtime d04b084, GPT-5.6 Luna,
+high, fast, the settings of the failing run): OAI Codex answered "last
+Sunday" (13 September) in 129s with provenance `dataThrough` 2026-09-18 for
+both Lightspeed and Deputy, starting from a 14-day window and confirming the
+current day; Omni answered "the Sunday between 12 Sept and 14 Sept" in 50s.
+The regenerated Ashburton profile is revision 5 (data through 2026-09-18).
