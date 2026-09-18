@@ -15,7 +15,7 @@
  * engine merges them under the same ConnectorDomainFreshness contract the
  * control plane uses.
  */
-import type { CubeClient } from "../cube/client.js";
+import type { CubeLoadResponse, CubeQuery } from "../cube/types.js";
 import type { FreshnessProbe } from "../agent-config/loader.js";
 import type { ConnectorDomainFreshness } from "./context.js";
 
@@ -24,10 +24,18 @@ const PROBE_TIMEOUT_MS = 12_000;
 /** The critical path never waits longer than this; slower probes still fill the cache for later turns. */
 const CRITICAL_PATH_BUDGET_MS = 5_000;
 
+/** Any governed Cube client: the v3 secret-signed client or a bearer-scoped runtime client. */
+export type FreshnessProbeCube = Readonly<{
+  loadQuery: (
+    query: CubeQuery,
+    options: Readonly<{ signal?: AbortSignal }>,
+  ) => Promise<Readonly<{ result: CubeLoadResponse }>>;
+}>;
+
 type CacheEntry = { at: number; freshness: readonly ConnectorDomainFreshness[] };
 const cache = new Map<string, CacheEntry>();
 
-async function edgeDate(cube: CubeClient, member: string, direction: "asc" | "desc", signal: AbortSignal): Promise<string | undefined> {
+async function edgeDate(cube: FreshnessProbeCube, member: string, direction: "asc" | "desc", signal: AbortSignal): Promise<string | undefined> {
   const { result } = await cube.loadQuery({
     timeDimensions: [{ dimension: member, granularity: "day", ...(direction === "desc" ? { dateRange: "from 400 days ago to now" } : {}) }],
     order: { [member]: direction },
@@ -39,7 +47,7 @@ async function edgeDate(cube: CubeClient, member: string, direction: "asc" | "de
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}/u.test(value) ? value.slice(0, 10) : undefined;
 }
 
-async function probeOne(cube: CubeClient, probe: FreshnessProbe, signal: AbortSignal | undefined): Promise<ConnectorDomainFreshness | undefined> {
+async function probeOne(cube: FreshnessProbeCube, probe: FreshnessProbe, signal: AbortSignal | undefined): Promise<ConnectorDomainFreshness | undefined> {
   const [view] = probe.member.split(".");
   if (!view) return undefined;
   const controller = new AbortController();
@@ -66,7 +74,7 @@ async function probeOne(cube: CubeClient, probe: FreshnessProbe, signal: AbortSi
  * entries win; derived entries fill the gaps. Cached per tenant.
  */
 export async function deriveConnectorFreshness(input: Readonly<{
-  cube: CubeClient;
+  cube: FreshnessProbeCube;
   tenantId: string;
   probes: readonly FreshnessProbe[];
   activeConnectors: readonly string[];

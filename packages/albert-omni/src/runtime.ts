@@ -38,6 +38,8 @@ import {
   resolveAlbertModelTransport,
 } from "../../shared/src/agent-runtime.js";
 import { loadAgentConfig } from "../../albert-v3/src/agent-config/loader.js";
+import { deriveConnectorFreshness } from "../../albert-v3/src/engine/freshness.js";
+import { normalizeV3Connector } from "../../albert-v3/src/engine/connector-routing.js";
 import {
   cubeQueryDigest,
   cubeQueryToYaml,
@@ -318,7 +320,32 @@ export async function runGovernedAnalyticalTurn(
       stage: "planning",
       label: "Reading the semantic model",
     });
-    const catalogue = filteredCatalogue(await cube.fetchCatalogue(signal), descriptors);
+    // Data-derived freshness (ADR 0142). The control plane's watermarks are
+    // often empty (a Fivetran-fed connector has no Albert-side cursor), and
+    // without a present-day "data through" the only dated coverage claim the
+    // model sees is the business profile's, written weeks earlier — which
+    // one live turn read as the data cutoff. A handful of tiny latest-date
+    // probes, cached per tenant and bounded on the critical path, give every
+    // turn a current anchor; control-plane watermarks still win when present.
+    const knownFreshness = turn.connectorFreshness.map((entry) => ({
+      connector: entry.connector,
+      domain: entry.domain,
+      dataThrough: entry.dataThrough,
+      ...(entry.dataFrom ? { dataFrom: entry.dataFrom } : {}),
+    }));
+    const probeCube = { loadQuery: (query: CubeQuery, probeOptions: Readonly<{ signal?: AbortSignal }>) => cube.loadFreshnessProbe(query, probeOptions.signal) };
+    const [rawCatalogue, connectorFreshness] = await Promise.all([
+      cube.fetchCatalogue(signal),
+      deriveConnectorFreshness({
+        cube: probeCube,
+        tenantId: turn.tenantId,
+        probes: config.freshnessProbes,
+        activeConnectors: turn.activeConnectors.map((key) => normalizeV3Connector(key) ?? key),
+        known: knownFreshness,
+        signal,
+      }).catch(() => knownFreshness),
+    ]);
+    const catalogue = filteredCatalogue(rawCatalogue, descriptors);
     const catalogueDigest = createHash("sha256").update(JSON.stringify(catalogue.views)).digest("hex");
     if (options.resume && options.resume.catalogueDigest !== catalogueDigest) throw new Error("The semantic model changed after the saved checkpoint. Start a fresh analysis.");
     const connectorByView = new Map(descriptors.map((descriptor) => [descriptor.name, descriptor.connector]));
@@ -341,8 +368,8 @@ export async function runGovernedAnalyticalTurn(
         return `Today is ${new Date().toISOString().slice(0, 10)} (UTC).`;
       }
     })();
-    const freshnessLines = turn.connectorFreshness.length > 0
-      ? `- Data freshness: ${turn.connectorFreshness
+    const freshnessLines = connectorFreshness.length > 0
+      ? `- Data freshness: ${connectorFreshness
           .filter((entry) => entry.dataThrough)
           .slice(0, 12)
           .map((entry) => `${entry.connector} ${entry.domain} through ${entry.dataThrough}`)
@@ -731,7 +758,7 @@ export async function runGovernedAnalyticalTurn(
         members: validated.members,
         catalogue,
         topic: topicLabel,
-        freshness: turn.connectorFreshness,
+        freshness: [...connectorFreshness],
         timezone,
         queryYaml,
       });
@@ -1334,6 +1361,7 @@ export async function runGovernedAnalyticalTurn(
       activeConnectors: turn.activeConnectors,
       freshnessLines,
       ...(turn.businessContext ? { businessContext: turn.businessContext.slice(0, 20_000) } : {}),
+      ...(turn.businessContextGeneratedAt ? { businessContextGeneratedAt: turn.businessContextGeneratedAt } : {}),
     };
     const imessageChannel = !dashboardMode && turn.channel === "imessage";
     const agentName = dashboardMode ? "Albert dashboard architect" : "Albert Omni analyst";
@@ -1477,7 +1505,7 @@ export async function runGovernedAnalyticalTurn(
               onSynthesis: async () => { await emit({ type: "progress", status: "running", stage: "synthesis", label: "Preparing the answer from the recorded results" }); },
               question: `${todayLine}\n\n${turn.message}`,
               context: JSON.stringify({ organisation: turn.organisationName, timezone, currency: config.currency,
-                businessContext: turn.businessContext?.slice(0, 8_000), topics: renderTopicIndex(catalogue), freshness: turn.connectorFreshness }),
+                businessContext: turn.businessContext?.slice(0, 8_000), topics: renderTopicIndex(catalogue), freshness: connectorFreshness }),
               resultsContext: JSON.stringify(references!.encode(evidence.map((source) => ({ resultId: source.resultId, name: source.topic, columns: source.columns, rowCount: source.rowCount, period: source.provenance.timeRange, completeness: source.semantics?.completeness })))),
               catalogueDigest,
               getInspectedTopics: () => [...inspectedTopics],

@@ -87,6 +87,8 @@ export const omniServiceTurnSchema = z.object({
   activeConnectors: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u)).max(24),
   connectorFreshness: z.array(omniConnectorFreshnessSchema).max(80),
   businessContext: z.string().max(20_000).optional(),
+  /** When the business profile was generated (ISO); optional so older callers are unaffected (ADR 0142). */
+  businessContextGeneratedAt: z.string().trim().min(1).max(40).optional(),
   timezone: z.string().trim().min(1).max(80).optional(),
   ownerName: z.string().trim().min(1).max(120).optional(),
   organisationName: z.string().trim().min(1).max(160).optional(),

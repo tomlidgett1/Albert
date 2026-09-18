@@ -4,6 +4,7 @@
  *
  *   npx tsx scripts/albert-business-context.mts --generate [--out evals/albert/context/<slug>.json] [--print]
  *   npx tsx scripts/albert-business-context.mts --generate --save          # also writes to the control plane
+ *   npx tsx scripts/albert-business-context.mts --generate --save --from-store   # seed from the stored profile (owner locks kept)
  *   npx tsx scripts/albert-business-context.mts --show                     # prints the stored document
  *
  * Cube queries need a running turn lease: the CLI uses the eval harness's
@@ -45,7 +46,14 @@ async function generate(): Promise<void> {
   for (const probe of facts.probes) console.log(`  ${probe.ok ? "ok " : "ERR"} ${probe.key.padEnd(28)} ${String(probe.rowCount).padStart(4)} rows ${probe.executionMs}ms${probe.error ? ` — ${probe.error.slice(0, 100)}` : ""}`);
   console.log(`[context] facts in ${Math.round((Date.now() - started) / 1000)}s; generating …`);
   let existing: { document: BusinessContextDocument; ownerLocked: BusinessContextSection[] } | undefined;
-  if (fs.existsSync(outFile) && !args.has("--fresh")) {
+  if (args.has("--from-store")) {
+    // The control plane holds the profile the owner actually confirmed; seed
+    // from it so owner-locked sections survive a regeneration (ADR 0142).
+    const { loadBusinessContextAsService } = await import("../services/control-plane/src/business-context-repository.js");
+    const stored = await loadBusinessContextAsService(tenantId);
+    if (stored) existing = { document: stored.document, ownerLocked: [...stored.ownerLocked] };
+    console.log(`[context] seeded from the stored profile (${stored ? `revision ${stored.generatedAt ?? "?"}, ${stored.ownerLocked.length} owner-locked` : "none stored"})`);
+  } else if (fs.existsSync(outFile) && !args.has("--fresh")) {
     try {
       const prior = JSON.parse(fs.readFileSync(outFile, "utf8")) as { document: unknown; ownerLocked?: BusinessContextSection[] };
       existing = { document: businessContextDocumentSchema.parse(prior.document), ownerLocked: prior.ownerLocked ?? [] };
@@ -61,10 +69,13 @@ async function generate(): Promise<void> {
   const words = businessContextWordCount(generated.document);
   console.log(`[context] generated in ${Math.round((Date.now() - started) / 1000)}s — ${words} words rendered (model ${generated.model}, generator ${generated.generatorVersion})`);
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  // The stored row's data_through must move with the profile: a stale value
+  // is exactly the "24 August" cutoff a model can misread (ADR 0142).
+  const dataThrough = freshness.map((entry) => entry.dataThrough).filter((value): value is string => typeof value === "string").sort().at(-1) ?? null;
   const record = {
     tenantId, connectors, generatedAt: new Date().toISOString(), generatorVersion: generated.generatorVersion, model: generated.model,
     ownerLocked: existing?.ownerLocked ?? [], document: generated.document, rendered: generated.rendered, classifierBlock: renderBusinessContextForClassifier(generated.document),
-    facts,
+    facts, dataThrough,
   };
   fs.writeFileSync(outFile, JSON.stringify(record, null, 2));
   fs.writeFileSync(outFile.replace(/\.json$/u, ".md"), `${generated.rendered}\n\n---\n\n${renderBusinessContextForClassifier(generated.document)}\n`);
@@ -73,7 +84,7 @@ async function generate(): Promise<void> {
   if (args.has("--save")) await save(record);
 }
 
-async function save(record: { document: BusinessContextDocument; rendered: string; facts: unknown; ownerLocked: BusinessContextSection[]; generatorVersion: string; model: string; connectors: string[] }): Promise<void> {
+async function save(record: { document: BusinessContextDocument; rendered: string; facts: unknown; ownerLocked: BusinessContextSection[]; generatorVersion: string; model: string; connectors: string[]; dataThrough?: string | null }): Promise<void> {
   const { saveBusinessContextAsService } = await import("../services/control-plane/src/business-context-repository.js");
   await saveBusinessContextAsService({
     tenantId,
@@ -84,7 +95,7 @@ async function save(record: { document: BusinessContextDocument; rendered: strin
     ownerLocked: record.ownerLocked,
     generatorVersion: record.generatorVersion,
     model: record.model,
-    dataThrough: null,
+    dataThrough: record.dataThrough ?? null,
     connectors: record.connectors,
   });
   console.log(`[context] saved to the control plane for ${tenantId}`);

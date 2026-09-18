@@ -436,6 +436,7 @@ export async function handleOmniHarnessConversation(
   let activeConnectors: readonly string[] = [];
   let connectorFreshness: readonly OmniServiceTurn["connectorFreshness"][number][] = [];
   let businessContext: string | undefined;
+  let businessContextGeneratedAt: string | undefined;
   let priorResults: NonNullable<OmniServiceTurn["priorResults"]> = [];
   try {
     const [history, routing, context, salesBriefing, reusableResults] = await Promise.all([
@@ -456,6 +457,7 @@ export async function handleOmniHarnessConversation(
       ? salesBriefingContextBlock(salesBriefing)
       : "";
     businessContext = [existingContext, briefingBlock].filter(Boolean).join("\n\n").slice(0, 20_000) || undefined;
+    businessContextGeneratedAt = context?.generatedAt ?? undefined;
   } catch (error) {
     await failConversationTurn({
       conversationId,
@@ -552,6 +554,7 @@ export async function handleOmniHarnessConversation(
           activeConnectors: [...activeConnectors],
           connectorFreshness: [...connectorFreshness],
           ...(businessContext ? { businessContext } : {}),
+          ...(businessContext && businessContextGeneratedAt ? { businessContextGeneratedAt } : {}),
           timezone: tenant.timezone,
           ...(ownerName ? { ownerName } : {}),
           organisationName: tenant.tenant_name.slice(0, 160),

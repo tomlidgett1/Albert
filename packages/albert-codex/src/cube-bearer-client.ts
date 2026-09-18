@@ -159,6 +159,19 @@ export class CubeBearerClient {
     return loaded;
   }
 
+  /**
+   * A latest-date freshness probe (ADR 0142): validated and executed like any
+   * governed query, but outside the audited analytical path — a probe is
+   * runtime plumbing, not one of the owner's analytical queries.
+   */
+  async loadFreshnessProbe(
+    query: CubeQuery,
+    signal?: AbortSignal,
+  ): Promise<Readonly<{ result: CubeLoadResponse }>> {
+    const loaded = await this.loadQueryCore(query, signal);
+    return { result: loaded.result };
+  }
+
   private async loadQueryCore(
     query: CubeQuery,
     signal?: AbortSignal,
