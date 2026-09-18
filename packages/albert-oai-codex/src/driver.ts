@@ -35,6 +35,8 @@ export type OaiCodexDriverConfig = Readonly<{
    */
   retainSessions?: boolean;
   fetch?: typeof fetch;
+  /** Bound on non-streaming calls and on connecting a stream (tests tune it). */
+  requestTimeoutMs?: number;
 }>;
 
 /** Private continuation state carried in the turn checkpoint. */
@@ -131,6 +133,7 @@ class OaiCodexSessionDriver implements OmniAgentDriver {
       apiKey: config.apiKey,
       baseUrl: this.baseUrl,
       ...(config.fetch ? { fetch: config.fetch } : {}),
+      ...(config.requestTimeoutMs ? { requestTimeoutMs: config.requestTimeoutMs } : {}),
     });
     this.functionTools = input.tools.filter(isOmniFunctionTool);
     this.toolsByName = new Map(this.functionTools.map((tool) => [tool.name, tool]));

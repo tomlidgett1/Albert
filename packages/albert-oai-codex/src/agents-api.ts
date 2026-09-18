@@ -220,7 +220,10 @@ export type OpenAiAgentsApiClientOptions = Readonly<{
   apiKey: string;
   baseUrl?: string;
   fetch?: typeof fetch;
-  /** Bound on a non-streaming request; the event stream is bounded by its signal. */
+  /**
+   * Bound on a non-streaming request, and on the connection phase of an
+   * event stream; an open stream is bounded only by its caller's signal.
+   */
   requestTimeoutMs?: number;
 }>;
 
@@ -248,20 +251,29 @@ export class OpenAiAgentsApiClient {
   private async request(
     method: "GET" | "POST" | "DELETE",
     path: string,
-    init?: Readonly<{ body?: unknown; headers?: Record<string, string>; signal?: AbortSignal }>,
+    init?: Readonly<{ body?: unknown; headers?: Record<string, string>; signal?: AbortSignal; stream?: boolean }>,
   ): Promise<Response> {
-    const timeout = AbortSignal.timeout(this.requestTimeoutMs);
-    const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+    // A streaming response lives as long as the managed turn (minutes), so
+    // the request timeout may only cover the connection phase: the timer is
+    // disarmed once the headers arrive, and from then on only the caller's
+    // signal can end the stream. Non-streaming requests stay fully bounded.
+    const controller = new AbortController();
+    const forward = () => controller.abort(init?.signal?.reason);
+    if (init?.signal?.aborted) forward();
+    else init?.signal?.addEventListener("abort", forward, { once: true });
+    const timer = setTimeout(() => controller.abort(new DOMException("The request timed out.", "TimeoutError")), this.requestTimeoutMs);
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         headers: this.headers(init?.headers),
         ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-        signal,
+        signal: controller.signal,
         redirect: "error",
       });
     } catch (error) {
+      clearTimeout(timer);
+      init?.signal?.removeEventListener("abort", forward);
       if (init?.signal?.aborted) throw init.signal.reason ?? error;
       throw new AgentsApiError(
         `OpenAI Agents API could not be reached (${error instanceof Error ? error.message : "fetch failed"}).`,
@@ -269,9 +281,25 @@ export class OpenAiAgentsApiClient {
         "connection_failed",
       );
     }
+    if (init?.stream) {
+      clearTimeout(timer);
+    } else {
+      // The body of a bounded request is read below; keep the timer until then.
+      controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
+    }
     if (!response.ok) {
       const body = await response.text().catch(() => "");
+      clearTimeout(timer);
+      init?.signal?.removeEventListener("abort", forward);
       throw errorFromBody(response.status, body);
+    }
+    if (!init?.stream) {
+      // Bounded requests finish reading their body promptly; release the
+      // listener once the caller has consumed it (json()/text() below).
+      response.clone().arrayBuffer().finally(() => {
+        clearTimeout(timer);
+        init?.signal?.removeEventListener("abort", forward);
+      }).catch(() => undefined);
     }
     return response;
   }
@@ -304,6 +332,7 @@ export class OpenAiAgentsApiClient {
       body: { ...body, stream: true },
       headers: { accept: "text/event-stream" },
       signal,
+      stream: true,
     });
     if (!response.body) throw new AgentsApiError("OpenAI Agents API returned no event stream.", 502, "malformed_response");
     return this.events(response.body, signal);
@@ -361,6 +390,7 @@ export class OpenAiAgentsApiClient {
     const response = await this.request("GET", `/agents/sessions/${encodeURIComponent(sessionId)}/events`, {
       headers: { accept: "text/event-stream" },
       signal,
+      stream: true,
     });
     if (!response.body) throw new AgentsApiError("OpenAI Agents API returned no event stream.", 502, "malformed_response");
     return this.events(response.body, signal);

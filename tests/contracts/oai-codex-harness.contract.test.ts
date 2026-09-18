@@ -335,3 +335,39 @@ test("cancelling Albert's turn cancels the managed turn and rejects with the can
 test("the driver refuses to start without a key and ignores non-function tools", () => {
   assert.throws(() => createOaiCodexDriver({ apiKey: " " }), /requires an OpenAI API key/u);
 });
+
+test("an event stream outlives the request timeout: only the connection phase is bounded", async () => {
+  const api = new FakeAgentsApi();
+  const client = new OpenAiAgentsApiClient({ apiKey: "sk-fixture", baseUrl: "https://api.example.test/v1", fetch: api.fetch, requestTimeoutMs: 40 });
+  const stream = await client.createSessionStream({ agent: { model: "gpt-5.6-luna", instructions: "x" }, environment: { type: "none" }, input: "hello" }, new AbortController().signal);
+  const seen: string[] = [];
+  let call: { turn_id: string; call_id: string } | undefined;
+  for await (const event of stream) {
+    seen.push(event.type);
+    if (event.type === "agent.session.turn.item.added" && event.item?.type === "function_call") {
+      call = event.item as { turn_id: string; call_id: string };
+      // Answer well after the 40ms bound: a stream cut by the request
+      // timeout would end here instead of delivering the completion.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      await client.submitEvents("sess_fixture_1", [{ type: "agent.session.input.tool_result", turn_id: call.turn_id, call_id: call.call_id, success: true, output: JSON.stringify({ ok: true, echo: "LATE" }) }], { idempotencyKey: "k1" });
+    }
+    if (event.type === "agent.session.idle") break;
+  }
+  assert.ok(call, "the function call was announced");
+  assert.ok(seen.includes("agent.session.turn.completed"), `stream survived past the timeout: ${seen.join(",")}`);
+
+  // The driver end to end with the same short bound and a slow tool.
+  const slowEcho = tool({
+    name: "Echo",
+    description: "Echoes text slowly.",
+    parameters: z.object({ text: z.string() }).strict(),
+    strict: true,
+    execute: async (input: { text: string }) => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return JSON.stringify({ ok: true, echo: input.text.toUpperCase() });
+    },
+  });
+  const driver = createOaiCodexDriver({ apiKey: "sk-fixture", baseUrl: "https://api.example.test/v1", fetch: api.fetch, requestTimeoutMs: 40 })(driverInput({ tools: [slowEcho] }));
+  assert.equal(await driver.run(), "Done: HELLO WORLD");
+  await driver.close();
+});
