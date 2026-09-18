@@ -58,6 +58,8 @@ type PendingCall = Readonly<{ turnId: string; callId: string; name: string; argu
 type ConsumeState = {
   selectedTurn: string | undefined;
   ended: boolean;
+  /** The root turn whose usage OpenAI had not attached by its terminal event. */
+  usagePending: string | null;
   /** Assistant prose since the last successful tool result. */
   parts: string[];
   /** An interim message not yet narrated (narrated when a tool call follows it). */
@@ -69,6 +71,7 @@ type ConsumeState = {
 const MAX_NARRATIVES = 12;
 const TOOL_RESULT_RETRY_DELAYS_MS = [100, 300, 600] as const;
 const CANCEL_TIMEOUT_MS = 5_000;
+const LATE_USAGE_DELAYS_MS = [0, 2_000] as const;
 const DELETE_TIMEOUT_MS = 10_000;
 
 function isOaiCodexDriverState(value: unknown): value is OaiCodexDriverState {
@@ -296,7 +299,7 @@ class OaiCodexSessionDriver implements OmniAgentDriver {
     controller: AbortController,
     requiredActions: readonly AgentsApiRequiredAction[] = [],
   ): Promise<string> {
-    const state: ConsumeState = { selectedTurn: undefined, ended: false, parts: [], pending: null, finalAnswer: "", narrated: 0 };
+    const state: ConsumeState = { selectedTurn: undefined, ended: false, usagePending: null, parts: [], pending: null, finalAnswer: "", narrated: 0 };
     const pendingTools = new Set<Promise<void>>();
     const schedule = (call: PendingCall) => {
       const key = `${call.turnId}:${call.callId}`;
@@ -360,10 +363,12 @@ class OaiCodexSessionDriver implements OmniAgentDriver {
             const rootTurn = turn?.subagent_id === null || turn?.subagent_id === undefined;
             const mine = state.selectedTurn ? event.turn_id === state.selectedTurn : rootTurn;
             if (!mine) break;
-            // Usage is attached to the turn a beat after its terminal event;
-            // a missing figure is fetched once, never invented.
+            // Usage is attached to the turn a few seconds after its terminal
+            // event; a missing figure is fetched once the session is idle,
+            // never invented.
             const usage = event.usage ?? turn?.usage ?? null;
-            this.recordUsage(usage ?? await this.lateUsage(event.turn_id ?? turn?.id));
+            if (usage) this.recordUsage(usage);
+            else state.usagePending = event.turn_id ?? turn?.id ?? null;
             this.turnsRun += 1;
             state.ended = true;
             if (event.type === "agent.session.turn.failed") {
@@ -384,6 +389,7 @@ class OaiCodexSessionDriver implements OmniAgentDriver {
           case "agent.session.idle": {
             if (!state.ended) break;
             await Promise.all([...pendingTools]);
+            if (state.usagePending) this.recordUsage(await this.lateUsage(state.usagePending));
             return assembleDriverAnswer(state.parts, state.finalAnswer || state.pending || "");
           }
           default:
@@ -458,10 +464,16 @@ class OaiCodexSessionDriver implements OmniAgentDriver {
     }
   }
 
+  /** Two bounded attempts: at idle, then once more after a short pause. */
   private async lateUsage(turnId: string | null | undefined): Promise<AgentsApiUsage | null> {
     if (!turnId || !this.sessionId) return null;
-    const turn = await this.client.retrieveTurn(this.sessionId, turnId, AbortSignal.timeout(CANCEL_TIMEOUT_MS)).catch(() => null);
-    return turn?.usage ?? null;
+    for (const delayMs of LATE_USAGE_DELAYS_MS) {
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (this.input.signal.aborted) return null;
+      const turn = await this.client.retrieveTurn(this.sessionId, turnId, AbortSignal.timeout(CANCEL_TIMEOUT_MS)).catch(() => null);
+      if (turn?.usage) return turn.usage;
+    }
+    return null;
   }
 
   private recordUsage(usage: AgentsApiUsage | null): void {

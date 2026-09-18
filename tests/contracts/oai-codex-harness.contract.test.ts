@@ -27,6 +27,7 @@ class FakeAgentsApi {
   private waiters = new Map<string, (event: string) => void>();
   private pendingTurn = new Map<string, string>();
   private scriptedFailure: { code: string; message: string } | null = null;
+  readonly turnLookups: string[] = [];
   private idempotencyKeys: string[] = [];
 
   failNextTurn(code: string, message: string): void {
@@ -67,6 +68,11 @@ class FakeAgentsApi {
     }
     if (method === "GET" && rest === "") {
       return Response.json({ id: sessionId, object: "agent.session", status: session.status, error: null, required_actions: [], usage: null });
+    }
+    const turnMatch = /^turns\/(.+)$/u.exec(rest);
+    if (method === "GET" && turnMatch) {
+      this.turnLookups.push(turnMatch[1]!);
+      return Response.json({ id: turnMatch[1], object: "agent.session.turn", session_id: sessionId, status: "completed", subagent_id: null, error: null, usage: { input_tokens: 77, input_tokens_details: { cached_tokens: 7 }, output_tokens: 11, output_tokens_details: { reasoning_tokens: 2 }, total_tokens: 88 } });
     }
     if (method === "GET" && rest === "events") {
       // A subscription waits for the next input message to open a turn.
@@ -145,7 +151,8 @@ class FakeAgentsApi {
       // A continuation answers straight away with a commentary then the final.
       push(frame("agent.session.turn.item.done", { session_id: sessionId, turn_id: turnId, output_index: 0, item: { type: "message", id: "msg_c", turn_id: turnId, role: "assistant", phase: "commentary", status: "completed", content: [{ type: "output_text", text: "Working on it:" }] } }));
       push(frame("agent.session.turn.item.done", { session_id: sessionId, turn_id: turnId, output_index: 1, item: { type: "message", id: "msg_f", turn_id: turnId, role: "assistant", phase: "final_answer", status: "completed", content: [{ type: "output_text", text: `Continued after: ${input}` }] } }));
-      push(frame("agent.session.turn.completed", { session_id: sessionId, turn_id: turnId, usage: null, turn: { id: turnId, status: "completed", subagent_id: null, error: null, usage: { input_tokens: 10, output_tokens: 4, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } } }));
+      // Usage is not attached yet: the driver must fetch it once the session is idle.
+      push(frame("agent.session.turn.completed", { session_id: sessionId, turn_id: turnId, usage: null, turn: { id: turnId, status: "completed", subagent_id: null, error: null, usage: null } }));
       this.sessions.get(sessionId)!.status = "idle";
       push(frame("agent.session.idle", { session: { id: sessionId, status: "idle", error: null, required_actions: [], usage: null } }));
       this.pendingTurn.delete(sessionId);
@@ -263,6 +270,9 @@ test("the OAI Codex driver runs a turn on the managed harness: create with input
   const order = api.requests.filter((request) => request.path === "/v1/agents/sessions/sess_fixture_1/events").map((request) => request.method);
   assert.deepEqual(order, ["POST", "GET", "POST"]);
   assert.equal(driver.modelRequests(), 2);
+  // The second turn's usage was attached late: fetched from the turn itself, never invented.
+  assert.deepEqual(api.turnLookups, ["turn_fixture_2"]);
+  assert.deepEqual(driver.usage(), { requests: 2, inputTokens: 197, cachedInputTokens: 27, cacheWriteInputTokens: 0, outputTokens: 41, reasoningTokens: 7 });
   assert.deepEqual(driver.checkpointState(), { history: [], driverState: { version: 1, harness: "oai-codex", sessionId: "sess_fixture_1", baseUrl: "https://api.example.test/v1" } });
 
   await driver.close();
