@@ -35,7 +35,7 @@ type OmniBlock =
 
 type OmniModel = Readonly<{
   blocks: readonly OmniBlock[];
-  answer?: Readonly<{ text: string; followUps: readonly string[] }>;
+  answer?: Readonly<{ text: string; followUps: readonly string[]; presentedResultIds: readonly string[] }>;
   clarification?: Readonly<{ question: string; options: readonly Readonly<{ id: string; label: string }>[] }>;
   error?: string;
   thinkingLabel: string;
@@ -183,7 +183,7 @@ function buildOmniModel(events: readonly TraceEvent[], dashboardMode = false): O
         break;
       }
       case "answer": {
-        answer = { text: event.text, followUps: event.followUps };
+        answer = { text: event.text, followUps: event.followUps, presentedResultIds: event.presentedResultIds ?? [] };
         break;
       }
       case "clarification": {
@@ -226,9 +226,14 @@ function formatWorkDuration(ms: number): string {
  * history reads the turn's real duration; the mount clock only bridges the
  * first seconds of a live turn before its first event lands.
  */
-function WorkHeader({ events, working }: {
+function WorkHeader({ events, working, detail, open, onToggle }: {
   events: readonly TraceEvent[];
   working: boolean;
+  /** What the folded trail holds ("3 queries"); shown only on the toggle. */
+  detail?: string;
+  open?: boolean;
+  /** Present once the turn has settled: the header then folds the working trail. */
+  onToggle?: () => void;
 }) {
   const [mountedAt] = useState(() => Date.now());
   const [now, setNow] = useState(mountedAt);
@@ -244,10 +249,21 @@ function WorkHeader({ events, working }: {
     : mountedAt;
   const endedAt = working ? now : (Number.isFinite(lastAt) ? lastAt : now);
   const duration = formatWorkDuration(Math.max(0, endedAt - startedAt));
+  const label = working ? `Working for ${duration}` : `Worked for ${duration}`;
+  if (!onToggle) return <div className={styles.workHeader} data-working={working}>{label}</div>;
   return (
-    <div className={styles.workHeader} data-working={working}>
-      {working ? `Working for ${duration}` : `Worked for ${duration}`}
-    </div>
+    <button
+      type="button"
+      className={styles.workHeader}
+      data-working={working}
+      data-toggle="true"
+      aria-expanded={Boolean(open)}
+      onClick={onToggle}
+    >
+      <span>{label}</span>
+      {detail ? <span className={styles.workHeaderDetail}>{detail}</span> : null}
+      <Chevron open={Boolean(open)} className={styles.workHeaderChevron} />
+    </button>
   );
 }
 
@@ -368,7 +384,7 @@ function ResearchGroup({ block }: { block: Extract<OmniBlock, { kind: "research"
             {block.entries.map((entry) => entry.kind === "step" ? (
               <ResearchStepCard event={entry.event} key={entry.id} />
             ) : (
-              <Prose text={entry.text} key={entry.id} />
+              <Prose text={entry.text} narration key={entry.id} />
             ))}
           </div>
         </div>
@@ -629,9 +645,11 @@ function alignAnswerTables(root: HTMLElement): void {
   }
 }
 
-function Prose({ text, warning, onFollowUp }: {
+function Prose({ text, warning, narration, onFollowUp }: {
   text: string;
   warning?: boolean;
+  /** Working notes between steps: set quieter than the answer so they never read as one. */
+  narration?: boolean;
   onFollowUp?: (prompt: string) => void;
 }) {
   const html = useMemo(() => renderAssistantMarkdown(text), [text]);
@@ -646,6 +664,7 @@ function Prose({ text, warning, onFollowUp }: {
     <div
       ref={rootRef}
       className={styles.prose}
+      data-narration={narration ? "true" : undefined}
       style={warning ? { color: "light-dark(#92400e, #f0b04e)" } : undefined}
       onClick={(clickEvent) => {
         if (!onFollowUp) return;
@@ -677,15 +696,41 @@ export default function OmniTrace({ events, streaming = false, dashboardMode = f
 }) {
   const model = useMemo(() => buildOmniModel(events, dashboardMode), [events, dashboardMode]);
   const showThinking = streaming && !model.answer && !model.error && !model.clarification;
+  // The trail is worth watching while it happens and is in the way once the
+  // answer has landed: it folds behind the header, one click from coming back.
+  // Charts and composed pivots are deliverables, not working, so they stay —
+  // except a pivot the answer already presents as its own table, which would
+  // put the same scorecard on screen twice, the raw one above the opening
+  // sentence. A dashboard build keeps its trail: there the build IS the reply.
+  const presented = new Set(model.answer?.presentedResultIds ?? []);
+  const isWork = (block: OmniModel["blocks"][number]) => {
+    if (block.kind === "chart") return false;
+    if (block.kind !== "query" || !block.pivot) return true;
+    const resultId = block.table?.resultId ?? block.query.resultId;
+    return Boolean(resultId && presented.has(resultId));
+  };
+  const settled = Boolean(model.answer) && !streaming && !dashboardMode && model.blocks.some(isWork);
+  const [trailChoice, setTrailChoice] = useState<boolean | null>(null);
+  const trailOpen = trailChoice ?? !settled;
+  const queries = model.blocks.filter((block) => block.kind === "query" && !block.pivot).length;
+  const blocks = trailOpen ? model.blocks : model.blocks.filter((block) => !isWork(block));
   return (
     <div className={styles.root}>
-      <WorkHeader events={events} working={showThinking} />
-      {model.blocks.map((block) => {
+      <WorkHeader
+        events={events}
+        working={showThinking}
+        {...(settled ? {
+          open: trailOpen,
+          onToggle: () => setTrailChoice(!trailOpen),
+          ...(queries > 0 ? { detail: `${queries} ${queries === 1 ? "query" : "queries"}` } : {}),
+        } : {})}
+      />
+      {blocks.map((block) => {
         switch (block.kind) {
           case "tasks":
             return <TasksCard event={block.event} key={block.id} />;
           case "prose":
-            return <Prose text={block.text} warning={block.warning} onFollowUp={onFollowUp} key={block.id} />;
+            return <Prose text={block.text} warning={block.warning} narration={!block.warning} onFollowUp={onFollowUp} key={block.id} />;
           case "research":
             return <ResearchGroup block={block} key={block.id} />;
           case "query":

@@ -25,7 +25,59 @@ export function formatReportingPeriodLabel(value: string): string {
 
 type ReportingEvidence = { provenance: { timeRange: { start?: string; end?: string; label?: string } }; semantics?: { window?: string } };
 
-function reportingRanges(source: ReportingEvidence): [string, string][] {
+const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+const WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const MONTH_PATTERN = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
+const WEEKDAY_PATTERN = "mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?";
+const DAY_FIRST = new RegExp(`(?<![\\p{L}\\d$£€¥])(?:(${WEEKDAY_PATTERN}),?\\s+)?(?:the\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${MONTH_PATTERN})\\.?(?:,?\\s+((?:19|20)\\d{2}))?(?![\\p{L}\\d])`, "giu");
+/** "1–19 September": both ends must resolve inside a span, or neither is stripped. */
+const DAY_RANGE = new RegExp(`(?<![\\p{L}\\d$£€¥.,])(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:[–—-]|to)\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${MONTH_PATTERN})\\.?(?:,?\\s+((?:19|20)\\d{2}))?(?![\\p{L}\\d])`, "giu");
+const MONTH_FIRST = new RegExp(`(?<![\\p{L}\\d$£€¥])(?:(${WEEKDAY_PATTERN}),?\\s+)?(${MONTH_PATTERN})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?!\\d)(?:,?\\s+((?:19|20)\\d{2}))?(?![\\p{L}\\d])`, "giu");
+
+/**
+ * A calendar date inside a span the cited evidence covers is a scope
+ * reference, not an analytical figure. "Closed on Sunday 13 September" names a
+ * day the daily result spans even though a closed day has no row of its own,
+ * so without this an inferred date could never be written at all. Dates
+ * outside every span keep their digits and still fail number grounding, and a
+ * weekday that does not match its date is reported rather than shown.
+ */
+export function stripScopedCalendarDates(
+  text: string,
+  spans: readonly (readonly [string, string])[],
+): Readonly<{ text: string; issues: readonly string[] }> {
+  const bounds = spans.flatMap(([from, through]) => {
+    const start = Date.parse(`${from.slice(0, 10)}T00:00:00Z`), end = Date.parse(`${through.slice(0, 10)}T00:00:00Z`);
+    return Number.isFinite(start) && Number.isFinite(end) && start <= end ? [[start, end] as const] : [];
+  });
+  if (!bounds.length) return { text, issues: [] };
+  const years = [...new Set(bounds.flatMap(([start, end]) => [new Date(start).getUTCFullYear(), new Date(end).getUTCFullYear()]))];
+  const issues: string[] = [];
+  const resolve = (match: string, weekday: string | undefined, day: string, month: string, year: string | undefined): string => {
+    const monthIndex = MONTH_NAMES.findIndex((name) => name.startsWith(month.toLowerCase().slice(0, 3)));
+    for (const candidate of year ? [Number(year)] : years) {
+      const date = new Date(Date.UTC(candidate, monthIndex, Number(day)));
+      if (date.getUTCMonth() !== monthIndex || date.getUTCDate() !== Number(day)) continue;
+      if (!bounds.some(([start, end]) => date.getTime() >= start && date.getTime() <= end)) continue;
+      const actual = WEEKDAY_NAMES[date.getUTCDay()]!;
+      if (weekday && !actual.startsWith(weekday.toLowerCase().slice(0, 3))) {
+        issues.push(`${day} ${MONTH_NAMES[monthIndex]![0]!.toUpperCase()}${MONTH_NAMES[monthIndex]!.slice(1)} ${candidate} is a ${actual[0]!.toUpperCase()}${actual.slice(1)}, not a ${weekday}.`);
+        return match;
+      }
+      return " the date ";
+    }
+    return match;
+  };
+  const inSpan = (day: string, month: string, year: string | undefined): boolean => resolve("\u0000", undefined, day, month, year) !== "\u0000";
+  const stripped = text
+    .replace(DAY_RANGE, (match, from: string, through: string, month: string, year: string | undefined) => (
+      Number(from) < Number(through) && inSpan(from, month, year) && inSpan(through, month, year) ? " the dates " : match))
+    .replace(DAY_FIRST, (match, weekday: string | undefined, day: string, month: string, year: string | undefined) => resolve(match, weekday, day, month, year))
+    .replace(MONTH_FIRST, (match, weekday: string | undefined, month: string, day: string, year: string | undefined) => resolve(match, weekday, day, month, year));
+  return { text: stripped, issues };
+}
+
+export function reportingRanges(source: ReportingEvidence): [string, string][] {
   const ranges: [string, string][] = [];
   const add = (value: unknown) => {
     if (Array.isArray(value) && value.length === 2 && value.every((v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(v))) ranges.push(value as [string, string]);

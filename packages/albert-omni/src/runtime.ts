@@ -156,6 +156,8 @@ function toTraceCell(value: unknown): TraceCell {
 const memberNamePattern = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/u;
 
 type OmniTask = { id: string; label: string; completed: boolean };
+/** A task about delivering the reply rather than checking evidence: "Compose the answer", "Write up the findings". */
+const DELIVERY_TASK = /^(?:compose|write(?:\s+up)?|draft|present|deliver|summari[sz]e|prepare|format|put together|report)\b.*\b(?:answer|response|reply|findings|summary|write-?up|recommendations?|results?|report)\b/iu;
 
 const NUMERIC_TRACE_COLUMN_TYPES = new Set(["number", "currency", "percent"]);
 
@@ -1647,6 +1649,16 @@ export async function runGovernedAnalyticalTurn(
       throw new Error("The analysis completed without a validated final answer.");
     }
 
+    // A task that only says "write the answer" is finished by the answer being
+    // accepted. The model cannot tick it before composing and rarely returns to
+    // tick it after, which used to cost a Verified answer its state and append
+    // "Some planned checks remain unfinished." to a reply that lacked nothing.
+    if (acceptedAnswer) {
+      for (const task of tasks) {
+        if (!task.completed && DELIVERY_TASK.test(task.label)) task.completed = true;
+      }
+    }
+
     // Settle the visible checklist truthfully before the terminal answer,
     // without repeating a final state the model already published.
     if (tasksEverPublished) {
@@ -1670,7 +1682,9 @@ export async function runGovernedAnalyticalTurn(
     // comes from the accepted composition; raw model prose is never promoted.
     let composed = acceptedAnswer as ComposedAnswer | null;
     if (composed?.state === "Verified" && tasks.some((task) => !task.completed)) {
-      composed = { ...composed, state: "Qualified", text: `${composed.text}\n\nSome planned checks remain unfinished.` };
+      // The open items are already on the task card; the answer keeps its
+      // Qualified state without a sentence that tells the owner nothing.
+      composed = { ...composed, state: "Qualified" };
     }
     const text = composed?.text ?? (fallback.text || "Your dashboard is ready with the checked results.");
     const followUps = composed?.followUps ?? fallback.followUps;

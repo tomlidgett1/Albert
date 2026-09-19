@@ -372,8 +372,11 @@ test("Omni is the default harness and Albert remains reachable", async ({ page }
   await page.getByRole("textbox", { name: "Ask Omni about your business" }).fill(prompt);
   await page.getByRole("button", { name: "Send message" }).click();
   await expect.poll(() => capture.omniConversationPayloads.length).toBe(1);
-  await expect(page.getByText("Tasks (3 of 3)")).toBeVisible();
   await expect(page.getByText(/Revenue held steady across the last 12 complete weeks/u)).toBeVisible();
+  // Once the answer lands the working trail folds behind the header.
+  await expect(page.getByText("Tasks (3 of 3)")).not.toBeVisible();
+  await page.getByRole("button", { name: /^Worked for/u }).click();
+  await expect(page.getByText("Tasks (3 of 3)")).toBeVisible();
   expect(capture.omniConversationPayloads[0]).toEqual({
     message: prompt,
     preferences: { model: "claude-haiku-4-5-20251001", reasoningEffort: "max", fastMode: false },
@@ -1186,7 +1189,19 @@ test("Omni harness renders tasks, research steps, query cards and the answer", a
   await composer.fill("Show me revenue by week for the last 12 complete weeks.");
   await composer.press("Enter");
 
-  // The Omni task checklist arrives first and settles fully completed.
+  // The answer is what the owner is left looking at: once it lands, the
+  // working trail folds behind the "Worked for" header, which reopens it and
+  // says how much work it holds. The composed pivot is a deliverable and stays.
+  await expect(page.getByText(/Revenue held steady across the last 12 complete weeks/u)).toBeVisible();
+  const workToggle = page.getByRole("button", { name: /^Worked for .*1 query/u });
+  await expect(workToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByText("Tasks (3 of 3)")).not.toBeVisible();
+  await expect(page.getByText("I found the governed revenue measure. Querying weekly revenue now.")).not.toBeVisible();
+  await expect(page.getByRole("region", { name: "Pivot: Weekly scorecard" })).toBeVisible();
+  await workToggle.click();
+  await expect(workToggle).toHaveAttribute("aria-expanded", "true");
+
+  // The Omni task checklist settles fully completed.
   await expect(page.getByText("Tasks (3 of 3)")).toBeVisible();
   await expect(page.getByText("Find the revenue fields")).toBeVisible();
 
@@ -1725,7 +1740,10 @@ test("Omni renders a composed pivot as an open pivot card and pins it", async ({
     .evaluate((cell) => getComputedStyle(cell).position);
   expect(metricCell).toBe("sticky");
 
-  // The plain evidence query stays collapsed, as before.
+  // The pivot is a deliverable and stayed on show while the working trail
+  // folded away; reopened, the plain evidence query is collapsed, as before.
+  await expect(page.getByRole("region", { name: "Query: Weekly revenue" })).not.toBeVisible();
+  await page.getByRole("button", { name: /^Worked for/u }).click();
   await expect(page.getByRole("region", { name: "Query: Weekly revenue" }).getByRole("button", { name: /Weekly revenue/u }))
     .toHaveAttribute("aria-expanded", "false");
 

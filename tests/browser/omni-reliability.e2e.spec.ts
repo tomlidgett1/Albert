@@ -34,6 +34,7 @@ for (const theme of ["light", "dark"] as const) {
     await composer.fill("Show margin for August 2026");
     await composer.press("Enter");
     await expect(page.getByText("Margin was 0.5%.")).toBeVisible();
+    await page.getByRole("button", { name: /^Worked for/u }).click();
     await expect(page.getByText("I’ll check the recorded margin.")).toBeVisible();
     await expect(page.getByText(/Unfinished margin draft|Truncated margin draft/u)).toHaveCount(0);
     await expect(page.getByRole("cell", { name: "0.5%", exact: true })).toBeVisible();

@@ -21,6 +21,52 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Once the answer has landed the header folds the working trail. It keeps the
+ * label's exact type so nothing shifts when a plain header becomes a toggle. */
+.workHeader[data-toggle="true"] {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 8px;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  background: none;
+  padding: 0 0 4px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workHeader[data-toggle="true"]:focus-visible {
+  outline: 2px solid light-dark(#93c5fd, #3b5b8f);
+  outline-offset: 3px;
+}
+
+.workHeaderDetail {
+  font-size: calc(13px * var(--text-scale, 1));
+  letter-spacing: 0;
+  color: light-dark(#6b7280, #8b909a);
+}
+
+.workHeaderDetail::before { content: "·"; margin-right: 8px; }
+
+.workHeaderChevron {
+  width: 15px;
+  height: 15px;
+  margin-left: auto;
+  align-self: center;
+  fill: none;
+  stroke: light-dark(#9ca3af, #7c818c);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: rotate(-90deg);
+  transition: transform 0.18s ease;
+}
+
+.workHeaderChevron[data-open="true"] { transform: rotate(0deg); }
+.workHeader[data-toggle="true"]:hover .workHeaderChevron { stroke: light-dark(#4b5563, #c8cbd2); }
+
 /* ---- Tasks card ------------------------------------------------------- */
 
 .tasksCard {
@@ -108,6 +154,43 @@
 .prose :global(p) { margin: 0 0 0.7em; }
 .prose :global(p:last-child) { margin-bottom: 0; }
 
+/* Reading text holds a comfortable measure (about 85 characters); at the chat
+ * column's full width a line ran to ~150. It is set in rem, not ch, so the
+ * smaller footnote shares the body's right edge. Tables are data, not reading,
+ * and keep the width. */
+.prose :global(p),
+.prose :global(ul),
+.prose :global(ol),
+.prose :global(h1),
+.prose :global(h2),
+.prose :global(h3) { max-width: calc(43rem * var(--text-scale, 1)); }
+
+/* Working notes between steps. Quieter than the answer in size, colour and
+ * weight, so a finding mentioned in passing never reads as the reply itself. */
+.prose[data-narration="true"] {
+  font-size: calc(13.5px * var(--text-scale, 1));
+  line-height: 1.55;
+  letter-spacing: 0;
+  color: light-dark(#6b7280, #9298a3);
+}
+
+.prose[data-narration="true"] :global(strong) {
+  font-weight: 500;
+  color: inherit;
+}
+
+/* The answer's single footnote (basis, caveats): reference material, set
+ * apart from the reading line rather than competing with it. */
+.prose :global(p.answerNote) {
+  margin-top: 1.1em;
+  padding-top: 0.75em;
+  border-top: 1px solid light-dark(#eceef1, #26282e);
+  font-size: calc(12.5px * var(--text-scale, 1));
+  line-height: 1.5;
+  letter-spacing: 0;
+  color: light-dark(#6b7280, #8b909a);
+}
+
 .prose :global(h1),
 .prose :global(h2) {
   font-size: calc(20px * var(--text-scale, 1));
@@ -136,6 +219,11 @@
   margin: 0.25em 0 0.8em;
   padding-left: 1.35em;
 }
+
+/* The app's reset strips list markers; without them a list reads as a run of
+ * indented paragraphs. */
+.prose :global(ul) { list-style: disc outside; }
+.prose :global(ol) { list-style: decimal outside; }
 
 .prose :global(li) {
   margin: 0.28em 0;
@@ -173,6 +261,10 @@
 /* Markdown tables inside answers — same visual family as the query cards. */
 .prose :global(.answerTableScroll) {
   overflow-x: auto;
+  /* A table is as wide as its columns need. Stretched to the chat column, a
+   * two-column table stranded its figures ~800px from their labels. */
+  width: fit-content;
+  max-width: 100%;
   margin: 0.5em 0 0.95em;
   border: 1px solid light-dark(#e5e7eb, #33363e);
   border-radius: 10px;
@@ -182,7 +274,7 @@
 .prose :global(.answerTableScroll table) {
   border-collapse: collapse;
   width: max-content;
-  min-width: 100%;
+  min-width: 20rem;
   font-size: calc(13.5px * var(--text-scale, 1));
 }
 
@@ -209,6 +301,16 @@
   max-width: 380px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* The label column wraps instead of truncating: a product name cut off with
+ * an ellipsis hides the one thing the owner needs to recognise the row. */
+.prose :global(.answerTableScroll td:first-child) {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  min-width: 9ch;
+  max-width: 340px;
 }
 
 .prose :global(.answerTableScroll tr:last-child td) { border-bottom: 0; }
@@ -623,6 +725,14 @@
 .answer {
   min-width: 0;
 }
+
+/* The reply reads a touch larger than the working notes above it. */
+.answer .prose {
+  font-size: calc(16px * var(--text-scale, 1));
+  line-height: 1.6;
+}
+
+.answer .prose :global(p.answerNote) { font-size: calc(12.5px * var(--text-scale, 1)); }
 
 .followUps {
   display: flex;

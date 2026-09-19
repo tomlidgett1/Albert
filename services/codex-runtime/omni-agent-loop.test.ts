@@ -42,6 +42,32 @@ test("an accepted composition is delivered when the model has no redundant final
   });
 });
 
+test("a task that only says to write the answer is settled by the answer, and an open check adds no sentence", async (context) => {
+  // The model cannot tick "Compose the answer" before composing and rarely
+  // comes back to tick it after; that alone used to cost a Verified answer its
+  // state and append "Some planned checks remain unfinished." to the reply.
+  for (const [openTask, expectedState, settled] of [["Compose the answer", "Verified", true], ["Check August refunds", "Qualified", false]] as const) {
+    context.mock.method(Runner.prototype, "run", async (agent: Agent) => {
+      await invoke(agent, "ManageTaskList", { tasks: [{ label: "Query August takings", completed: false }, { label: openTask, completed: false }] });
+      await invoke(agent, "SearchSemanticModel", { topicName: "sales_analytics", searchPattern: null });
+      const queried = JSON.parse(String(await invoke(agent, "GenerateSemanticQuery", { name: "August sales", topic: "sales_analytics", query: { measures: ["sales_analytics.gross_takings"], dimensions: null, segments: null, timeDimensions: [{ dimension: "sales_analytics.completed_at", granularity: null, dateRange: "2026-08-01 to 2026-08-31", compareDateRange: null }], filters: null, order: null, limit: null } })));
+      await invoke(agent, "ManageTaskList", { tasks: [{ label: "Query August takings", completed: true }, { label: openTask, completed: false }] });
+      const composed = JSON.parse(String(await invoke(agent, "ComposeAnswer", { outcome: "answer", markdown: "Gross takings were {{sales}}.", values: [{ id: "sales", resultId: queried.resultId, rowIndex: 0, columnKey: "sales_analytics_gross_takings", format: "auto", decimals: null }], tables: [], citedResultIds: [queried.resultId], limitations: [], followUps: [] })));
+      assert.equal(composed.ok, true, JSON.stringify(composed));
+      return { async *[Symbol.asyncIterator]() {}, completed: Promise.resolve(), rawResponses: [], history: [], finalOutput: "" };
+    });
+    await fixture(async (turn, url) => {
+      const events: OmniTraceEventInput[] = [];
+      const result = await runOmniSemanticTurn({ turn, cubeApiUrl: url, openai: { apiKey: "synthetic-fixture", baseUrl: "https://provider.example.test" }, emit: (event) => { events.push(event); } });
+      assert.equal(result.answerState, expectedState, openTask);
+      const answer = events.find((event) => event.type === "answer");
+      assert.equal(answer?.text, "Gross takings were $600.00.", openTask);
+      const checklist = events.filter((event) => event.type === "tasks").at(-1);
+      assert.equal(checklist?.type === "tasks" && checklist.items.every((item) => item.completed), settled, openTask);
+    });
+  }
+});
+
 test("free-form model assertions never become a verified analytical answer", async (context) => {
   context.mock.method(Runner.prototype, "run", async () => ({ async *[Symbol.asyncIterator]() {}, completed: Promise.resolve(), rawResponses: [], history: [], finalOutput: "Sales were $999,999." }));
   await fixture(async (turn, url) => {

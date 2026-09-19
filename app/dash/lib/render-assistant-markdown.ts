@@ -116,8 +116,16 @@ function renderHeading(level: number, text: string, options: Required<RenderAssi
   return `<h3>${content}</h3>`;
 }
 
+/**
+ * The composer closes an answer with one "Note: ..." footnote carrying its
+ * basis and caveats. It is reference material, so it is marked for the
+ * stylesheet to set small and muted instead of reading as another paragraph.
+ */
+const answerNotePattern = /^Notes?:\s/u;
+
 function renderParagraph(text: string, options: Required<RenderAssistantMarkdownOptions>): string {
-  return `<p>${renderInlineMarkdown(text, options.linkMode)}</p>`;
+  const content = renderInlineMarkdown(text, options.linkMode);
+  return answerNotePattern.test(text) ? `<p class="answerNote">${content}</p>` : `<p>${content}</p>`;
 }
 
 function renderList(items: string[], ordered: boolean, options: Required<RenderAssistantMarkdownOptions>): string {
