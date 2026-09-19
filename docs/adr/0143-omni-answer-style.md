@@ -1,6 +1,6 @@
 # 0143 — Omni answers that read like a good analyst wrote them
 
-Date: 2026-09-19. Status: implemented; not yet deployed.
+Date: 2026-09-19. Status: implemented and deployed the same day.
 
 ## The complaint
 
@@ -170,3 +170,37 @@ the best guess".
   the owner would rather keep the work on show.
 - Not addressed here: answers at other efforts and on Sonnet/Haiku were not
   re-measured; the `style` corpus runs against any model.
+
+## Verification
+
+Deployed 2026-09-19 as 497c214: web `dpl_DrmpjUPvomar4cj6Tkwvyi3KcCYJ` first
+(new web with the old runtime is a safe pairing: an answer without a `Note:`
+paragraph simply renders as before), then the Fly runtime as
+`answer-style-20260919`, held until the 00:39 UTC hourly turn had completed so
+the machine swap interrupted nothing. Both report release 497c214; the runtime
+started once, with both health checks passing. The iMessage bridge reaches Omni
+through the runtime service, so it needed no deploy of its own.
+
+Re-run against production (GPT-5.6 Luna, high, fast) with three of the owner's
+own questions:
+
+- "when was the store last closed - best guess": "Best guess: **Sunday 13
+  September 2026** was the last day the store was closed", 30s. The same
+  question on 18 September took 317 words and never named the day.
+- "sales this month compared to same month last year": one sentence, a
+  two-row table, one line of so-what and a footnote, 27s.
+- "yooooo what should we discount": verdict, one eight-row table with short
+  headers and whole dollars, three short sections, one footnote, 107s over
+  eleven queries. It was 987 words on 18 September.
+
+Across the three: no doubled symbols, no cents on a figure of $1,000 or more,
+no narrated internals, no "unfinished checks" line; style score 92.3. The
+three compose rejections were all correct ones (an answer citing no evidence,
+and an unbound stock count typed twice), none from the classes relaxed here,
+so the guard against invented figures is intact.
+
+Two things observed during the deploy, both outside this change. `vercel deploy
+--prod` moved the `albert-chi` alias by itself, where earlier deploys needed it
+re-pointed by hand. And `/api/health` reports `not_ready` (`syncWorker` and
+`operatorDiagnostic` false) identically before and after, so it predates this
+release.
