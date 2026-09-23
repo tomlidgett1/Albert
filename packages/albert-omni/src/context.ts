@@ -67,6 +67,24 @@ export function completedAgentHistory(history: readonly AgentInputItem[]): Agent
       : true).map((item) => structuredClone(item));
 }
 
+/**
+ * A tool result's text. The Agents SDK records function output as
+ * `{ type: "text", text }`, not a bare string: compaction that only read
+ * strings never fired in production, so every step re-sent every result.
+ */
+function toolOutputText(output: unknown): string | undefined {
+  if (typeof output === "string") return output;
+  if (output && typeof output === "object" && (output as { type?: unknown }).type === "text") {
+    const text = (output as { text?: unknown }).text;
+    return typeof text === "string" ? text : undefined;
+  }
+  return undefined;
+}
+
+function withToolOutputText<T>(output: T, text: string): T {
+  return (typeof output === "string" ? text : { ...(output as object), text }) as T;
+}
+
 /** Keep evidence in the registry while sending bounded previews to the model. */
 export function compactOmniModelHistory(history: readonly AgentInputItem[], targetBytes = 256_000): AgentInputItem[] {
   const output = [...history];
@@ -74,12 +92,14 @@ export function compactOmniModelHistory(history: readonly AgentInputItem[], targ
   if (bytes <= targetBytes) return output;
   for (let index = 0; index < output.length && bytes > targetBytes; index++) {
     const item = output[index]!;
-    if (item.type !== "function_call_result" || typeof item.output !== "string") continue;
-    const before = Buffer.byteLength(item.output);
+    if (item.type !== "function_call_result") continue;
+    const text = toolOutputText(item.output);
+    if (text === undefined) continue;
+    const before = Buffer.byteLength(text);
     if (before < 2_000) continue;
     let compacted: string | undefined;
     try {
-      const value = JSON.parse(item.output) as Record<string, unknown>;
+      const value = JSON.parse(text) as Record<string, unknown>;
       if (typeof value.resultId === "string" && Array.isArray(value.rows)) {
         compacted = JSON.stringify({ ...value, rows: value.rows.slice(0, index >= output.length - 3 ? 8 : 0), truncated: true, contextNote: "Older rows were removed only from model context. The complete retained result remains available by resultId for DeriveResult, CalculateValues, charts and answer composition. Refine a governed query to inspect a smaller slice." });
       }
@@ -87,7 +107,7 @@ export function compactOmniModelHistory(history: readonly AgentInputItem[], targ
       if (item.name === "SearchSemanticModel" && index < output.length - 6) compacted = "Earlier schema definitions were compacted. Repeat SearchSemanticModel for the topic when exact definitions are needed; repeated topic inspection does not consume a new search allowance.";
     }
     if (!compacted) continue;
-    output[index] = { ...item, output: compacted };
+    output[index] = { ...item, output: withToolOutputText(item.output, compacted) };
     bytes -= before - Buffer.byteLength(compacted);
   }
   return output;

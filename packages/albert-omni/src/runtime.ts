@@ -14,6 +14,7 @@ import {
   type OmniAgentDriverFactory,
   type OmniAgentDriverInput,
   type OmniDriverContinuation,
+  type OmniDriverRunOptions,
 } from "./driver.js";
 import { createGovernedToolRegistry } from "../../albert-agents-api/src/tools.js";
 import { composeManagedAnswer, MANAGED_ANSWER_JSON_SCHEMA, MANAGED_ANSWER_INSTRUCTIONS } from "../../albert-agents-api/src/answer.js";
@@ -321,6 +322,25 @@ export async function runGovernedAnalyticalTurn(
   const upstreamAbort = () => timeoutAbort.abort(options.signal?.reason ?? new Error("The analysis was cancelled."));
   options.signal?.addEventListener("abort", upstreamAbort, { once: true });
   const signal = timeoutAbort.signal;
+  // The end of every turn is reserved for the answer. A turn still exploring
+  // when the hard deadline fired threw away every result it had gathered
+  // (720 s turns with twenty queries answered nothing); exploration now stops
+  // early enough for the model to compose from the evidence it holds. The
+  // managed harness keeps its own deadline and synthesis step.
+  const explorationAbort = new AbortController();
+  const composeReserveMs = options.harness ? 0 : Math.min(
+    turn.effort === "max" || turn.effort === "xhigh" ? 120_000 : 75_000,
+    (deadlineAt - startedAt) / 4,
+  );
+  const explorationTimer = composeReserveMs > 0
+    ? setTimeout(
+      () => explorationAbort.abort(new Error("The time for exploring this analysis is over.")),
+      Math.max(0, deadlineAt - composeReserveMs - Date.now()),
+    )
+    : undefined;
+  const explorationSignal = AbortSignal.any([signal, explorationAbort.signal]);
+  const explorationOver = () => explorationAbort.signal.aborted && !signal.aborted;
+  const timeUp = () => JSON.stringify({ ok: false, error: "time_up", guidance: "The time for new queries in this analysis is over. Call ComposeAnswer now with the results already gathered, and say in limitations what could not be checked." });
   let activeDriver: OmniAgentDriver | undefined;
 
   try {
@@ -579,6 +599,7 @@ export async function runGovernedAnalyticalTurn(
       strict: true,
       errorFunction: reportInvalidToolCall("Value lookup"),
       execute: async (input: { field: string; matching: string | null; limit: number | null }) => {
+        if (explorationOver()) return timeUp();
         if (valueLookups >= MAX_VALUE_LOOKUPS) {
           return JSON.stringify({ ok: false, error: "The value-lookup allowance for this turn is spent. Work with the values already found." });
         }
@@ -612,9 +633,10 @@ export async function runGovernedAnalyticalTurn(
           timezone,
         };
         const loaded = await cube.loadQuery(query, {
-          signal,
+          signal: explorationSignal,
           audit: { operation: "omni_field_values", topic: view.title || view.name },
         });
+        if (explorationOver()) return timeUp();
         if (!loaded.result.ok) {
           await emit({
             type: "progress",
@@ -655,6 +677,7 @@ export async function runGovernedAnalyticalTurn(
       topic: string;
       query: CubeQuery;
     }): Promise<string> => {
+      if (explorationOver()) return timeUp();
       // Attempts are counted at entry so a batch of parallel calls cannot
       // race past the allowance before any of them increments it.
       if (queryAttempts >= MAX_QUERY_ATTEMPTS_PER_TURN) {
@@ -707,9 +730,11 @@ export async function runGovernedAnalyticalTurn(
         return JSON.stringify({ ok: true, resultId: saved.resultId, name: queryName, topic: saved.topic, rowCount: saved.rowCount, columns: saved.columns, rows: saved.rows.slice(0, MAX_MODEL_RESULT_ROWS), semantics: saved.semantics, note: "This exact query is already in the saved evidence; no new data request was made." });
       }
       const loaded = await cube.loadQuery(withTimezone, {
-        signal,
+        signal: explorationSignal,
         audit: { operation: "omni_semantic_query", topic: input.topic, branchLabel: queryName },
       });
+      // A load cut short by the end of exploration is not a failed query.
+      if (explorationOver()) return timeUp();
       if (!loaded.result.ok || !loaded.validated) {
         hadQueryFailures = true;
         await emit({
@@ -872,6 +897,7 @@ export async function runGovernedAnalyticalTurn(
           return await runQueryCore({ name: input.name, topic: input.topic, query: cubeQueryFromTool(input) });
         } catch (error) {
           if (signal.aborted) throw error;
+          if (explorationOver()) return timeUp();
           return JSON.stringify({
             ok: false,
             error: error instanceof Error ? error.message.slice(0, 400) : "The query failed unexpectedly.",
@@ -1609,12 +1635,22 @@ export async function runGovernedAnalyticalTurn(
     const TRANSIENT_RUN_FAILURE = /did not produce a final response|fetch failed|ECONNRESET|ECONNREFUSED|socket|terminated|premature close|read timeout|Invalid request data|overloaded|429|5\d\d|rate_limit_exceeded|server_error|internal_error|connection_failed|request_timeout|stream_ended|session_failed|could not be reached/iu;
     const TRANSIENT_RETRY_BACKOFF_MS = [2_500, 10_000] as const;
     let rawFinal = "";
+    // The exploring run leaves requests in reserve for the answer nudges below.
+    const COMPOSE_RESERVE_TURNS = 3;
     for (let attempt = 0; ; attempt += 1) {
       try {
-        rawFinal = await runAgentOnce();
+        rawFinal = await driver.run(undefined, { signal: explorationSignal, reserveTurns: options.harness ? 0 : COMPOSE_RESERVE_TURNS });
         break;
       } catch (error) {
         const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+        // A delivered answer or plan is never thrown away by a later failure,
+        // and running out of exploration time or steps means: compose now,
+        // from everything gathered so far.
+        if (acceptedAnswer || acceptedPlan) break;
+        if (!options.harness && !signal.aborted && (explorationOver() || /Max turns/iu.test(message))) {
+          await emit({ type: "progress", status: "running", stage: "planning", label: "Writing the answer from the checks completed so far" });
+          break;
+        }
         const backoffMs = TRANSIENT_RETRY_BACKOFF_MS[attempt];
         if (options.harness || signal.aborted || backoffMs === undefined || !TRANSIENT_RUN_FAILURE.test(message)) {
           throw error;
@@ -1629,8 +1665,13 @@ export async function runGovernedAnalyticalTurn(
         });
         await new Promise((resolve) => setTimeout(resolve, backoffMs));
         if (signal.aborted) throw error;
+        if (explorationOver()) break;
       }
     }
+    // Out of exploration time, the nudges below tell the model no new query can run.
+    const timeUpPreface = explorationOver()
+      ? "The time for this analysis is nearly up, so no new queries can run. "
+      : "";
     // A composed answer/plan is the deliverable. The model may legitimately
     // finish with no redundant postscript after its composition was accepted.
 
@@ -1664,10 +1705,12 @@ export async function runGovernedAnalyticalTurn(
         .join("; ");
       rawFinal = await runAgentOnce({
         assistantText: rawFinal,
-        userText: `You have not called ComposeDashboard, so no dashboard exists yet. Call it now using the results you already executed this turn (${available}), then reply with the short hand-over summary.`,
+        userText: `${timeUpPreface}You have not called ComposeDashboard, so no dashboard exists yet. Call it now using the results you already executed this turn (${available}), then reply with the short hand-over summary.`,
       });
     }
     if (dashboardMode && !acceptedPlan) {
+      // A hard deadline or cancellation is reported as what it was.
+      if (signal.aborted) throw signal.reason ?? new Error("The analysis timed out before finishing.");
       throw new Error("The dashboard build finished without a composed plan.");
     }
 
@@ -1676,10 +1719,11 @@ export async function runGovernedAnalyticalTurn(
       // instruction is appended.
       rawFinal = await runAgentOnce({
         assistantText: "",
-        userText: `The owner has not received an answer to this request: ${turn.message}\n\nCall ComposeAnswer now and address that request, including the requested breakdowns, checks and tables using the evidence already gathered. Bind every analytical number with a value reference and every table with a result reference. Use explanation only for non-quantitative definitions, clarification for a blocking ambiguity, or unavailable for a missing capability.`,
+        userText: `${timeUpPreface}The owner has not received an answer to this request: ${turn.message}\n\nCall ComposeAnswer now and address that request, including the requested breakdowns, checks and tables using the evidence already gathered. Bind every analytical number with a value reference and every table with a result reference.${timeUpPreface ? " Say in limitations what you could not finish checking." : ""} Use explanation only for non-quantitative definitions, clarification for a blocking ambiguity, or unavailable for a missing capability.`,
       });
     }
     if (!dashboardMode && !acceptedAnswer) {
+      if (signal.aborted) throw signal.reason ?? new Error("The analysis timed out before finishing.");
       throw new Error("The analysis completed without a validated final answer.");
     }
 
@@ -1746,6 +1790,7 @@ export async function runGovernedAnalyticalTurn(
     });
   } finally {
     clearTimeout(timeout);
+    if (explorationTimer) clearTimeout(explorationTimer);
     options.signal?.removeEventListener("abort", upstreamAbort);
     // Remote harness resources (a managed session) are released once the
     // trace has been delivered; a failed release never fails the turn.
@@ -1871,8 +1916,9 @@ function createSdkRunnerDriver(
     }
   };
 
-  const run = async (continuation?: OmniDriverContinuation): Promise<string> => {
-    if (modelRequests >= MAX_AGENT_TURNS) throw new Error("Max turns reached before completing the analysis.");
+  const run = async (continuation?: OmniDriverContinuation, runOptions?: OmniDriverRunOptions): Promise<string> => {
+    const reserveTurns = runOptions?.reserveTurns ?? 0;
+    if (modelRequests + reserveTurns >= MAX_AGENT_TURNS) throw new Error("Max turns reached before completing the analysis.");
     if (continuation) {
       if (continuation.assistantText.trim()) items.push(assistant(continuation.assistantText));
       items.push(user(continuation.userText));
@@ -1885,8 +1931,8 @@ function createSdkRunnerDriver(
     let answerParts: string[] = [];
     const stream = await runner.run(agent, [...items], {
       stream: true,
-      maxTurns: MAX_AGENT_TURNS - modelRequests,
-      signal: input.signal,
+      maxTurns: MAX_AGENT_TURNS - modelRequests - reserveTurns,
+      signal: runOptions?.signal ?? input.signal,
       callModelInputFilter: ({ modelData }) => ({ ...modelData, input: compactOmniModelHistory(modelData.input) }),
     });
     let recordedResponses = 0;

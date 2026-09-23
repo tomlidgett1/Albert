@@ -72,6 +72,43 @@ test("an accepted composition ends the run without another model request", async
   });
 });
 
+test("a turn out of exploration time composes from the evidence it gathered instead of discarding it", async (context) => {
+  // Turns that ran twenty queries used to hit the hard deadline mid-step and
+  // throw everything away. Exploration now stops before the deadline and the
+  // answer nudge composes from the results already held.
+  const runs: { maxTurns?: number; userText: string }[] = [];
+  let queried: { resultId: string } | undefined;
+  context.mock.method(Runner.prototype, "run", async (agent: Agent, input: unknown, runOptions: { signal?: AbortSignal; maxTurns?: number }) => {
+    const items = input as { role?: string; content?: unknown }[];
+    const last = items.at(-1);
+    runs.push({ maxTurns: runOptions.maxTurns, userText: typeof last?.content === "string" ? last.content : JSON.stringify(last?.content ?? "") });
+    if (runs.length === 1) {
+      await invoke(agent, "SearchSemanticModel", { topicName: "sales_analytics", searchPattern: null });
+      queried = JSON.parse(String(await invoke(agent, "GenerateSemanticQuery", { name: "August sales", topic: "sales_analytics", query: { measures: ["sales_analytics.gross_takings"], dimensions: null, segments: null, timeDimensions: [{ dimension: "sales_analytics.completed_at", granularity: null, dateRange: "2026-08-01 to 2026-08-31", compareDateRange: null }], filters: null, order: null, limit: null } })));
+      // Still exploring when the time runs out.
+      await new Promise((resolve) => runOptions.signal?.addEventListener("abort", resolve, { once: true }));
+      const late = JSON.parse(String(await invoke(agent, "GenerateSemanticQuery", { name: "July sales", topic: "sales_analytics", query: { measures: ["sales_analytics.gross_takings"], dimensions: null, segments: null, timeDimensions: [{ dimension: "sales_analytics.completed_at", granularity: null, dateRange: "2026-07-01 to 2026-07-31", compareDateRange: null }], filters: null, order: null, limit: null } })));
+      assert.equal(late.error, "time_up");
+      throw Object.assign(new Error("Request was aborted."), { name: "Error" });
+    }
+    const composed = JSON.parse(String(await invoke(agent, "ComposeAnswer", { outcome: "answer", markdown: "Gross takings were {{sales}}.", values: [{ id: "sales", resultId: queried!.resultId, rowIndex: 0, columnKey: "sales_analytics_gross_takings", format: "auto", decimals: null }], tables: [], citedResultIds: [queried!.resultId], limitations: ["July was not checked in time."], followUps: [] })));
+    assert.equal(composed.ok, true);
+    return { async *[Symbol.asyncIterator]() {}, completed: Promise.resolve(), rawResponses: [], history: [], finalOutput: "" };
+  });
+  await fixture(async (turn, url) => {
+    const events: OmniTraceEventInput[] = [];
+    const result = await runOmniSemanticTurn({ turn, cubeApiUrl: url, deadlineAt: Date.now() + 4_000, openai: { apiKey: "synthetic-fixture", baseUrl: "https://provider.example.test" }, emit: (event) => { events.push(event); } });
+    assert.equal(runs.length, 2);
+    assert.equal(runs[0]!.maxTurns, 45, "the exploring run leaves requests for the answer");
+    assert.match(runs[1]!.userText, /no new queries can run/u);
+    assert.ok(events.some((event) => event.type === "progress" && event.label === "Writing the answer from the checks completed so far"));
+    assert.equal(result.answerState, "Qualified");
+    assert.match(events.find((event) => event.type === "answer")?.text ?? "", /^Gross takings were \$600\.00\./u);
+    // A query cut short by the end of exploration is not reported as a failed query.
+    assert.equal(events.some((event) => event.type === "progress" && /^Query failed/u.test(event.label ?? "")), false);
+  });
+});
+
 test("a task that only says to write the answer is settled by the answer, and an open check adds no sentence", async (context) => {
   // The model cannot tick "Compose the answer" before composing and rarely
   // comes back to tick it after; that alone used to cost a Verified answer its

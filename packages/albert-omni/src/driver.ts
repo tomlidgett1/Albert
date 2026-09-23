@@ -31,6 +31,17 @@ export type OmniDriverContinuation = Readonly<{
   userText: string;
 }>;
 
+/**
+ * Per-run limits. The exploring run stops on its own signal before the
+ * turn's hard deadline and leaves model requests in reserve, so the turn can
+ * still compose an answer from the evidence it gathered.
+ */
+export type OmniDriverRunOptions = Readonly<{
+  signal?: AbortSignal;
+  /** Model requests this run must leave unused for the runs after it. */
+  reserveTurns?: number;
+}>;
+
 export type OmniDriverResume = Readonly<{
   /** `@openai/agents` history for the in-process driver. */
   history?: readonly AgentInputItem[];
@@ -78,7 +89,7 @@ export type OmniAgentDriver = Readonly<{
    * last successful tool result. With a continuation, the conversation
    * carries on from the assistant's prior reply with a new user instruction.
    */
-  run: (continuation?: OmniDriverContinuation) => Promise<string>;
+  run: (continuation?: OmniDriverContinuation, runOptions?: OmniDriverRunOptions) => Promise<string>;
   modelRequests: () => number;
   usage: () => OmniTurnUsage;
   checkpointState: () => OmniDriverCheckpointState;

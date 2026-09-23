@@ -652,6 +652,28 @@ test("non-strict Claude tool calls get omitted nulls and serialized objects rest
   assert.deepEqual(bodies[1]!.messages[1], { role: "assistant", content });
 });
 
+test("a replayed Claude turn drops tool calls whose results were cut off", () => {
+  // A run stopped mid-step (the exploration deadline) keeps the assistant
+  // turn but not the results of its in-flight calls; replaying such a
+  // tool_use without a tool_result is a 400 that killed the answer step.
+  const content = [
+    { type: "thinking", thinking: "", signature: "cut-signature" },
+    { type: "tool_use", id: "toolu_done", name: "lookup_metric", input: { metric: "sales" } },
+    { type: "tool_use", id: "toolu_cut", name: "lookup_metric", input: { metric: "margin" } },
+  ];
+  const marker = { albert_anthropic_message: { responseId: "msg_cut", content } };
+  const replay = anthropicMessagesRequestForTest(CLAUDE_HAIKU_4_5_MODEL_ID, request({
+    input: [
+      user("Look up both metrics."),
+      { type: "function_call", callId: "toolu_done", name: "lookup_metric", arguments: "{\"metric\":\"sales\"}", status: "completed", providerData: marker },
+      { type: "function_call_result", callId: "toolu_done", name: "lookup_metric", status: "completed", output: "100" },
+      user("Time is up: answer now."),
+    ] as never,
+  }));
+  const assistantTurn = replay.body.messages.find((message) => message.role === "assistant");
+  assert.deepEqual(assistantTurn?.content, [content[0], content[1]]);
+});
+
 test("redacted thinking and tool caller metadata replay without mutation", async () => {
   const message = {
     id: "msg_redacted",

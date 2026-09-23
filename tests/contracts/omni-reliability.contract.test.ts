@@ -218,6 +218,26 @@ test("model context compaction preserves result IDs, columns and the full origin
   assert.equal(JSON.parse((history as { output: string }[])[0]!.output).rows.length, 500);
 });
 
+test("model context compaction reads the SDK's recorded tool output shape", () => {
+  // @openai/agents records function output as { type: "text", text }. The
+  // compactor only read bare strings, so in production it never fired and
+  // every model step re-sent every earlier result in full.
+  const value = JSON.stringify({ ok: true, resultId: source.resultId, columns: source.columns, rowCount: 500, rows: Array.from({ length: 500 }, () => ({ amount: 100, product_id: "a".repeat(300) })) });
+  const history = [
+    { type: "function_call_result", name: "GenerateSemanticQuery", callId: "old", status: "completed", output: { type: "text", text: value } },
+    { type: "function_call_result", name: "GenerateSemanticQuery", callId: "a", status: "completed", output: { type: "text", text: "{}" } },
+    { type: "function_call_result", name: "GenerateSemanticQuery", callId: "b", status: "completed", output: { type: "text", text: "{}" } },
+    { type: "function_call_result", name: "GenerateSemanticQuery", callId: "c", status: "completed", output: { type: "text", text: "{}" } },
+  ] as never;
+  const compacted = compactOmniModelHistory(history, 10_000) as unknown as { output: { type: string; text: string } }[];
+  assert.ok(Buffer.byteLength(JSON.stringify(compacted)) < 10_000);
+  assert.equal(compacted[0]!.output.type, "text");
+  const body = JSON.parse(compacted[0]!.output.text);
+  assert.equal(body.resultId, source.resultId);
+  assert.equal(body.rows.length, 0);
+  assert.equal(body.truncated, true);
+});
+
 test("an answer cannot substitute a different explicit month", () => {
   const july = { ...source, semantics: undefined, provenance: { ...source.provenance, timeRange: { ...source.provenance.timeRange, start: "2026-07-01", end: "2026-07-31", label: "July 2026" } } };
   const result = composeAnswer(answerInput, new Map([[source.resultId, july]]), { ...answerOptions, question: "What were sales in August 2026?" });

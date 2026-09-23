@@ -520,11 +520,15 @@ function toAnthropicConversation(request: ModelRequest): Readonly<{
   if (typeof request.input === "string") {
     append("user", [{ type: "text", text: request.input }]);
   } else {
+    // A run cut short (a deadline, an abort) keeps the assistant turn but not
+    // the results of the calls it had in flight. Replaying such a tool_use
+    // without its tool_result is a 400 that kills the answer step.
+    const answeredCalls = new Set(request.input.flatMap((item) => item.type === "function_call_result" ? [item.callId] : []));
     for (const item of request.input) {
       const marker = replayMarker(item.providerData);
       if (marker) {
         if (!replayedResponses.has(marker.responseId)) {
-          append("assistant", [...marker.content]);
+          append("assistant", marker.content.filter((block) => block.type !== "tool_use" || answeredCalls.has(block.id)));
           replayedResponses.add(marker.responseId);
         }
         continue;
