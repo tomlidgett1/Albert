@@ -270,6 +270,9 @@ test("a model number inside a shortened product name is part of the name, not a 
   const source = evidence([{ key: "item", label: "Item", type: "string" }, money], [{ item: "F26 IZALCO MAX 9.7 - Medium 54cm Soothbrush", sales: 7199.2 }, { item: "Trace 20 L Matte Slate / Black", sales: 819.99 }]);
   const values = [value(source, "bike", "sales"), value(source, "trace", "sales", 1)];
   assert.equal(compose(source, { markdown: "The F26 IZALCO MAX 9.7 road bike went for {{bike}}, and a Trace 20 for {{trace}}.", values }).ok, true);
+  // The closest words decide, and an apostrophe the label drops is ignored.
+  const helmets = evidence([{ key: "item", label: "Item", type: "string" }, money], [{ item: "HELMET LAZER - NUTZ 2.0 KC SPACE UNISIZE", sales: 89.99 }, { item: "HELMET LAZER - PNUT 2.0 KC OCEAN LIFE UNISIZE", sales: 89.99 }]);
+  assert.equal(compose(helmets, { markdown: "A Lazer Nutz 2.0 and a Lazer P'nut 2.0 went for {{each}} each.", values: [value(helmets, "each", "sales")] }).ok, true);
   // A number after ordinary words is a figure, whatever labels say.
   const counted = compose(source, { markdown: "You sold 20 bikes; the IZALCO went for {{bike}}.", values: [values[0]!] });
   assert.match(counted.ok ? "" : counted.issues.join(" "), /Unbound figures: 20/u);

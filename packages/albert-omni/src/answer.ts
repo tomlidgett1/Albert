@@ -720,6 +720,8 @@ export function composeAnswer(
     (source as Readonly<{ queryYaml?: unknown }>).queryYaml,
   ]).flatMap((name) => typeof name === "string" ? name.match(/\d+/gu) ?? [] : []));
   const labelText = labels.join("\n").toLowerCase();
+  const nameKey = (text: string) => text.toLowerCase().replace(/['’]/gu, "");
+  const labelName = nameKey(labelText);
   const shownMost = Math.max(0, ...shownRowCounts);
   /**
    * The figures a stretch of text states that nothing in scope supports, and
@@ -746,7 +748,12 @@ export function composeAnswer(
       // shortens, when a cited label carries those words and that number
       // together: "the IZALCO MAX 9.7 road bike", "a Trace 20". A number after
       // ordinary words ("sold 20") is still a figure.
-      .replace(/(?<![\p{L}\d])((?:\p{Lu}[\p{L}\d'-]*\s){1,3})(\d+(?:\.\d+)?)(?![\d.,]*\d|\s*%)/gu, (match, words: string, number: string) => labelText.includes(`${words}${number}`.toLowerCase()) ? `${words}code ` : match);
+      // The closest words decide ("a Lazer Nutz 2.0" against "HELMET LAZER -
+      // NUTZ 2.0 ..."), and an apostrophe the label drops ("P'nut") is ignored.
+      .replace(/(?<![\p{L}\d])((?:\p{Lu}[\p{L}\d'’-]*\s){1,3})(\d+(?:\.\d+)?)(?![\d.,]*\d|\s*%)/gu, (match, words: string, number: string) => {
+        const names = words.trim().split(/\s+/u);
+        return names.some((_, start) => labelName.includes(nameKey(`${names.slice(start).join(" ")} ${number}`))) ? `${words}code ` : match;
+      });
     const asked = followUp ? prose.replace(WINDOW_LENGTH, " the window ").replace(ANY_YEAR, " the year ") : prose;
     return { figures: findUngroundedNumbersWithEvidence(asked, [...allowed, ...shownRowCounts], labels), issues: scoped.issues };
   };
