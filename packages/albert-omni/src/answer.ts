@@ -178,6 +178,8 @@ function displayCell(value: unknown, column: TraceTableColumn, style: CellStyle 
   const exact = typeof value === "number" ? value : String(value).replaceAll(",", "");
   const numeric = Number(exact);
   if (!Number.isFinite(numeric)) throw new Error(`Non-numeric cell in ${column.key}.`);
+  // A numeric identifier is a name, not a quantity: "ticket 61802", never "61,802".
+  if (column.type === "number" && Number.isInteger(numeric) && (/_id$/u.test(column.key) || /\bID$/u.test(column.label))) return String(numeric);
   const shown = column.type === "percent" && column.percentScale === "ratio" ? numeric * 100 : numeric;
   // Only money is read down a column; a percentage or a count keeps its own precision.
   const magnitude = column.type === "currency" ? Math.max(Math.abs(shown), style.magnitude ?? 0) : Math.abs(shown);
@@ -739,7 +741,12 @@ export function composeAnswer(
       // a cited label carries it, even where the answer shortens the rest of the
       // name: "the SRAM Force XG-1270 cassette" is not the figure 1,270. A bare
       // number is never excused this way.
-      .replace(/(?<![\p{L}\d])(?=[\p{L}\d./-]*\p{L})(?=[\p{L}\d./-]*\d)[\p{L}\d]+(?:[./-][\p{L}\d]+)*(?![\p{L}\d])/gu, (code) => labelText.includes(code.toLowerCase()) ? " code " : code);
+      .replace(/(?<![\p{L}\d])(?=[\p{L}\d./-]*\p{L})(?=[\p{L}\d./-]*\d)[\p{L}\d]+(?:[./-][\p{L}\d]+)*(?![\p{L}\d])/gu, (code) => labelText.includes(code.toLowerCase()) ? " code " : code)
+      // So is a model number after the capitalised words of a name the answer
+      // shortens, when a cited label carries those words and that number
+      // together: "the IZALCO MAX 9.7 road bike", "a Trace 20". A number after
+      // ordinary words ("sold 20") is still a figure.
+      .replace(/(?<![\p{L}\d])((?:\p{Lu}[\p{L}\d'-]*\s){1,3})(\d+(?:\.\d+)?)(?![\d.,]*\d|\s*%)/gu, (match, words: string, number: string) => labelText.includes(`${words}${number}`.toLowerCase()) ? `${words}code ` : match);
     const asked = followUp ? prose.replace(WINDOW_LENGTH, " the window ").replace(ANY_YEAR, " the year ") : prose;
     return { figures: findUngroundedNumbersWithEvidence(asked, [...allowed, ...shownRowCounts], labels), issues: scoped.issues };
   };

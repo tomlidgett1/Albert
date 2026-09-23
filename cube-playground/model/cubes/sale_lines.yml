@@ -74,6 +74,11 @@ cubes:
         sql: >
           {CUBE}.tenant_id = {employees}.tenant_id
           AND {CUBE}.employee_id = {employees}.employee_id
+      - name: sale_employees
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {sale_employees}.tenant_id
+          AND {CUBE}.sale_employee_id = {sale_employees}.employee_id
       - name: shops
         relationship: many_to_one
         sql: >

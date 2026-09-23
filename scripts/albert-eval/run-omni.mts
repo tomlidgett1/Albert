@@ -43,6 +43,7 @@ import { OMNI_HARD30_QUESTIONS } from "./questions-omni-hard30.js";
 import { OMNI_DAILY60_QUESTIONS } from "./questions-omni-daily60.js";
 import { OMNI_STYLE_QUESTIONS } from "./questions-omni-style.js";
 import { OMNI_FORMAT_QUESTIONS } from "./questions-omni-format.js";
+import { OMNI_DETAIL_QUESTIONS } from "./questions-omni-detail.js";
 import type { EvalQuestion } from "./questions.js";
 import {
   ACTIVE_CONNECTORS,
@@ -72,7 +73,7 @@ type Args = {
   serviceUrl: string;
   model: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
-  corpus: "omni20" | "hard30" | "daily60" | "style" | "format";
+  corpus: "omni20" | "hard30" | "daily60" | "style" | "format" | "detail";
   trials: number;
   /** Which agent loop runs the turn (ADR 0141). */
   harness: "omni" | "oai-codex";
@@ -115,8 +116,8 @@ function parseArgs(argv: string[]): Args {
     else throw new Error(`Unknown argument ${a}`);
   }
   if (args.harness !== "omni" && args.harness !== "oai-codex") throw new Error("--harness must be omni or oai-codex");
-  if (args.corpus !== "omni20" && args.corpus !== "hard30" && args.corpus !== "daily60" && args.corpus !== "style" && args.corpus !== "format") {
-    throw new Error("--corpus must be omni20, hard30, daily60, style or format");
+  if (args.corpus !== "omni20" && args.corpus !== "hard30" && args.corpus !== "daily60" && args.corpus !== "style" && args.corpus !== "format" && args.corpus !== "detail") {
+    throw new Error("--corpus must be omni20, hard30, daily60, style, format or detail");
   }
   if (!Number.isInteger(args.trials) || args.trials < 1 || args.trials > 5) throw new Error("--trials must be between 1 and 5");
   if (!Number.isInteger(args.concurrency) || args.concurrency < 1 || args.concurrency > 8) throw new Error("--concurrency must be between 1 and 8");
@@ -208,7 +209,7 @@ for (const record of priorRunRecords) {
 }
 const engineVersion = `omni-${runtimeBuildHash}`;
 
-const CORPUS = args.corpus === "hard30" ? OMNI_HARD30_QUESTIONS : args.corpus === "daily60" ? OMNI_DAILY60_QUESTIONS : args.corpus === "style" ? OMNI_STYLE_QUESTIONS : args.corpus === "format" ? OMNI_FORMAT_QUESTIONS : OMNI_20_QUESTIONS;
+const CORPUS = args.corpus === "hard30" ? OMNI_HARD30_QUESTIONS : args.corpus === "daily60" ? OMNI_DAILY60_QUESTIONS : args.corpus === "style" ? OMNI_STYLE_QUESTIONS : args.corpus === "format" ? OMNI_FORMAT_QUESTIONS : args.corpus === "detail" ? OMNI_DETAIL_QUESTIONS : OMNI_20_QUESTIONS;
 const manifest = { runtimeBuildHash, model: args.model, effort: args.effort, fastMode: args.fastMode, corpus: args.corpus, trials: args.trials, question: args.question ?? null, ids: args.ids ? [...args.ids].sort() : null, limit: args.limit ?? null, corpusHash: createHash("sha256").update(JSON.stringify(CORPUS)).digest("hex") };
 const manifestFile = path.join(dir, "manifest.json");
 if (args.resume) {

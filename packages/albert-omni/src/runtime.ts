@@ -652,7 +652,7 @@ export async function runGovernedAnalyticalTurn(
 
     const fetchFieldValues = tool({
       name: "FetchFieldValues",
-      description: "Fetch actual stored values of one dimension, for validating a filter before querying (store names, product names, account names, categories, staff). Pass matching to narrow to values containing that text (case-insensitive). Filter with equals on the exact values returned.",
+      description: "Fetch actual stored values of one dimension, for validating a filter before querying (store names, product names, account names, categories, staff). Pass matching to narrow to values containing that text (case-insensitive). Filter with equals on the exact values returned for one named thing; for a family of items (every Trace, every helmet), filter with contains on the owner's word.",
       parameters: z.object({
         field: z.string().regex(memberNamePattern),
         matching: z.string().min(1).max(160).nullable(),
@@ -730,7 +730,14 @@ export async function runGovernedAnalyticalTurn(
           field: sanitizeTraceText(fieldLabel, 200),
           values: values.slice(0, 50).map((value) => sanitizeTraceText(value, 240)),
         });
-        return JSON.stringify({ ok: true, field: input.field, values, truncated: values.length >= (input.limit ?? 25) });
+        const truncated = values.length >= (input.limit ?? 25);
+        // A cut list reads as the whole family: "trace" listed 25 Trace 10s
+        // alphabetically, and the turn filtered to Trace 10 and missed the
+        // Trace 20 that was the last one sold.
+        return JSON.stringify({
+          ok: true, field: input.field, values, truncated,
+          ...(truncated && input.matching ? { guidance: `More stored values contain "${input.matching}" than are listed here. When the owner means everything named that way (a product family), filter with contains "${input.matching}" rather than equals on these values.` } : {}),
+        });
       },
     });
 

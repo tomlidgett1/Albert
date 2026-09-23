@@ -198,6 +198,33 @@ test("field-value lookup cannot bypass the hidden-member boundary", async (conte
   });
 });
 
+test("a cut-short value list tells the model to filter a product family with contains", async (context) => {
+  // "trace" listed 25 Trace 10s alphabetically; the turn filtered to Trace 10
+  // and missed the Trace 20 that was the last Trace sold.
+  const fetchCatalogue = CubeBearerClient.prototype.fetchCatalogue;
+  context.mock.method(CubeBearerClient.prototype, "fetchCatalogue", async function (this: CubeBearerClient, signal?: AbortSignal) {
+    const catalogue = await fetchCatalogue.call(this, signal);
+    return { ...catalogue, views: catalogue.views.map((view) => view.name === "sales_analytics" ? { ...view, members: [...view.members, { name: "sales_analytics.item_probe", kind: "dimension", type: "string", title: "Item", shortTitle: "Item" }] } : view) };
+  });
+  let listed = 25;
+  context.mock.method(CubeBearerClient.prototype, "loadQuery", async () => ({ result: { ok: true, rows: Array.from({ length: listed }, (_, index) => ({ "sales_analytics.item_probe": `22 - Trace 10 variant ${index}` })), executionMs: 1 } }));
+  const lookups: Array<{ ok: boolean; truncated: boolean; guidance?: string }> = [];
+  context.mock.method(Runner.prototype, "run", async (agent: Agent) => {
+    lookups.push(JSON.parse(String(await invoke(agent, "FetchFieldValues", { field: "sales_analytics.item_probe", matching: "trace", limit: null }))));
+    listed = 3;
+    lookups.push(JSON.parse(String(await invoke(agent, "FetchFieldValues", { field: "sales_analytics.item_probe", matching: "trace", limit: null }))));
+    throw new Error("Value lookups completed.");
+  });
+  await fixture(async (turn, url) => {
+    await assert.rejects(runOmniSemanticTurn({ turn, cubeApiUrl: url, openai: { apiKey: "synthetic-fixture", baseUrl: "https://provider.example.test" }, emit: () => {} }), /Value lookups completed/u);
+  });
+  const [cut, whole] = lookups;
+  assert.equal(cut?.truncated, true);
+  assert.match(cut?.guidance ?? "", /filter with contains "trace" rather than equals on these values/u);
+  assert.equal(whole?.truncated, false);
+  assert.equal(whole?.guidance, undefined);
+});
+
 test("an injected driver receives the governed tools, is nudged to compose, and stamps its harness on the result", async (context) => {
   const run = context.mock.method(Runner.prototype, "run", async () => { throw new Error("The in-process runner must not run when a driver is injected."); });
   const seen: { instructions: string[]; toolNames: string[]; continuations: string[]; narrated: string[] } = { instructions: [], toolNames: [], continuations: [], narrated: [] };

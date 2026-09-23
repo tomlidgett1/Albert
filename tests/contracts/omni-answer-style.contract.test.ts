@@ -248,6 +248,47 @@ test("an answer never guesses why data is behind or when it will arrive", () => 
   ]) assert.equal(compose(latest, { markdown, values }).ok, true, markdown);
 });
 
+test("short answers are short in words, never thin in facts", () => {
+  // "when did we last sell a trace" came back as a date, one model and a
+  // price: not who bought it, who served them, or against what list price.
+  const instructions = renderOmniInstructions({ topicIndex: "- sales_analytics", topicCount: 1, timezone: "Australia/Melbourne", currency: "AUD", todayLine: options.today, activeConnectors: ["lightspeed"], freshnessLines: "" });
+  for (const rule of [
+    /ruthless with padding, never with facts/u,
+    /for one sale it is exactly what was sold, who bought it and who served them, and what it went for against list/u,
+    /A question about one record or event .* asks for that record's context in the same query: who bought it, who served them, which store, the price paid against list, any discount/u,
+    /A casual one-liner gets a casual reply: short in words, never thin in facts/u,
+    /would they have added the one fact the owner will ask for next\? If yes, add it/u,
+    /A product family or model line \("a Trace", "Madones", "helmets"\) is every item whose name contains the word: filter with contains on it/u,
+    /Every fact added for context keeps the scope it was measured over: a lifetime count beside this year's spend says so/u,
+  ]) assert.match(instructions, rule);
+  for (const retired of [/under 50 words/u, /ruthless in the write-up/u, /gets a short, casual reply/u]) assert.doesNotMatch(instructions, retired);
+});
+
+test("a model number inside a shortened product name is part of the name, not a figure", () => {
+  // A detailed answer named "an F26 IZALCO MAX 9.7 road bike" (the label is
+  // "F26 IZALCO MAX 9.7 - Medium 54cm Soothbrush") and was refused for 9.7.
+  const source = evidence([{ key: "item", label: "Item", type: "string" }, money], [{ item: "F26 IZALCO MAX 9.7 - Medium 54cm Soothbrush", sales: 7199.2 }, { item: "Trace 20 L Matte Slate / Black", sales: 819.99 }]);
+  const values = [value(source, "bike", "sales"), value(source, "trace", "sales", 1)];
+  assert.equal(compose(source, { markdown: "The F26 IZALCO MAX 9.7 road bike went for {{bike}}, and a Trace 20 for {{trace}}.", values }).ok, true);
+  // A number after ordinary words is a figure, whatever labels say.
+  const counted = compose(source, { markdown: "You sold 20 bikes; the IZALCO went for {{bike}}.", values: [values[0]!] });
+  assert.match(counted.ok ? "" : counted.issues.join(" "), /Unbound figures: 20/u);
+  // A capitalised word before a number the label does not carry is still checked.
+  const invented = compose(source, { markdown: "The IZALCO MAX 12 went for {{bike}}.", values: [values[0]!] });
+  assert.match(invented.ok ? "" : invented.issues.join(" "), /Unbound figures: 12/u);
+});
+
+test("a numeric identifier reads as a name, not a quantity", () => {
+  // Detailed answers cited "Ticket 61,802" and "job #19,927".
+  const source = evidence([
+    { key: "sales_analytics_sale_id", label: "Sale", type: "number" },
+    { key: "workorder", label: "Workorder ID", type: "number" },
+    { key: "sales_analytics_transactions", label: "Number of sales", type: "number" },
+  ], [{ sales_analytics_sale_id: "61802.0000", workorder: 19927, sales_analytics_transactions: 61802 }]);
+  assert.equal(text(compose(source, { markdown: "Ticket {{sale}} and job {{job}}; {{count}} sales.", values: [value(source, "sale", "sales_analytics_sale_id"), value(source, "job", "workorder"), value(source, "count", "sales_analytics_transactions")] })),
+    "Ticket 61802 and job 19927; 61,802 sales.");
+});
+
 test("the composer names a week bucket by its first day", () => {
   assert.match(COMPOSE_ANSWER_INSTRUCTIONS, /the row dated 2026-09-14 is "the week of 14 September" \(Monday 14 to Sunday 20\), never "the week ending 14 September"/u);
 });
@@ -395,7 +436,7 @@ test("the footnote is marked for the renderer and the body is not", () => {
 
 test("the chat contract asks for short answers and tells the model how the composer renders", () => {
   const instructions = renderOmniInstructions({ topicIndex: "- sales_analytics", topicCount: 1, timezone: "Australia/Melbourne", currency: "AUD", todayLine: options.today, activeConnectors: ["lightspeed"], freshnessLines: "" });
-  for (const rule of [/under 50 words/u, /Under 110 words of prose/u, /Under 230 words of prose and at most two tables/u, /What never appears in the body/u, /The same fact twice/u, /That is the only bold figure in the answer/u, /At most 5 columns/u, /Match the owner's register/u]) assert.match(instructions, rule);
+  for (const rule of [/under 80 words/u, /Under 110 words of prose/u, /Under 230 words of prose and at most two tables/u, /What never appears in the body/u, /The same fact twice/u, /That is the only bold figure in the answer/u, /At most 5 columns/u, /Match the owner's register/u]) assert.match(instructions, rule);
   for (const retired of [/There is no length limit/u, /Structure generously/u, /Several hundred words is right here/u, /full formatting toolkit/u]) assert.doesNotMatch(instructions, retired);
   for (const rule of [/never "\$\{\{sales\}\}" or "\{\{change\}\}%"/u, /headers is one short, plain header per column key/u, /single footnote/u, /Calendar dates are not figures/u, /Never spell a date out in words/u]) assert.match(COMPOSE_ANSWER_INSTRUCTIONS, rule);
 });

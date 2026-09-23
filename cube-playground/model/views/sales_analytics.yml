@@ -27,7 +27,12 @@ views:
         (negative = deposits held) and outstanding_balance covers only tickets
         that took a payment. Quotes: converted means the linked sale completed
         (quotes_conversion_rate_pct); a sale_id alone does not. Customer
-        lifetime fields describe the customer on the sale. Quote members
+        lifetime fields (customers_lifetime_*, customers_purchase_count, first
+        and last purchase) describe the customer on the sale and are all-time
+        totals, never the queried period: a customer's purchases or spend in a
+        period is transactions / gross_takings grouped by customers_full_name,
+        and a lifetime count beside a period figure is said as "all time".
+        Quote members
         (quotes_*) and void members (voids_*) are event grains: combine them
         with store/staff/sale dimensions, not with each other.
 

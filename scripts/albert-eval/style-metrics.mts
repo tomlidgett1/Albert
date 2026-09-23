@@ -20,8 +20,12 @@ import path from "node:path";
 import { writeFileSync } from "node:fs";
 import { RUNS_ROOT, readJsonl, type EvalTurnRecord } from "./lib.js";
 
-/** Prose-word budget by tier: what a sharp analyst would send, not a report. */
-const PROSE_BUDGET: Record<string, number> = { easy: 60, medium: 130, hard: 260, xhard: 320 };
+/**
+ * Prose-word budget by tier: what a sharp analyst would send, not a report.
+ * A lookup may now carry the facts asked next (the prompt allows under 80
+ * words, ADR 0150), so easy is 90; the rest are unchanged.
+ */
+const PROSE_BUDGET: Record<string, number> = { easy: 90, medium: 130, hard: 260, xhard: 320 };
 
 const CAVEAT = /\b(?:tax[- ]inclusive|inc(?:l(?:uding|usive)?)?\.? (?:gst|tax)|ex[- ](?:gst|tax)|in aud\b|aud\b|accrual|cash basis|basis\b|non-voided|refunds? (?:subtract|netted)|excludes?|not included|does not (?:establish|include)|is not (?:a|the)|isn[’']t (?:a|the)|not a (?:complete|confirmed|full|forecast|claim)|partial|month to date|quarter to date|best[- ]effort|inference|is limited to|capped|top slice|ranked slice|rows returned|full population|not (?:been )?refreshed|business date|timezone|australia\/melbourne|snapshot|operational|on-costs|superannuation and other)\b/iu;
 const FILLER = /\b(?:is below|are below|below\.|shown below|in other words|this gives you|worth noting|it[’']s worth|in summary|overall,|here (?:is|are) (?:the|a)|the full (?:ranking|breakdown|list)|as shown|the key signal|that came from|i used the)\b/giu;

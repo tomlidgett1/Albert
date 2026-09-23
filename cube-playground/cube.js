@@ -26,6 +26,8 @@
 
 const PostgresDriver = require('@cubejs-backend/postgres-driver');
 const { CubejsServerCore } = require('@cubejs-backend/server-core');
+const { PostgresQuery } = require('@cubejs-backend/schema-compiler');
+const { extendDialect } = require('./nulls-last-dialect');
 const { Pool } = require('pg');
 const { parse: parseConnectionString } = require('pg-connection-string');
 
@@ -102,6 +104,9 @@ function installIdempotentOrchestratorCreation(ServerCore) {
 }
 
 installIdempotentOrchestratorCreation(CubejsServerCore);
+
+// Descending sorts put empty values last (see nulls-last-dialect.js).
+const NullsLastPostgresQuery = extendDialect(PostgresQuery);
 
 function requiredEnv(names) {
   for (const name of names) {
@@ -287,6 +292,9 @@ module.exports = {
     }
     return ['meta', 'data'];
   },
+
+  // Every query compiles through the nulls-last Postgres dialect.
+  dialectFactory: ({ dbType }) => (dbType && dbType !== 'postgres' ? undefined : NullsLastPostgresQuery),
 
   // One compiled data model and one cache namespace per tenant.
   contextToAppId: ({ securityContext }) => {

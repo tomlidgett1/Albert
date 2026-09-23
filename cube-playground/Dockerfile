@@ -8,6 +8,7 @@
 FROM cubejs/cube:v1.7.16@sha256:7a33cdc4469ccde403fae519441b06bdcd80e60032d1d793739eb860a0ea3bcc
 
 COPY cube-playground/cube.js /cube/conf/cube.js
+COPY cube-playground/nulls-last-dialect.js /cube/conf/nulls-last-dialect.js
 COPY cube-playground/model /cube/conf/model
 COPY cube-playground/agents /cube/conf/agents
 COPY cube-playground/scripts/release-smoke.mjs /cube/conf/scripts/release-smoke.mjs

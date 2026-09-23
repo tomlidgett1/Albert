@@ -144,6 +144,41 @@ cubes:
         type: count
         description: Number of registers.
 
+  # The seller of record (sale header employee) at line grain. A separate cube
+  # because Cube joins a cube once per query: product_sales_analytics reached
+  # employees through both the line and the sale, and the header alias
+  # returned the line's staff member (sale 61992 showed two "sellers of
+  # record" against one header).
+  - name: sale_employees
+    title: Seller of record
+    public: false
+    description: >
+      The employee on a sale header (seller of record), joined from sale lines
+      through sale_employee_id.
+    sql: >
+      SELECT t.* FROM source_lightspeed_official.ls_employees t
+      WHERE NOT t.tombstone
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: employee_id
+        sql: employee_id
+        type: number
+        public: false
+      - name: full_name
+        type: string
+        sql: "TRIM(COALESCE({CUBE}.first_name, '') || ' ' || COALESCE({CUBE}.last_name, ''))"
+        title: Seller of record
+        description: Full display name of the employee on the sale header.
+
   - name: employees
     title: Employees (staff)
     public: false

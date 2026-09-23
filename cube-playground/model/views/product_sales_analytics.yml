@@ -40,6 +40,14 @@ views:
         shelf price on a single line. Lines with no item (items_system_sku not
         set) are ad hoc charges typed on the sale; leave them out of item
         rankings with a set filter on items_system_sku.
+        The last (or first) sale of an item or a product family ("when did
+        we last sell a Trace"): segment completed_lines, items_name with
+        contains on the owner's word so every model, size and colour counts,
+        completed_at as a plain dimension ordered descending with a limit of
+        about five, and the sale's context in the same query:
+        customers_full_name ("Unnamed customer" is a walk-in),
+        employees_full_name, shops_name, unit_price beside
+        items_default_price, and line_discounts.
 
     cubes:
       - join_path: sale_lines
@@ -153,7 +161,9 @@ views:
         includes:
           - full_name
       # Seller of record on the sale header, distinct from the line employee.
-      - join_path: sale_lines.sales.employees
+      # Its own cube: through sale_lines.sales.employees Cube reused the line's
+      # employees join and returned the line's staff member.
+      - join_path: sale_lines.sale_employees
         includes:
           - name: full_name
             alias: sale_employees_full_name
