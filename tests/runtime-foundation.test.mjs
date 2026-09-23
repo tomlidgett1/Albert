@@ -74,6 +74,8 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "grok-4.6",
+      "claude-fable-5-1",
+      "claude-opus-5-5",
       "claude-sonnet-5",
       "claude-haiku-4-5-20251001",
     ],

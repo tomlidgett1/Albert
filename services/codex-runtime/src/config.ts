@@ -23,8 +23,11 @@ export type CodexRuntimeConfig = Readonly<{
    * `globalApproved` admits GPT-6 on OpenAI's global host (ADR 0145).
    */
   omniOpenAi?: Readonly<{ apiKey: string; baseUrl: string; globalApproved: boolean }>;
-  /** Native Anthropic Messages credentials for Omni turns on Claude models. */
-  omniAnthropic?: Readonly<{ apiKey: string; baseUrl: string }>;
+  /**
+   * Native Anthropic Messages credentials for Omni turns on Claude models.
+   * `retentionApproved` admits Anthropic's Covered Models (Fable, ADR 0147).
+   */
+  omniAnthropic?: Readonly<{ apiKey: string; baseUrl: string; retentionApproved: boolean }>;
   /**
    * OpenAI Agents API credentials for the OAI Codex harness (ADR 0141). The
    * same deployer key as Omni; the base URL may be pinned separately because
@@ -126,6 +129,11 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
     || (source.ALBERT_ANTHROPIC_APP8_APPROVED === "true"
       && source.ALBERT_ANTHROPIC_ZDR_APPROVED === "true");
   const anthropicApiKey = anthropicApproved ? source.ANTHROPIC_API_KEY?.trim() : undefined;
+  // Anthropic keeps requests to its Covered Models (Claude Fable 5.1) for 30
+  // days and does not serve them under zero data retention without express
+  // authorisation, so production needs a separate approval (ADR 0147).
+  const anthropicRetentionApproved = source.NODE_ENV !== "production"
+    || source.ALBERT_ANTHROPIC_RETENTION_APPROVED === "true";
   const anthropicBaseUrl = source.ANTHROPIC_BASE_URL?.trim() || ANTHROPIC_API_BASE_URL;
   const omniJobDatabaseUrl = source.ALBERT_OMNI_JOB_DATABASE_URL?.trim();
   if (omniJobDatabaseUrl) {
@@ -164,6 +172,7 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
       omniAnthropic: Object.freeze({
         apiKey: anthropicApiKey,
         baseUrl: serviceUrl(anthropicBaseUrl, "ANTHROPIC_BASE_URL"),
+        retentionApproved: anthropicRetentionApproved,
       }),
     } : {}),
   });

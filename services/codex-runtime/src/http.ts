@@ -25,6 +25,7 @@ import { runOmniSemanticTurn } from "../../../packages/albert-omni/src/runtime.j
 import { ALBERT_OAI_CODEX_HARNESS, createOaiCodexDriver } from "../../../packages/albert-oai-codex/src/index.js";
 import {
   OPENAI_GLOBAL_API_BASE_URL,
+  anthropicModelRequiresRetention,
   openAiModelRequiresGlobalHost,
   providerForModel,
 } from "../../../packages/shared/src/agent-runtime.js";
@@ -332,6 +333,14 @@ export class CodexRuntimeHttpHandler {
         && !("globalApproved" in omniCredentials && omniCredentials.globalApproved)
       ) {
         return jsonError("omni_unavailable", 503, "GPT 6 models are not approved for production data on this Albert environment.");
+      }
+      // Anthropic keeps Covered Model (Fable) requests for 30 days, outside
+      // zero data retention: refuse unless ADR 0147's approval is set.
+      if (
+        anthropicModelRequiresRetention(omniModel)
+        && !("retentionApproved" in omniCredentials && omniCredentials.retentionApproved)
+      ) {
+        return jsonError("omni_unavailable", 503, "Claude Fable 5.1 is not approved for production data on this Albert environment.");
       }
       if (this.config.omniDurabilityRequired && !this.omniStore) return jsonError("omni_unavailable", 503, "The durable Omni job store is not configured.");
       this.pruneReplayIds();

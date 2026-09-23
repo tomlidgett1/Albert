@@ -21,10 +21,13 @@ import {
 } from "@openai/agents";
 import {
   ANTHROPIC_ADAPTIVE_DEFAULT_MAX_OUTPUT_TOKENS,
+  ANTHROPIC_FAST_MODE_BETA,
   CLAUDE_HAIKU_4_5_MODEL_ID,
   HAIKU_MAX_OUTPUT_TOKENS,
   HAIKU_THINKING_BUDGET_TOKENS,
   anthropicMaxOutputTokens,
+  anthropicRequiresThinking,
+  anthropicSupportsFastMode,
   anthropicUsesAdaptiveThinking,
   isAlbertModelId,
   isAnthropicModel,
@@ -43,7 +46,7 @@ type AnthropicMessagesClient = Readonly<{
   messages: Readonly<{
     stream: (
       body: MessageCreateParamsNonStreaming,
-      options?: Readonly<{ signal?: AbortSignal }>,
+      options?: Readonly<{ signal?: AbortSignal; headers?: Readonly<Record<string, string>>; maxRetries?: number }>,
     ) => Readonly<{
       finalMessage: () => PromiseLike<Message>;
       request_id?: string | null;
@@ -624,6 +627,8 @@ function outputFormat(request: ModelRequest): Readonly<{
 
 function requestBody(model: string, request: ModelRequest): Readonly<{
   body: MessageCreateParamsNonStreaming;
+  /** Albert Fast on a model with Anthropic fast mode: the call adds `speed: "fast"` and the beta header. */
+  fast: boolean;
   effort: ReasoningEffort;
   budgetTokens: number;
   resolvedToolChoice: ToolChoice | undefined;
@@ -635,10 +640,14 @@ function requestBody(model: string, request: ModelRequest): Readonly<{
   }
   const conversation = toAnthropicConversation(request);
   const requestedTools = toAnthropicTools(request);
-  const effort = selectedEffort(request);
+  // Opus 5.5 and Fable 5.1 400 on disabled thinking, so none runs as low there.
+  const requested = selectedEffort(request);
+  const effort = requested === "none" && isAlbertModelId(model) && anthropicRequiresThinking(model) ? "low" : requested;
+  const fast = isAlbertModelId(model) && anthropicSupportsFastMode(model) && request.modelSettings.providerData?.service_tier === "fast";
   // Haiku 4.5 predates adaptive thinking: Albert's efforts map onto manual
-  // budget_tokens there. The 4.6+ family (Sonnet 5) rejects budget_tokens;
-  // it takes adaptive thinking plus the provider-native output_config.effort.
+  // budget_tokens there. The 4.6+ family (Sonnet 5, Opus 5.5, Fable 5.1)
+  // rejects budget_tokens; it takes adaptive thinking plus the provider-native
+  // output_config.effort.
   const adaptive = isAlbertModelId(model) && anthropicUsesAdaptiveThinking(model);
   const budgetTokens = adaptive ? 0 : HAIKU_THINKING_BUDGET_TOKENS[effort];
   const thinkingEnabled = adaptive ? effort !== "none" : budgetTokens > 0;
@@ -684,6 +693,7 @@ function requestBody(model: string, request: ModelRequest): Readonly<{
   };
   return {
     body,
+    fast,
     effort,
     budgetTokens,
     resolvedToolChoice,
@@ -775,7 +785,15 @@ function toModelOutput(message: Message, outputRestoreSchema?: Tool.InputSchema)
   return output;
 }
 
+/** A 429: for a fast request, the fast-mode rate limit (zero where the account has no fast-mode access). */
+function isRateLimited(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { status?: unknown }).status === 429;
+}
+
 export class AnthropicMessagesModel implements Model {
+  /** Set once fast mode is refused: this model instance (one turn) then stays at standard speed. */
+  private fastUnavailable = false;
+
   constructor(
     private readonly client: AnthropicMessagesClient,
     private readonly model: string = CLAUDE_HAIKU_4_5_MODEL_ID,
@@ -783,26 +801,44 @@ export class AnthropicMessagesModel implements Model {
 
   async getResponse(request: ModelRequest): Promise<ModelResponse> {
     const prepared = requestBody(this.model, request);
+    // Fast mode has its own rate limit, and an account without fast-mode
+    // access has a limit of zero. A fast request therefore makes no SDK
+    // retries of its own: a 429 falls straight back to standard speed, and
+    // the rest of this turn stays standard rather than paying a refused
+    // request per step (Anthropic's documented fallback).
+    let fast = prepared.fast && !this.fastUnavailable;
+    let fellBack = false;
     // XHigh and Max exceed the SDK's non-streaming long-request threshold.
     // Consume SSE internally and return only the accumulated final Message;
     // provider text/thinking deltas never enter Albert's public trace.
     const openStream = () => this.client.messages.stream(
-      prepared.body,
-      request.signal ? { signal: request.signal } : undefined,
+      fast ? { ...prepared.body, speed: "fast" } as MessageCreateParamsNonStreaming : prepared.body,
+      {
+        ...(request.signal ? { signal: request.signal } : {}),
+        ...(fast ? { headers: { "anthropic-beta": ANTHROPIC_FAST_MODE_BETA }, maxRetries: 0 } : {}),
+      },
     );
     let stream = openStream();
     let message: Message;
     try {
       message = await stream.finalMessage();
     } catch (error) {
-      // Anthropic occasionally rejects an accepted stream mid-flight with the
-      // generic "Invalid request data" error event (observed at high thinking
-      // budgets). The SDK's own retries cover only pre-response failures, so
-      // one identical re-send handles this transient here.
-      const detail = error instanceof Error ? error.message : String(error);
-      if (request.signal?.aborted || !/Invalid request data/u.test(detail)) throw error;
-      stream = openStream();
-      message = await stream.finalMessage();
+      if (fast && !request.signal?.aborted && isRateLimited(error)) {
+        this.fastUnavailable = true;
+        fast = false;
+        fellBack = true;
+        stream = openStream();
+        message = await stream.finalMessage();
+      } else {
+        // Anthropic occasionally rejects an accepted stream mid-flight with the
+        // generic "Invalid request data" error event (observed at high thinking
+        // budgets). The SDK's own retries cover only pre-response failures, so
+        // one identical re-send handles this transient here.
+        const detail = error instanceof Error ? error.message : String(error);
+        if (request.signal?.aborted || !/Invalid request data/u.test(detail)) throw error;
+        stream = openStream();
+        message = await stream.finalMessage();
+      }
     }
     if (message.stop_reason !== "end_turn" && message.stop_reason !== "tool_use") {
       const reason = message.stop_reason ?? "missing";
@@ -821,6 +857,10 @@ export class AnthropicMessagesModel implements Model {
         model: message.model,
         stop_reason: message.stop_reason,
         service_tier: message.usage.service_tier,
+        // What actually ran: Albert Fast on Opus 5.5 reports "fast", or
+        // "standard" with fast_fallback when fast mode was refused.
+        speed: (message.usage as Message["usage"] & { speed?: string | null }).speed ?? (fast ? "fast" : "standard"),
+        ...(fellBack ? { fast_fallback: true } : {}),
         thinking: prepared.body.thinking,
         reasoning_level: prepared.effort,
         tool_choice: prepared.resolvedToolChoice?.type ?? "none",

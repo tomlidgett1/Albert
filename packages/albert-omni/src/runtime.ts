@@ -106,8 +106,11 @@ export type OmniSemanticTurnOptions = Readonly<{
    * `globalApproved` admits GPT-6 on OpenAI's global host (ADR 0145).
    */
   openai?: Readonly<{ apiKey: string; baseUrl: string; globalApproved?: boolean }>;
-  /** Present when this environment can run Anthropic-provider Omni models. */
-  anthropic?: Readonly<{ apiKey: string; baseUrl: string }>;
+  /**
+   * Present when this environment can run Anthropic-provider Omni models.
+   * `retentionApproved` admits Anthropic's Covered Models (Fable, ADR 0147).
+   */
+  anthropic?: Readonly<{ apiKey: string; baseUrl: string; retentionApproved?: boolean }>;
   signal?: AbortSignal;
   emit: EmitOmniTrace;
   queryRecorder?: AnalyticalQueryRecorder;
@@ -1738,7 +1741,7 @@ function createSdkRunnerDriver(
   input: OmniAgentDriverInput,
   credentials: Readonly<{
     openai?: Readonly<{ apiKey: string; baseUrl: string; globalApproved?: boolean }>;
-    anthropic?: Readonly<{ apiKey: string; baseUrl: string }>;
+    anthropic?: Readonly<{ apiKey: string; baseUrl: string; retentionApproved?: boolean }>;
   }>,
 ): OmniAgentDriver {
   const { preferences, identity } = input;
@@ -1749,6 +1752,7 @@ function createSdkRunnerDriver(
     openaiGlobalApproved: credentials.openai?.globalApproved === true,
     anthropicApiKey: credentials.anthropic?.apiKey,
     anthropicBaseUrl: credentials.anthropic?.baseUrl,
+    anthropicRetentionApproved: credentials.anthropic?.retentionApproved === true,
   });
   const runConfig = buildOpenAIAgentRunConfig(preferences);
   const liveModelSettings = buildLiveAgentModelSettings(runConfig, {

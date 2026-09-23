@@ -1,6 +1,8 @@
 import { z } from "zod";
 import {
+  CLAUDE_FABLE_5_1_MODEL_ID,
   CLAUDE_HAIKU_4_5_MODEL_ID,
+  CLAUDE_OPUS_5_5_MODEL_ID,
   CLAUDE_SONNET_5_MODEL_ID,
 } from "../../shared/src/agent-runtime.js";
 import type { CubeFilter, CubeQuery } from "../../albert-v3/src/cube/types.js";
@@ -13,12 +15,15 @@ export const ALBERT_OMNI_PROTOCOL_VERSION = 1 as const;
 /**
  * GPT-6 is the offered OpenAI family (ADR 0145). GPT-5.6 is retired from the
  * pickers but still admitted, on the regional host, so stored preferences and
- * the comparison views keep working.
+ * the comparison views keep working. Claude Opus 5.5 and Fable 5.1 joined on
+ * 2026-09-23 (ADR 0147); Fable runs only under its retention approval.
  */
 export const ALBERT_OMNI_MODEL_IDS = [
   "gpt-6-luna",
   "gpt-6-sol",
   "gpt-6-astra",
+  CLAUDE_OPUS_5_5_MODEL_ID,
+  CLAUDE_FABLE_5_1_MODEL_ID,
   CLAUDE_SONNET_5_MODEL_ID,
   CLAUDE_HAIKU_4_5_MODEL_ID,
   "gpt-5.6-luna",

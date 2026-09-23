@@ -12,6 +12,7 @@ import {
   DEFAULT_AGENT_PREFERENCES,
   DEFAULT_OMNI_PREFERENCES,
   CLAUDE_HAIKU_4_5_MODEL_ID,
+  CLAUDE_OPUS_5_5_MODEL_ID,
   CLAUDE_SONNET_5_MODEL_ID,
   describeChatFailure,
   isAnthropicModel,
@@ -233,11 +234,15 @@ const CODEX_MODEL_IDS = Object.freeze([
   "gpt-5.6-terra",
   "gpt-5.6-sol",
 ] as const satisfies readonly AlbertModelId[]);
-/** Omni offers GPT-6 (global host, ADR 0145) and Claude; GPT-5.6 is retired here. */
+/**
+ * Omni offers GPT-6 (global host, ADR 0145) and Claude; GPT-5.6 is retired
+ * here. Claude Fable 5.1 waits for its retention approval (ADR 0147).
+ */
 const OMNI_MODEL_IDS = Object.freeze([
   "gpt-6-luna",
   "gpt-6-sol",
   "gpt-6-astra",
+  CLAUDE_OPUS_5_5_MODEL_ID,
   CLAUDE_SONNET_5_MODEL_ID,
   CLAUDE_HAIKU_4_5_MODEL_ID,
 ] as const satisfies readonly AlbertModelId[]);

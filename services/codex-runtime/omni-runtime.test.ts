@@ -11,9 +11,12 @@ import { extractOmniFollowUps } from "../../packages/albert-omni/src/runtime.js"
 import { normalizeOmniCubeQuery } from "../../packages/albert-omni/src/query-normalize.js";
 import { ALBERT_OMNI_MODEL_IDS, omniServiceTurnSchema } from "../../packages/albert-omni/src/contracts.js";
 import {
+  CLAUDE_FABLE_5_1_MODEL_ID,
   CLAUDE_HAIKU_4_5_MODEL_ID,
+  CLAUDE_OPUS_5_5_MODEL_ID,
   CLAUDE_SONNET_5_MODEL_ID,
   normalizeAgentPreferences,
+  reasoningEffortsForModel,
 } from "../../packages/shared/src/agent-runtime.js";
 import type { CubeCatalogue } from "../../packages/albert-v3/src/cube/types.js";
 import { loadCodexRuntimeConfig } from "./src/config.js";
@@ -178,6 +181,7 @@ test("Omni runtime config carries Anthropic Messages credentials when the key is
   assert.deepEqual(config.omniAnthropic, {
     apiKey: "sk-ant-test",
     baseUrl: "https://api.anthropic.com",
+    retentionApproved: true,
   });
 });
 
@@ -203,10 +207,18 @@ test("Production Omni runtime honours Anthropic credentials only with APP 8 and 
   }).omniAnthropic, {
     apiKey: "sk-ant-test",
     baseUrl: "https://api.anthropic.com",
+    // Fable's 30-day retention needs its own approval (ADR 0147).
+    retentionApproved: false,
   });
+  assert.equal(loadCodexRuntimeConfig({
+    ...productionEnvironment,
+    ALBERT_ANTHROPIC_APP8_APPROVED: "true",
+    ALBERT_ANTHROPIC_ZDR_APPROVED: "true",
+    ALBERT_ANTHROPIC_RETENTION_APPROVED: "true",
+  }).omniAnthropic?.retentionApproved, true);
 });
 
-function omniHandler(credentials: Readonly<{ openai?: boolean; anthropic?: boolean; openaiGlobal?: boolean }>): CodexRuntimeHttpHandler {
+function omniHandler(credentials: Readonly<{ openai?: boolean; anthropic?: boolean; openaiGlobal?: boolean; anthropicRetention?: boolean }>): CodexRuntimeHttpHandler {
   const globalApproved = credentials.openaiGlobal !== false;
   return new CodexRuntimeHttpHandler(Object.freeze({
     port: 8792,
@@ -227,7 +239,7 @@ function omniHandler(credentials: Readonly<{ openai?: boolean; anthropic?: boole
       oaiCodex: Object.freeze({ apiKey: "sk-fixture", baseUrl: "https://au.api.openai.com/v1", retainSessions: false, globalApproved }),
     } : {}),
     ...(credentials.anthropic ? {
-      omniAnthropic: Object.freeze({ apiKey: "sk-ant-fixture", baseUrl: "https://api.anthropic.com" }),
+      omniAnthropic: Object.freeze({ apiKey: "sk-ant-fixture", baseUrl: "https://api.anthropic.com", retentionApproved: credentials.anthropicRetention === true }),
     } : {}),
   }));
 }
@@ -293,7 +305,7 @@ test("Omni jobs endpoint fails closed when Responses credentials are missing", a
 });
 
 test("Omni jobs endpoint requires the credentials of the selected model's provider", async () => {
-  for (const model of [CLAUDE_HAIKU_4_5_MODEL_ID, CLAUDE_SONNET_5_MODEL_ID]) {
+  for (const model of [CLAUDE_HAIKU_4_5_MODEL_ID, CLAUDE_SONNET_5_MODEL_ID, CLAUDE_OPUS_5_5_MODEL_ID]) {
     const claudeTurn = { ...fixtureOmniTurn(), model };
 
     // Anthropic model without Anthropic credentials fails closed even though
@@ -330,6 +342,32 @@ test("Omni allowlists the Anthropic models with fast mode clamped off and every 
       assert.equal(preferences.fastMode, false);
     }
   }
+});
+
+test("Opus 5.5 keeps Fast and always thinks; Fable always thinks and has no Fast", () => {
+  for (const model of [CLAUDE_OPUS_5_5_MODEL_ID, CLAUDE_FABLE_5_1_MODEL_ID] as const) {
+    assert.ok((ALBERT_OMNI_MODEL_IDS as readonly string[]).includes(model));
+    // Their thinking cannot be switched off: none runs as low and is never offered.
+    assert.equal(normalizeAgentPreferences({ model, reasoningEffort: "none", fastMode: false }).reasoningEffort, "low");
+    assert.deepEqual([...reasoningEffortsForModel(model)], ["low", "medium", "high", "xhigh", "max"]);
+    for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
+      assert.equal(normalizeAgentPreferences({ model, reasoningEffort: effort, fastMode: false }).reasoningEffort, effort);
+    }
+  }
+  assert.equal(normalizeAgentPreferences({ model: CLAUDE_OPUS_5_5_MODEL_ID, reasoningEffort: "high", fastMode: true }).fastMode, true);
+  assert.equal(normalizeAgentPreferences({ model: CLAUDE_FABLE_5_1_MODEL_ID, reasoningEffort: "high", fastMode: true }).fastMode, false);
+});
+
+test("Omni jobs endpoint refuses Claude Fable 5.1 without the retention approval", async () => {
+  const fable = { ...fixtureOmniTurn(), model: CLAUDE_FABLE_5_1_MODEL_ID };
+  const refused = await omniHandler({ anthropic: true }).handle(await signedOmniRequest(JSON.stringify(fable)));
+  assert.equal(refused.status, 503);
+  const payload = await refused.json() as { error?: { code?: string; message?: string } };
+  assert.equal(payload.error?.code, "omni_unavailable");
+  assert.match(payload.error?.message ?? "", /Claude Fable 5\.1 is not approved/u);
+  const accepted = await omniHandler({ anthropic: true, anthropicRetention: true })
+    .handle(await signedOmniRequest(JSON.stringify({ ...fable, requestId: ulid() })));
+  assert.equal(accepted.status, 202);
 });
 
 test("Omni query normalizer repairs the common compareDateRange and phrasing mistakes", () => {

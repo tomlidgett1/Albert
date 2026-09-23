@@ -20,6 +20,20 @@ export const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com";
 export const OPENAI_GLOBAL_API_BASE_URL = "https://api.openai.com/v1";
 export const CLAUDE_HAIKU_4_5_MODEL_ID = "claude-haiku-4-5-20251001";
 export const CLAUDE_SONNET_5_MODEL_ID = "claude-sonnet-5";
+/**
+ * Anthropic's current Opus: adaptive thinking that cannot be switched off,
+ * and the only current Claude model with Fast (ADR 0147).
+ */
+export const CLAUDE_OPUS_5_5_MODEL_ID = "claude-opus-5-5";
+/**
+ * Anthropic's most capable model. It is one of Anthropic's "Covered Models":
+ * Anthropic keeps its requests for 30 days and does not offer it under zero
+ * data retention without express authorisation, so it runs only where ADR
+ * 0147's retention approval is set.
+ */
+export const CLAUDE_FABLE_5_1_MODEL_ID = "claude-fable-5-1";
+/** Anthropic rejects `speed: "fast"` without this beta header. */
+export const ANTHROPIC_FAST_MODE_BETA = "fast-mode-2026-02-01";
 
 /**
  * GPT-6 (Astra, Sol, Luna) is the current OpenAI family. GPT-5.6 is retired
@@ -85,6 +99,22 @@ export const ALBERT_MODELS = [
     provider: "xai",
   },
   {
+    id: CLAUDE_FABLE_5_1_MODEL_ID,
+    label: "Claude Fable 5.1",
+    shortLabel: "Fable",
+    description: "Anthropic most capable",
+    tier: "frontier",
+    provider: "anthropic",
+  },
+  {
+    id: CLAUDE_OPUS_5_5_MODEL_ID,
+    label: "Claude Opus 5.5",
+    shortLabel: "Opus",
+    description: "Anthropic frontier reasoning",
+    tier: "frontier",
+    provider: "anthropic",
+  },
+  {
     id: CLAUDE_SONNET_5_MODEL_ID,
     label: "Claude Sonnet 5",
     shortLabel: "Sonnet",
@@ -138,6 +168,19 @@ export const GPT_6_ASTRA_REASONING_EFFORTS = [
 ] as const satisfies readonly ReasoningEffort[];
 
 /**
+ * Claude Opus 5.5 and Fable 5.1 reject `thinking: {type: "disabled"}`: their
+ * thinking always runs, so Albert's `none` becomes `low` (verified
+ * 2026-09-23).
+ */
+export const CLAUDE_ALWAYS_THINKING_REASONING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const satisfies readonly ReasoningEffort[];
+
+/**
  * Haiku 4.5 predates Anthropic's `output_config.effort` control. Albert maps
  * its shared effort labels onto manual extended-thinking token budgets. The
  * values are application policy, not provider-native effort names.
@@ -162,13 +205,35 @@ export const HAIKU_MAX_OUTPUT_TOKENS = Object.freeze({
 } as const satisfies Readonly<Record<ReasoningEffort, number>>);
 
 /**
- * Sonnet 5 is a 4.6+-family Anthropic model: thinking is adaptive and effort
- * is the provider-native `output_config.effort` control. Manual
- * `budget_tokens` thinking is rejected outright on that family, so the
- * Messages adapter must branch on this rather than on the provider alone.
+ * Claude models whose thinking cannot be switched off (Opus 5.5, Fable 5.1):
+ * the API answers `thinking: {type: "disabled"}` with a 400.
+ */
+export function anthropicRequiresThinking(id: AlbertModelId): boolean {
+  return id === CLAUDE_OPUS_5_5_MODEL_ID || id === CLAUDE_FABLE_5_1_MODEL_ID;
+}
+
+/**
+ * Sonnet 5, Opus 5.5 and Fable 5.1 are 4.6+-family Anthropic models: thinking
+ * is adaptive and effort is the provider-native `output_config.effort`
+ * control. Manual `budget_tokens` thinking is rejected outright on that
+ * family, so the Messages adapter must branch on this rather than on the
+ * provider alone.
  */
 export function anthropicUsesAdaptiveThinking(id: AlbertModelId): boolean {
-  return id === CLAUDE_SONNET_5_MODEL_ID;
+  return id === CLAUDE_SONNET_5_MODEL_ID || anthropicRequiresThinking(id);
+}
+
+/** Anthropic fast mode (`speed: "fast"`, a research preview) runs on Opus 5.5 only among current models. */
+export function anthropicSupportsFastMode(id: AlbertModelId): boolean {
+  return id === CLAUDE_OPUS_5_5_MODEL_ID;
+}
+
+/**
+ * Anthropic keeps requests to its "Covered Models" for 30 days, outside zero
+ * data retention (ADR 0147), so they need their own approval.
+ */
+export function anthropicModelRequiresRetention(id: AlbertModelId): boolean {
+  return id === CLAUDE_FABLE_5_1_MODEL_ID;
 }
 
 /**
@@ -179,6 +244,8 @@ export function anthropicUsesAdaptiveThinking(id: AlbertModelId): boolean {
 export const ANTHROPIC_MAX_OUTPUT_TOKENS = Object.freeze({
   [CLAUDE_HAIKU_4_5_MODEL_ID]: 64_000,
   [CLAUDE_SONNET_5_MODEL_ID]: 128_000,
+  [CLAUDE_OPUS_5_5_MODEL_ID]: 128_000,
+  [CLAUDE_FABLE_5_1_MODEL_ID]: 128_000,
 } as const);
 
 export function anthropicMaxOutputTokens(id: AlbertModelId): number {
@@ -263,12 +330,14 @@ export function currentGptModel(id: AlbertModelId): AlbertModelId {
 }
 
 export function modelSupportsFastMode(id: AlbertModelId): boolean {
-  return !isAnthropicModel(id);
+  return isAnthropicModel(id) ? anthropicSupportsFastMode(id) : true;
 }
 
 /**
  * Maps Albert Fast onto the provider `service_tier`. GPT uses OpenAI Fast.
  * Grok uses official xAI Priority Processing (`priority`), never `fast`.
+ * Claude Opus 5.5 carries `fast` to the Messages adapter, which sends
+ * Anthropic's `speed: "fast"` (ADR 0147).
  */
 export function serviceTierForPreferences(
   preferences: AgentRunPreferences,
@@ -280,19 +349,21 @@ export function serviceTierForPreferences(
 export function reasoningEffortsForModel(id: AlbertModelId): readonly ReasoningEffort[] {
   if (isXaiModel(id)) return GROK_REASONING_EFFORTS;
   if (id === "gpt-6-astra") return GPT_6_ASTRA_REASONING_EFFORTS;
+  if (anthropicRequiresThinking(id)) return CLAUDE_ALWAYS_THINKING_REASONING_EFFORTS;
   return REASONING_EFFORTS;
 }
 
 /**
  * Maps Albert's shared effort control onto the values the selected provider
  * accepts. Grok 4.6 has no `none` or `max`; those clamp to `low` and `xhigh`.
- * GPT-6 Astra has no `none`; it clamps to `low`.
+ * GPT-6 Astra, Claude Opus 5.5 and Claude Fable 5.1 have no `none`; it clamps
+ * to `low`.
  */
 export function clampReasoningEffort(
   model: AlbertModelId,
   effort: ReasoningEffort,
 ): ReasoningEffort {
-  if (model === "gpt-6-astra") return effort === "none" ? "low" : effort;
+  if (model === "gpt-6-astra" || anthropicRequiresThinking(model)) return effort === "none" ? "low" : effort;
   if (!isXaiModel(model)) return effort;
   if (effort === "none") return "low";
   if (effort === "max") return "xhigh";
@@ -326,7 +397,8 @@ export type ResolvedAlbertModelTransport = Readonly<{
  * configured OpenAI base URL (the Australian endpoint in production), GPT-6
  * uses OpenAI's global host only when the caller carries the explicit
  * approval ADR 0145 requires, Grok 4.6 uses xAI Responses, and Claude uses
- * Anthropic Messages. Provider credentials are never reused across providers.
+ * Anthropic Messages (Fable only with ADR 0147's retention approval). Provider
+ * credentials are never reused across providers.
  */
 export function resolveAlbertModelTransport(input: Readonly<{
   model: AlbertModelId;
@@ -338,11 +410,16 @@ export function resolveAlbertModelTransport(input: Readonly<{
   xaiBaseUrl?: string;
   anthropicApiKey?: string;
   anthropicBaseUrl?: string;
+  /** ADR 0147: the environment approves Anthropic's 30-day retention on its Covered Models (Fable). */
+  anthropicRetentionApproved?: boolean;
 }>): ResolvedAlbertModelTransport {
   if (isAnthropicModel(input.model)) {
     const apiKey = input.anthropicApiKey?.trim() ?? "";
     if (!apiKey) {
       throw new Error(`${albertModelById(input.model).label} is not configured on this Albert environment.`);
+    }
+    if (anthropicModelRequiresRetention(input.model) && !input.anthropicRetentionApproved) {
+      throw new Error(`${albertModelById(input.model).label} is not approved on this Albert environment.`);
     }
     const baseUrl = (input.anthropicBaseUrl?.trim() || ANTHROPIC_API_BASE_URL).replace(/\/+$/u, "");
     return Object.freeze({

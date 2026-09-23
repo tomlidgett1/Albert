@@ -37,6 +37,7 @@ import {
 } from "@/packages/albert-codex/src";
 import { signCubeJwt } from "@/packages/albert-v3/src/cube/jwt";
 import {
+  anthropicModelRequiresRetention,
   isAnthropicModel,
   normalizeAgentPreferences,
   openAiModelRequiresGlobalHost,
@@ -259,6 +260,19 @@ export async function handleOmniHarnessConversation(
   ) {
     return jsonError(
       "GPT 6 models are not approved for production data on this Albert environment.",
+      503,
+      correlationId,
+    );
+  }
+  // Anthropic keeps requests to its Covered Models (Claude Fable 5.1) for 30
+  // days, outside zero data retention (ADR 0147).
+  if (
+    anthropicModelRequiresRetention(preferences.model)
+    && process.env.NODE_ENV === "production"
+    && process.env.ALBERT_ANTHROPIC_RETENTION_APPROVED !== "true"
+  ) {
+    return jsonError(
+      "Claude Fable 5.1 is not approved for production data on this Albert environment.",
       503,
       correlationId,
     );
