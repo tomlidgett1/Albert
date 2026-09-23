@@ -272,3 +272,21 @@ test("follow-up links leave the composed prose and become deduplicated chips", (
   assert.doesNotMatch(result.answer.text, /ai-query/u);
   assert.deepEqual(result.answer.followUps, ["Compare with last year?"]);
 });
+
+test("a suggested follow-up that states an unsupported figure is dropped, not refused", () => {
+  // "Why did Bikes drop 23% last week?" reached the owner as a chip no evidence
+  // backed. A suggestion is not worth a model round trip, so it goes quietly;
+  // the year, window or ranking size a question asks about is a request.
+  const suggest = (followUps: string[]) => composeAnswer({ ...answerInput, followUps }, new Map([[source.resultId, source]]), answerOptions);
+  const first = suggest(["Why did Bikes drop 23% last week?", "Want the top 10 products by margin?", "How did August compare with July 2025?"]);
+  assert.ok(first.ok);
+  assert.equal(first.answer.state, "Verified");
+  assert.deepEqual(first.answer.followUps, ["Want the top 10 products by margin?", "How did August compare with July 2025?"]);
+  // 14 August 2026 was a Friday, and a raw placeholder cannot reach a chip.
+  const second = suggest(["Which items have not sold in 180 days?", "What drove sales on Thursday 14 August?", "What is behind {{sales}}?"]);
+  assert.ok(second.ok);
+  assert.deepEqual(second.answer.followUps, ["Which items have not sold in 180 days?"]);
+  const friday = suggest(["What drove sales on Friday 14 August?"]);
+  assert.ok(friday.ok);
+  assert.deepEqual(friday.answer.followUps, ["What drove sales on Friday 14 August?"]);
+});
