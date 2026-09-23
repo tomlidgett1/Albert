@@ -13,7 +13,7 @@ import type {
 } from "../../shared/src/index.js";
 import type { PivotSourceResult } from "./pivot.js";
 import { derivedResultSemantics } from "./evidence.js";
-import { decimalCell } from "./calculate.js";
+import { decimalCell, pointsLabel, RATE_CHANGE_GUIDANCE } from "./calculate.js";
 import { formatReportingPeriodLabel } from "../../shared/src/reporting-dates.js";
 const Exact = Decimal.clone({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
 
@@ -63,10 +63,10 @@ export type DeriveInput = Readonly<{
   /** A subset total is permitted only when explicitly requested and labelled. */
   aggregateScope?: "population" | "returned_rows";
   /**
-   * A left join's unmatched right-hand figures read 0 instead of blank: right
-   * for totals and counts over a complete result, where no row means none
-   * (a product with no September sales sold nothing), never for an average,
-   * a rate or a balance.
+   * A left join's unmatched right-hand totals and counts read 0 instead of
+   * blank: right over a complete result, where no row means none (a product
+   * with no September sales sold nothing). A percentage, a ratio or an
+   * average stays blank whatever this says: none is zero for want of a row.
    */
   unmatchedAsZero?: boolean | null;
 }>;
@@ -105,22 +105,41 @@ function labelKey(cell: TraceCell | undefined): string | null {
   return text === "" ? null : text;
 }
 
-function columnKey(label: string, taken: Set<string>): string {
+function columnKey(label: string, taken: Set<string>, length = 40): string {
   let slug = label
     .toLocaleLowerCase("en-AU")
     .replace(/[^a-z0-9_]+/gu, "_")
     .replace(/^_+|_+$/gu, "")
-    .slice(0, 40);
+    .slice(0, length);
   if (!/^[a-z_]/u.test(slug)) slug = `d_${slug}`;
   if (!slug) slug = "d_column";
   let candidate = slug;
   let suffix = 2;
   while (taken.has(candidate)) {
-    candidate = `${slug}_${suffix}`;
+    candidate = `${slug.slice(0, length - String(suffix).length - 1)}_${suffix}`;
     suffix += 1;
   }
   taken.add(candidate);
   return candidate;
+}
+
+/** A governed measure carries no aggregation type, so an average or a rate is known by its name ("Average sale", "items_per_sale"). */
+const AVERAGE_OR_RATE_NAME = /(?:^|[_\s])(?:avg|average|mean|median|per|ratio|rate)(?:$|[_\s])/iu;
+
+/**
+ * A percentage, or a ratio, points change or average this tool derived. Its
+ * rows never add or average into the blended figure, which is the summed
+ * numerator over the summed denominator.
+ */
+function isRate(source: PivotSourceResult, column: TraceTableColumn): boolean {
+  if (column.type === "percent") return true;
+  const calculation = source.provenance.calculations?.find((entry) => entry.column === column.key);
+  return calculation?.operator === "divide" || /^avg of |percentage points$/u.test(calculation?.formula ?? "");
+}
+
+/** Only a total or a count is zero where a complete result has no row; a rate, ratio or average is unknown. */
+function zeroWhenUnmatched(source: PivotSourceResult, column: TraceTableColumn): boolean {
+  return NUMERIC_COLUMN_TYPES.has(column.type) && !isRate(source, column) && !AVERAGE_OR_RATE_NAME.test(`${column.key} ${column.label}`);
 }
 
 function failure(error: string, guidance: string): DeriveOutcome {
@@ -284,7 +303,8 @@ function deriveJoin(input: DeriveInput, sources: ReadonlyMap<string, PivotSource
   for (const row of right.rows) {
     const key = labelKey(row[rightColumn.key]);
     if (key === null) continue;
-    if (rightRows.has(key)) return failure("The second result contains duplicate join keys.", "Aggregate to one row per stable key or select a more specific key. Choosing the first match would change the answer with row order.");
+    // An anti join reads only whether a key occurs, so several lines per product are fine there.
+    if (rightRows.has(key) && mode !== "anti") return failure("The second result contains duplicate join keys.", "Aggregate to one row per stable key or select a more specific key. Choosing the first match would change the answer with row order.");
     rightRows.set(key, row);
   }
   if (mode !== "anti") {
@@ -310,11 +330,15 @@ function deriveJoin(input: DeriveInput, sources: ReadonlyMap<string, PivotSource
   ));
   const rightOutput: { source: TraceTableColumn; key: string }[] = [];
   for (const column of bringColumns as TraceTableColumn[]) {
-    const key = taken.has(column.key) ? columnKey(`matched_${column.key}`, taken) : (taken.add(column.key), column.key);
+    // A carried column the left already has is matched_ plus its whole key, as the tool promises, however long (keys run to 160 characters).
+    const matchedKey = `matched_${column.key}`;
+    const key = !taken.has(column.key) ? column.key : matchedKey.length <= 160 && !taken.has(matchedKey) ? matchedKey : columnKey(matchedKey, taken, 160);
+    taken.add(key);
     rightOutput.push({ source: column, key });
-    const label = acrossPeriods ? `${column.label} (${windowOf(right)})` : taken.has(column.key) && key !== column.key ? `${column.label} (matched)` : column.label;
+    const label = acrossPeriods ? `${column.label} (${windowOf(right)})` : key !== column.key ? `${column.label} (matched)` : column.label;
     outputColumns.push({ ...column, key, label });
   }
+  const zeroFilled = new Set(mode === "left" && input.unmatchedAsZero ? rightOutput.filter(({ source }) => zeroWhenUnmatched(right, source)).map(({ key }) => key) : []);
 
   const rows: Record<string, TraceCell>[] = [];
   const outputLeftRows: { leftRowIndex: number; matched: boolean }[] = [];
@@ -329,15 +353,18 @@ function deriveJoin(input: DeriveInput, sources: ReadonlyMap<string, PivotSource
     }
     if (mode === "inner" && !match) return;
     const out: Record<string, TraceCell> = { ...row };
-    const unmatched = mode === "left" && input.unmatchedAsZero ? 0 : null;
-    for (const { source, key: outKey } of rightOutput) out[outKey] = match ? (match[source.key] ?? null) : NUMERIC_COLUMN_TYPES.has(source.type) ? unmatched : null;
+    for (const { source, key: outKey } of rightOutput) out[outKey] = match ? (match[source.key] ?? null) : zeroFilled.has(outKey) ? 0 : null;
     rows.push(out);
     outputLeftRows.push({ leftRowIndex, matched: Boolean(match) });
   });
+  const unmatchedRows = mode === "left" && input.unmatchedAsZero ? left.rows.length - matched : 0;
+  const filled = rightOutput.filter(({ key }) => zeroFilled.has(key)).map(({ source }) => source.label);
+  const blank = rightOutput.filter(({ source, key }) => NUMERIC_COLUMN_TYPES.has(source.type) && !zeroFilled.has(key)).map(({ source }) => source.label);
   const notes: string[] = [
     `Matched on exact ${leftColumn.label} = ${rightColumn.label} keys; ${matched} of ${left.rows.length} left rows matched.`,
     ...(acrossPeriods ? [`Two periods side by side: this result's figures are ${windowOf(left)}, the second result's ${windowOf(right)}. Head each column with its own period.`] : []),
-    ...(mode === "left" && input.unmatchedAsZero && matched < left.rows.length ? [`${left.rows.length - matched} unmatched ${left.rows.length - matched === 1 ? "row reads" : "rows read"} 0 for the second result's figures.`] : []),
+    ...(unmatchedRows && filled.length ? [`${unmatchedRows} unmatched ${unmatchedRows === 1 ? "row reads" : "rows read"} 0 for ${filled.join(", ")}.`] : []),
+    ...(unmatchedRows && blank.length ? [`${blank.join(", ")} ${blank.length === 1 ? "stays" : "stay"} blank on unmatched rows: a percentage, ratio or average is never zero for want of a row.`] : []),
   ];
   if (mode === "anti") notes.push(`${rows.length} left rows have no match in the second result.`);
   const recipe = `${mode} join of ${input.resultId} on ${leftColumn.key} with ${input.secondResultId} on ${rightColumn.key}`;
@@ -412,6 +439,12 @@ function deriveAggregate(input: DeriveInput, sources: ReadonlyMap<string, PivotS
   for (const metric of input.metrics) {
     const column = requireColumn(source, metric.valueKey, `metric "${metric.label}" valueKey`, metric.fn !== "count");
     if (isOutcome(column)) return column;
+    if ((metric.fn === "sum" || metric.fn === "avg") && isRate(source, column)) {
+      return failure(
+        `metric "${metric.label}" would ${metric.fn === "sum" ? "add up" : "average"} ${column.key}, a rate: that is not the blended figure.`,
+        "Aggregate the rate's numerator and denominator (for a margin, sum gross profit and sales), then compute the rate from those totals with kind percent_of or ratio; or query the governed rate without the entity dimension. min and max of a rate are fine.",
+      );
+    }
     metricColumns.push(column);
   }
   const groups = new Map<string, { label: TraceCell; values: Decimal[][]; counts: number[] }>();
@@ -444,7 +477,7 @@ function deriveAggregate(input: DeriveInput, sources: ReadonlyMap<string, PivotS
     const sourceColumn = metricColumns[index]!;
     columns.push(metric.fn === "count"
       ? { key, label: metric.label, type: "number" }
-      : { key, label: metric.label, type: sourceColumn.type, ...(sourceColumn.currency ? { currency: sourceColumn.currency } : {}) });
+      : { key, label: metric.label, type: sourceColumn.type, ...(sourceColumn.currency ? { currency: sourceColumn.currency } : {}), ...(sourceColumn.percentScale ? { percentScale: sourceColumn.percentScale } : {}) });
     return key;
   });
   const rows: Record<string, TraceCell>[] = [];
@@ -479,7 +512,10 @@ function deriveAggregate(input: DeriveInput, sources: ReadonlyMap<string, PivotS
   ];
   if (input.aggregateScope === "returned_rows") notes.push("This is a subtotal of selected rows, not a population total.");
   const retained = rows.slice(0, MAX_DERIVED_ROWS);
-  return { ok: true, result: { columns, rows: retained, provenance, notes, recipe, derivation: null, semantics: derivedResultSemantics([source], retained.length, recipe, {}, groupColumn ? [groupColumn.key] : []) } };
+  // One row per group value, so a grouped identifier or period stays joinable.
+  const identity = groupColumn ? source.semantics?.keys[groupColumn.key] : undefined;
+  const keys = groupColumn && identity ? { [groupColumn.key]: identity } : {};
+  return { ok: true, result: { columns, rows: retained, provenance, notes, recipe, derivation: null, semantics: derivedResultSemantics([source], retained.length, recipe, keys, groupColumn ? [groupColumn.key] : []) } };
 }
 
 function deriveCompute(input: DeriveInput, sources: ReadonlyMap<string, PivotSourceResult>): DeriveOutcome {
@@ -487,7 +523,7 @@ function deriveCompute(input: DeriveInput, sources: ReadonlyMap<string, PivotSou
   if (!input.expressions?.length) return failure("expressions are required for a compute.", "Pass at least one {label, kind, leftKey, rightKey}.");
   const taken = new Set(source.columns.map((column) => column.key));
   const columns: TraceTableColumn[] = [...source.columns];
-  const plans: { key: string; kind: DeriveExpressionKind; left: TraceTableColumn; right: TraceTableColumn }[] = [];
+  const plans: { key: string; kind: DeriveExpressionKind; left: TraceTableColumn; right: TraceTableColumn; points: boolean }[] = [];
   for (const expression of input.expressions) {
     const left = requireColumn(source, expression.leftKey, `"${expression.label}" leftKey`, true);
     if (isOutcome(left)) return left;
@@ -499,10 +535,25 @@ function deriveCompute(input: DeriveInput, sources: ReadonlyMap<string, PivotSou
     if (left.currency && right.currency && left.currency !== right.currency) {
       return failure("Arithmetic cannot combine different currencies.", "Use a modeled currency-converted measure first.");
     }
+    if (left.type === "percent" && expression.kind === "sum") {
+      return failure(`"${expression.label}" adds two percentages, which is not a percentage of anything.`, "For a combined rate, sum the underlying amounts and compute percent_of from those totals.");
+    }
+    if (left.type === "percent" && expression.kind === "percent_change") {
+      return failure(`"${expression.label}" is a percent change of a rate.`, RATE_CHANGE_GUIDANCE);
+    }
+    // Points are stated on the 0-100 scale; a fraction-scale rate would need rescaling the sealed transform cannot express.
+    const points = expression.kind === "difference" && left.type === "percent";
+    if (points && [left, right].some((column) => (column.percentScale ?? "percent") !== "percent")) {
+      return failure(`"${expression.label}" subtracts rates stored as fractions.`, "Use CalculateValues for a change between these rates; it states the change in percentage points.");
+    }
     const key = columnKey(expression.label, taken);
-    const type: TraceTableColumn["type"] = expression.kind === "percent_of" || expression.kind === "percent_change" ? "percent" : expression.kind === "ratio" ? "number" : left.type;
-    columns.push({ key, label: expression.label, type, ...(type === left.type && left.currency ? { currency: left.currency } : {}), ...(type === "percent" ? { percentScale: "percent" as const } : {}) });
-    plans.push({ key, kind: expression.kind, left, right });
+    // Only money over a count stays money (per unit); money over money, a rate over a count and the like are plain ratios.
+    const type: TraceTableColumn["type"] = points ? "number"
+      : expression.kind === "percent_of" || expression.kind === "percent_change" ? "percent"
+        : expression.kind === "ratio" ? (left.type === "currency" && right.type === "number" ? "currency" : "number")
+          : left.type;
+    columns.push({ key, label: points ? pointsLabel(expression.label) : expression.label, type, ...(type === "currency" && left.currency ? { currency: left.currency } : {}), ...(type === "percent" ? { percentScale: "percent" as const } : {}) });
+    plans.push({ key, kind: expression.kind, left, right, points });
   }
   const rows = source.rows.map((row) => {
     const out: Record<string, TraceCell> = { ...row };
@@ -530,7 +581,7 @@ function deriveCompute(input: DeriveInput, sources: ReadonlyMap<string, PivotSou
       ? `${plan.left.key} ÷ ${plan.right.key} × 100`
       : plan.kind === "percent_change"
         ? `(${plan.left.key} − ${plan.right.key}) ÷ |${plan.right.key}| × 100`
-        : plan.kind === "difference" ? `${plan.left.key} − ${plan.right.key}` : `${plan.left.key} + ${plan.right.key}`;
+        : plan.kind === "difference" ? `${plan.left.key} − ${plan.right.key}${plan.points ? " in percentage points" : ""}` : `${plan.left.key} + ${plan.right.key}`;
   const recipe = plans.map((plan) => `${plan.key} = ${formula(plan)}`).join("; ");
   const provenance = mergedProvenance(input, source, [], plans.map((plan) => ({ column: plan.key, formula: formula(plan), operator: OPERATORS[plan.kind] })), [
     ...source.provenance.definitions,
