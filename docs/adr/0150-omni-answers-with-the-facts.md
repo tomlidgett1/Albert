@@ -84,6 +84,18 @@ The answer was thin, and it was also wrong.
    carried; the member name is unchanged, so saved dashboards keep working.
 7. **Identifiers read as names.** A numeric identifier (a key ending `_id` or a
    label ending "ID") renders without grouping: "ticket 61802", not "61,802".
+8. **Follow-ups are the owner's words.** A suggested follow-up is sent as the
+   owner's own message when tapped, in Albert's dash and in Yellow Jersey's
+   Analytics tab alike. The owner tapped "Would you like the last sale date
+   for each Trace model?" and sent Albert's offer back to it. Across ten days
+   of production answers the models wrote offers ("Want the top five sales
+   from yesterday?", "Should I compare these weeks by channel?") and
+   questions to the owner ("Should you pause new workshop intake?"). The
+   prompt now asks for requests in the owner's voice, and the composer
+   (`ownerVoiceFollowUp`) turns an offer into the request it offers ("Show
+   the last sale date for each Trace model"), "you" and "your" into the
+   business's "we" and "our", unwraps link markup, and drops filler
+   ("anything else…"). A request already in the owner's voice is untouched.
 
 ## Results
 
@@ -132,3 +144,11 @@ Runtime `albert-codex-runtime` deployment `answer-detail-b-20260923` and web
 Haiku 4.5 high the Trace and helmet questions came back with the customer, the
 staff member and the price against list, in 49 s and 37 s, with no refused
 compositions; GPT-6 Luna high the same in 40 s and 52 s.
+
+Follow-ups in the owner's voice (item 8) shipped as b11838c: web
+`dpl_GT5DYszt58QaEWTLJxvqFQ2XuuHB` and runtime `owner-voice-20260923`. Checked in
+production on GPT-6 Luna and Haiku: every chip was a request or question the
+owner would send ("Show the last sale date for each Trace model", "Compare
+Trace sales this year with last year", "Show our top 10 customers this year").
+Yellow Jersey's Analytics tab proxies Albert's `/api/omni-conversation`, so it
+has every change here with no deploy of its own.
