@@ -586,8 +586,8 @@ export async function runGovernedAnalyticalTurn(
         ok: false,
         error: `Invalid arguments: ${detail}`,
         guidance: issues
-          ? "Match the tool's parameter schema exactly (every field present, unused fields null) and call it again."
-          : "The arguments did not satisfy this tool's schema. Check them against its parameters: every field present (null when unused), object parameters such as `query` passed as objects rather than strings, member names written as fully qualified view.field, each filter in exactly one form (member + operator + values, or and, or or, with the other fields null), and every list within its limit. Then call the tool again.",
+          ? "Match the tool's parameter schema exactly: every field present, an empty list [] for an unused list and null for an unused nullable field. Fix the named fields and call it again."
+          : "The arguments did not satisfy this tool's schema. Check them against its parameters: every field present (an empty list [] for an unused list, null for an unused nullable field), object parameters such as `query` passed as objects rather than strings, member names written as fully qualified view.field, each filter in exactly one form (member + operator + values, or and, or or, with the other fields null), and every list within its limit. Then call the tool again.",
       });
     };
 

@@ -652,6 +652,30 @@ test("non-strict Claude tool calls get omitted nulls and serialized objects rest
   assert.deepEqual(bodies[1]!.messages[1], { role: "assistant", content });
 });
 
+test("an omitted required list becomes an empty list, never an invented value", async () => {
+  // Haiku left citedResultIds, limitations and followUps out of ComposeAnswer
+  // 31 times in one turn; strict sampling would have forced an empty list.
+  const provider = new AnthropicMessagesModelProvider(fakeAnthropicClient(async (body) => (body.messages.length === 1 ? {
+    id: "msg_lists", type: "message", role: "assistant", model: CLAUDE_HAIKU_4_5_MODEL_ID,
+    content: [{ type: "tool_use", id: "toolu_lists", name: "compose", input: { markdown: "Done.", values: [] } }],
+    stop_reason: "tool_use", stop_sequence: null, usage: { input_tokens: 2, output_tokens: 2 },
+  } : {
+    id: "msg_lists_done", type: "message", role: "assistant", model: CLAUDE_HAIKU_4_5_MODEL_ID,
+    content: [{ type: "text", text: "Done." }], stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 2, output_tokens: 2 },
+  }) as unknown as Message), CLAUDE_HAIKU_4_5_MODEL_ID);
+  const received: unknown[] = [];
+  const compose = tool({
+    name: "compose",
+    description: "Compose.",
+    parameters: z.object({ markdown: z.string(), values: z.array(z.string()), citedResultIds: z.array(z.string()), followUps: z.array(z.string()).max(3), tasks: z.array(z.string()).min(1).nullable() }).strict(),
+    strict: true,
+    execute: async (input) => { received.push(input); return "ok"; },
+  });
+  const agent = new Agent({ name: "lists", instructions: "Compose.", model: CLAUDE_HAIKU_4_5_MODEL_ID, modelSettings: { reasoning: { effort: "low" }, toolChoice: "auto" }, tools: [compose] });
+  await new Runner({ modelProvider: provider, tracingDisabled: true }).run(agent, [user("Compose.")], { maxTurns: 3 });
+  assert.deepEqual(received, [{ markdown: "Done.", values: [], citedResultIds: [], followUps: [], tasks: null }]);
+});
+
 test("a replayed Claude turn drops tool calls whose results were cut off", () => {
   // A run stopped mid-step (the exploration deadline) keeps the assistant
   // turn but not the results of its in-flight calls; replaying such a

@@ -275,7 +275,12 @@ function repairToolInput(value: unknown, schema: unknown, root = schema): unknow
   );
   for (const [name, propertySchema] of Object.entries(resolved.properties)) {
     if (!(name in repaired)) {
-      if (required.has(name) && schemaAllowsNull(propertySchema, root)) repaired[name] = null;
+      if (!required.has(name)) continue;
+      // An unused list left out means an empty list (a ComposeAnswer without
+      // its citedResultIds / limitations / followUps looped 31 times in one
+      // turn); a list that must not be empty still fails validation.
+      if (schemaAllowsNull(propertySchema, root)) repaired[name] = null;
+      else if (schemaTypes(resolveLocalSchemaReference(propertySchema, root)).includes("array")) repaired[name] = [];
       continue;
     }
     repaired[name] = repairToolInput(repaired[name], propertySchema, root);
