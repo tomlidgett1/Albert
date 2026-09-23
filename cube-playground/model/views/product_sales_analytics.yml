@@ -31,9 +31,15 @@ views:
         units_sold or line_revenue by completed_weekday or completed_hour_of_day
         in one query. Basket size = units_per_sale (units_sold / sales_count).
         items_default_price / items_msrp / items_online_price are the CURRENT
-        list prices; normal_unit_price is the pre-discount line price actually
-        charged at the time, unit_price the charged line price, and
-        average_selling_price a period aggregate.
+        list prices (tax inclusive where the shop prices inclusive, before
+        discounts). An item's price at a past time is average_shelf_price for
+        that period, on the same basis, so "price now vs 12 months ago" sets
+        items_default_price beside average_shelf_price for the same month a
+        year earlier. average_selling_price is ex tax and AFTER discounts:
+        never compare it with a list price. unit_price is the pre-discount
+        shelf price on a single line. Lines with no item (items_system_sku not
+        set) are ad hoc charges typed on the sale; leave them out of item
+        rankings with a set filter on items_system_sku.
 
     cubes:
       - join_path: sale_lines
@@ -49,7 +55,6 @@ views:
           - created_at
           - unit_quantity
           - unit_price
-          - normal_unit_price
           - discount_amount
           - discount_percent
           - is_taxed
@@ -77,6 +82,7 @@ views:
           - goods_cost_of_goods
           - goods_gross_margin_pct
           - average_selling_price
+          - average_shelf_price
           - sales_count
           - units_per_sale
           - distinct_items_sold
@@ -176,6 +182,7 @@ views:
           - line_net_revenue
           - line_net_revenue_before_discounts
           - average_selling_price
+          - average_shelf_price
           - sales_count
           - units_per_sale
           - distinct_items_sold
@@ -232,7 +239,6 @@ views:
           - completed_hour_of_day
           - unit_quantity
           - unit_price
-          - normal_unit_price
           - is_return_line
           - is_workorder
           - is_special_order

@@ -342,6 +342,17 @@ const FALLING_WORDS = /\b(?:down|fell|fallen|falling|dropped|drop|declined?|decr
 const FALLING_BY = /\b(?:down|fell|fallen|falling|dropped|declined|decreased|lower|below|behind|under|short|trailing|trails?|shrank|weaker|softer)\b[^.;:!?\n]{0,48}\bby\s+(?:about\s+|around\s+|roughly\s+|just\s+|nearly\s+)?$/iu;
 
 /** Resolves every analytical figure from governed cells; the model supplies prose and references. */
+/** The words around a rejected figure, so the model repairs every one in one pass instead of hunting for where "two" was. */
+function figureInContext(text: string, token: string): string {
+  const sentence = text.split(/(?<=[.!?])\s+|\n+/u).find((part) => part.includes(token))?.trim();
+  if (!sentence) return token;
+  const at = sentence.indexOf(token);
+  const start = Math.max(0, at - 50);
+  const end = Math.min(sentence.length, at + token.length + 40);
+  const excerpt = `${start > 0 ? "…" : ""}${sentence.slice(start, end)}${end < sentence.length ? "…" : ""}`.replace(/\s+/gu, " ");
+  return `${token} (in "${excerpt}")`;
+}
+
 export function composeAnswer(
   input: ComposeAnswerInput,
   evidence: ReadonlyMap<string, AnswerEvidence>,
@@ -354,6 +365,14 @@ export function composeAnswer(
   if (!parsed.success) return { ok: false, issues: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`) };
   const request = parsed.data;
   const issues: string[] = [];
+  // A value the prose never places carries nothing to the owner, so it is
+  // dropped rather than refused: refusing it cost a full model round trip on
+  // about half of all composition failures (production, September 2026). A
+  // table defined but never placed is still refused below, because the answer
+  // would silently lose a table the model meant to show.
+  const placed = new Set([...request.markdown.matchAll(/\{\{([a-z][a-z_]{0,39})\}\}/gu)].map((match) => match[1]!));
+  const tableIds = new Set(request.tables.map((table) => table.id));
+  const values = request.values.filter((value) => placed.has(value.id) || tableIds.has(value.id));
   const selected = new Set(request.citedResultIds);
   const slots = new Map<string, string>();
   const claims: NonNullable<TraceAnswerEvent["claims"]>[number][] = [];
@@ -369,7 +388,7 @@ export function composeAnswer(
     if (slots.has(id)) issues.push(`Duplicate placeholder ${id}.`);
     slots.set(id, value);
   };
-  for (const value of request.values) {
+  for (const value of values) {
     const source = evidence.get(value.resultId);
     const column = source?.columns.find((column) => column.key === value.columnKey);
     const row = source?.rows[value.rowIndex];
@@ -440,10 +459,17 @@ export function composeAnswer(
     // A period heading is resolved from the governed cell that names it, so a
     // model-written header can shorten a field label but never rename a period.
     const periods = periodHeaders(typed, source.semantics, currentYear);
+    const headerScope = new Set([
+      ...ownerStatedGroundingValues(options.question),
+      ...[source.provenance.timeRange.label, (source as Readonly<{ queryYaml?: unknown }>).queryYaml].flatMap((scope) => typeof scope === "string" ? (scope.match(/\d+/gu) ?? []).map(Number) : []),
+    ]);
     const headers = typed.map((column, index) => {
       const written = periods.has(column.key) ? undefined : table.headers?.[index]?.trim();
       const figures = written?.replace(HEADER_DATE, " ").match(/\d[\d,.]*/gu) ?? [];
-      if (figures.some((figure) => !column.label.includes(figure) && !/^(?:19|20)\d{2}$/u.test(figure))) {
+      // A header may repeat the owner's own words ("Price 12 months ago") or
+      // the window the result covers ("Units (12 weeks)"); any other number in
+      // a header is a figure the cells should carry.
+      if (figures.some((figure) => !column.label.includes(figure) && !/^(?:19|20)\d{2}$/u.test(figure) && !headerScope.has(Number(figure.replaceAll(",", ""))))) {
         issues.push(`Header "${written}" states a figure its field does not carry. Headers name the column; figures belong in cells.`);
       }
       return written || periods.get(column.key) || column.label;
@@ -521,13 +547,16 @@ export function composeAnswer(
   if (request.outcome === "answer" || request.outcome === "no_data") issues.push(...answerPeriodIssues(options.question, sources));
   const placeholders = [...request.markdown.matchAll(/\{\{([a-z][a-z_]{0,39})\}\}/gu)].map((match) => match[1]!);
   for (const id of placeholders) if (!slots.has(id)) issues.push(`Unknown placeholder {{${id}}}.`);
-  for (const id of slots.keys()) if (!placeholders.includes(id)) issues.push(`Placeholder {{${id}}} was defined but not used.`);
+  for (const id of slots.keys()) if (!placeholders.includes(id)) issues.push(`Table {{${id}}} was defined but not placed: put {{${id}}} alone on its own line where the table belongs, or remove it from tables.`);
 
   // Values from result cells must travel through a reference, never borrow
   // support from an unrelated equal number somewhere in the evidence pool.
   const plain = [request.markdown.replace(/\{\{[^}]+\}\}/gu, ""), ...request.limitations].join("\n");
   const dateLabels = [options.today, ...sources.flatMap((source) => [source.provenance.timeRange.label, source.provenance.timeRange.start, source.provenance.timeRange.end])];
-  const allowed = [...ownerStatedGroundingValues(options.question), ...dateLabels.flatMap((label) => [...label.matchAll(/\b(?:19|20)\d{2}\b/gu)].map((match) => Number(match[0])))];
+  // A derived table (a ranking joined to last year's prices) carries the
+  // windows it was built from; their years are in evidence as much as its own.
+  const inputWindows = sources.flatMap((source) => source.semantics?.inputWindows ?? []);
+  const allowed = [...ownerStatedGroundingValues(options.question), ...[...dateLabels, ...inputWindows].flatMap((label) => [...label.matchAll(/\b(?:19|20)\d{2}\b/gu)].map((match) => Number(match[0])))];
   const labels = [...dateLabels, ...sources.flatMap((source) => source.rows.flatMap((row) => source.columns.filter((column) => ["string", "date", "datetime"].includes(column.type)).map((column) => String(row[column.key] ?? ""))))];
   // The spans this answer's evidence covers: explicit query windows, the run of
   // dates each cited result actually returned, and today.
@@ -564,11 +593,14 @@ export function composeAnswer(
     // "one soft spot", "one-off": never "twenty-one" or "one hundred".
     .replace(/(?<![\p{L}-])one(?![\p{L}]|-(?:hundred|thousand|million|billion|and)\b|\s+(?:hundred|thousand|million|billion)\b)/giu, " ");
   const unsupported = findUngroundedNumbersWithEvidence(prose, [...allowed, ...shownRowCounts], labels);
-  if (unsupported.length) issues.push(`Unbound figures: ${unsupported.slice(0, 12).join(", ")}. Use {{value_name}} references or {{table_name}}; calculate new figures with DeriveResult first.`);
+  if (unsupported.length) {
+    const written = [request.markdown, ...request.limitations].join("\n");
+    issues.push(`Unbound figures: ${unsupported.slice(0, 12).map((token) => figureInContext(written, token)).join("; ")}. Bind each with a {{value_name}} or {{table_name}} reference (calculate a new figure with DeriveResult first), or rewrite that sentence without it. Never swap in another count, number word or approximation ("almost half", "zero", "three"): each is checked the same way.`);
+  }
   if (/\{\{|\}\}/u.test(plain)) issues.push("Malformed answer placeholder.");
   if (request.outcome === "answer" && (!sources.length || claims.length === 0)) issues.push("An analytical answer requires cited evidence and at least one value or table reference.");
   if (request.outcome === "no_data" && (!sources.length || sources.some((source) => source.rows.length > 0))) issues.push("No data requires an executed empty query for the requested scope.");
-  if (request.outcome === "explanation" && (request.values.length || request.tables.length)) issues.push("Use outcome answer when presenting data values.");
+  if (request.outcome === "explanation" && (values.length || request.tables.length)) issues.push("Use outcome answer when presenting data values.");
   if (issues.length) return { ok: false, issues };
 
   // A placeholder renders with its own sign, currency symbol and percent sign;

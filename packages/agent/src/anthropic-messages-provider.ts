@@ -229,6 +229,60 @@ function restoreRequiredNullableFields(value: unknown, schema: unknown, root = s
   return restored;
 }
 
+function schemaTypes(schema: unknown): readonly unknown[] {
+  if (!isRecord(schema)) return [];
+  return Array.isArray(schema.type) ? schema.type : [schema.type];
+}
+
+/**
+ * A tool Anthropic samples without its strict grammar (see
+ * applyAnthropicSchemaBudget) can return arguments in an encoding that grammar
+ * would have ruled out while still meaning exactly what it says: an unused
+ * nullable field left out instead of sent as null (the filter `and` / `or` on
+ * the GenerateSemanticQuery calls Haiku lost on 2026-09-23), or an object
+ * parameter serialized as a JSON string. Both are restored to the shape the
+ * tool declared. Values are never coerced: a wrong type, an unknown key or a
+ * broken constraint still fails the Agents SDK's Zod validation before
+ * anything executes.
+ */
+function repairToolInput(value: unknown, schema: unknown, root = schema): unknown {
+  if (value === null || value === undefined) return value;
+  const resolved = schemaForValue(schema, value, root);
+  if (!isRecord(resolved)) return value;
+  if (typeof value === "string") {
+    const types = schemaTypes(resolved);
+    if (!types.includes("object") && !types.includes("array")) return value;
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if ((types.includes("object") && isRecord(parsed)) || (types.includes("array") && Array.isArray(parsed))) {
+        return repairToolInput(parsed, schema, root);
+      }
+    } catch {
+      // Not serialized JSON: the SDK reports the string as the wrong type.
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => repairToolInput(item, resolved.items, root));
+  }
+  if (!isRecord(value) || !isRecord(resolved.properties)) return value;
+
+  const repaired: Record<string, unknown> = { ...value };
+  const required = new Set(
+    Array.isArray(resolved.required)
+      ? resolved.required.filter((entry): entry is string => typeof entry === "string")
+      : [],
+  );
+  for (const [name, propertySchema] of Object.entries(resolved.properties)) {
+    if (!(name in repaired)) {
+      if (required.has(name) && schemaAllowsNull(propertySchema, root)) repaired[name] = null;
+      continue;
+    }
+    repaired[name] = repairToolInput(repaired[name], propertySchema, root);
+  }
+  return repaired;
+}
+
 function normalizeStructuredOutputText(text: string, restoreSchema: unknown): string {
   try {
     return JSON.stringify(restoreRequiredNullableFields(JSON.parse(text), restoreSchema));
@@ -548,6 +602,16 @@ function withTrailingCacheBreakpoint(messages: readonly MessageParam[]): Message
   return [...messages.slice(0, -1), { ...last, content: blocks }];
 }
 
+/** Each callable tool's declared argument schema, as Albert's Zod validation will check it. */
+function toolArgumentSchemas(request: ModelRequest): ReadonlyMap<string, unknown> {
+  const schemas = new Map<string, unknown>();
+  for (const tool of request.tools) {
+    if (tool.type === "function") schemas.set(tool.name, tool.parameters);
+  }
+  for (const handoff of request.handoffs) schemas.set(handoff.toolName, handoff.inputJsonSchema);
+  return schemas;
+}
+
 function toAnthropicTools(request: ModelRequest): Tool[] {
   const tools: Tool[] = [];
   for (const tool of request.tools) {
@@ -633,6 +697,7 @@ function requestBody(model: string, request: ModelRequest): Readonly<{
   budgetTokens: number;
   resolvedToolChoice: ToolChoice | undefined;
   schemaPolicy: AnthropicSchemaPolicy;
+  toolSchemas: ReadonlyMap<string, unknown>;
   outputRestoreSchema?: Tool.InputSchema;
 }> {
   if (request.previousResponseId || request.conversationId || request.prompt) {
@@ -698,6 +763,7 @@ function requestBody(model: string, request: ModelRequest): Readonly<{
     budgetTokens,
     resolvedToolChoice,
     schemaPolicy: schemaBudget.policy,
+    toolSchemas: toolArgumentSchemas(request),
     ...(resolvedOutput.restoreSchema ? { outputRestoreSchema: resolvedOutput.restoreSchema } : {}),
   };
 }
@@ -733,7 +799,11 @@ function toUsage(message: Message): Usage {
   });
 }
 
-function toModelOutput(message: Message, outputRestoreSchema?: Tool.InputSchema): AgentOutputItem[] {
+function toModelOutput(
+  message: Message,
+  outputRestoreSchema?: Tool.InputSchema,
+  toolSchemas: ReadonlyMap<string, unknown> = new Map(),
+): AgentOutputItem[] {
   const replay = toReplayContent(message.content);
   const marker = Object.freeze({ responseId: message.id, content: replay });
   const providerData = providerDataFor(marker);
@@ -774,7 +844,9 @@ function toModelOutput(message: Message, outputRestoreSchema?: Tool.InputSchema)
       type: "function_call",
       callId: block.id,
       name: block.name,
-      arguments: JSON.stringify(block.input),
+      // The replay marker keeps Claude's own tool_use block for the next
+      // request; only the arguments Albert validates and executes are repaired.
+      arguments: JSON.stringify(repairToolInput(block.input, toolSchemas.get(block.name))),
       status: "completed",
       providerData,
     });
@@ -849,7 +921,7 @@ export class AnthropicMessagesModel implements Model {
       ?? undefined;
     return {
       usage: toUsage(message),
-      output: toModelOutput(message, prepared.outputRestoreSchema),
+      output: toModelOutput(message, prepared.outputRestoreSchema, prepared.toolSchemas),
       responseId: message.id,
       ...(requestId ? { requestId } : {}),
       providerData: {

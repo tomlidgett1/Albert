@@ -10,12 +10,12 @@ export const filterOperatorSchema = z.enum([
 const leafFilterSchema = z.object({
   member: memberNameSchema,
   operator: filterOperatorSchema,
-  values: z.array(z.string().max(240)).max(40).nullable(),
+  values: z.array(z.string().max(240)).max(100).nullable(),
 }).strict();
 export const omniToolFilterSchema = z.object({
   member: memberNameSchema.nullable(),
   operator: filterOperatorSchema.nullable(),
-  values: z.array(z.string().max(240)).max(40).nullable(),
+  values: z.array(z.string().max(240)).max(100).nullable(),
   and: z.array(leafFilterSchema).min(1).max(10).nullable(),
   or: z.array(leafFilterSchema).min(1).max(10).nullable(),
 }).strict().superRefine((filter, context) => {

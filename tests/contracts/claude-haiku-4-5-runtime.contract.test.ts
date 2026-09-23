@@ -29,6 +29,7 @@ import {
   laneModelSettings,
 } from "../../packages/albert-v3/src/engine/lanes.ts";
 import { createV3Tools } from "../../packages/albert-v3/src/engine/tools.ts";
+import { omniQueryToolSchema, type OmniQueryToolInput } from "../../packages/albert-omni/src/tool-contracts.ts";
 import { queryPlanSchema } from "../../packages/albert-v3/src/engine/planned-lane.ts";
 import { inspectRuntimeEnvironment } from "../../packages/config/src/env.ts";
 
@@ -555,6 +556,100 @@ test("host validation rejects non-strict Haiku tool input before execution", asy
     /max turns|invalid|tool|input/iu,
   );
   assert.equal(executions, 0);
+});
+
+test("non-strict Claude tool calls get omitted nulls and serialized objects restored, never coerced values", async () => {
+  // The GenerateSemanticQuery call Haiku lost twice on the owner's workorder
+  // question (2026-09-23): the filter left out its unused `and` / `or`, which
+  // strict mode would have forced as null, so Zod rejected the whole query.
+  const omittedNulls = {
+    name: "Current prices for top workorder parts",
+    topic: "inventory_analytics",
+    query: {
+      measures: ["inventory_analytics.retail_unit_price", "inventory_analytics.average_unit_cost"],
+      dimensions: ["inventory_analytics.items_name"],
+      segments: [],
+      timeDimensions: [],
+      filters: [{ member: "inventory_analytics.items_name", operator: "equals", values: ["Gear Inner Wire - Stainless Steel, 1.2x2000mm"] }],
+      order: [{ field: "inventory_analytics.items_name", direction: "asc" }],
+      limit: 40,
+    },
+  };
+  const serializedQuery = {
+    name: "Top parts",
+    topic: "product_sales_analytics",
+    query: JSON.stringify({ measures: ["product_sales_analytics.units_sold"], dimensions: null, segments: null, timeDimensions: null, filters: null, order: null, limit: 40 }),
+  };
+  const wrongType = { ...omittedNulls, query: { ...omittedNulls.query, limit: "40" } };
+  const content = [
+    { type: "tool_use", id: "toolu_nulls", name: "GenerateSemanticQuery", input: omittedNulls },
+    { type: "tool_use", id: "toolu_serialized", name: "GenerateSemanticQuery", input: serializedQuery },
+    { type: "tool_use", id: "toolu_wrong_type", name: "GenerateSemanticQuery", input: wrongType },
+  ];
+  const bodies: MessageCreateParamsNonStreaming[] = [];
+  const provider = new AnthropicMessagesModelProvider(fakeAnthropicClient(async (body) => {
+    bodies.push(structuredClone(body));
+    return (bodies.length === 1 ? {
+      id: "msg_non_strict_repair",
+      type: "message",
+      role: "assistant",
+      model: CLAUDE_HAIKU_4_5_MODEL_ID,
+      content,
+      stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: { input_tokens: 2, output_tokens: 2 },
+    } : {
+      id: "msg_non_strict_repair_done",
+      type: "message",
+      role: "assistant",
+      model: CLAUDE_HAIKU_4_5_MODEL_ID,
+      content: [{ type: "text", text: "Done." }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 2, output_tokens: 2 },
+    }) as unknown as Message;
+  }), CLAUDE_HAIKU_4_5_MODEL_ID);
+  const executed: OmniQueryToolInput[] = [];
+  const invalid: string[] = [];
+  const generate = tool({
+    name: "GenerateSemanticQuery",
+    description: "Run one governed query.",
+    parameters: omniQueryToolSchema,
+    strict: true,
+    errorFunction: (_context, error) => {
+      invalid.push(error instanceof Error ? error.message : String(error));
+      return "invalid";
+    },
+    execute: async (input) => {
+      executed.push(input);
+      return "ok";
+    },
+  });
+  const agent = new Agent({
+    name: "Albert non-strict tool repair contract",
+    instructions: "Run the queries, then answer.",
+    model: CLAUDE_HAIKU_4_5_MODEL_ID,
+    modelSettings: { reasoning: { effort: "max" }, toolChoice: "auto" },
+    tools: [generate],
+  });
+  await new Runner({ modelProvider: provider, tracingDisabled: true })
+    .run(agent, [user("Run the fixture queries.")], { maxTurns: 3 });
+
+  // The query schema is far past Anthropic's strict-grammar budget, so Claude samples it freely.
+  assert.equal(bodies[0]!.tools?.find((entry) => entry.name === "GenerateSemanticQuery")?.strict, false);
+  assert.equal(executed.length, 2);
+  assert.deepEqual(executed[0]!.query.filters?.[0], {
+    member: "inventory_analytics.items_name",
+    operator: "equals",
+    values: ["Gear Inner Wire - Stainless Steel, 1.2x2000mm"],
+    and: null,
+    or: null,
+  });
+  assert.deepEqual(executed[1]!.query.measures, ["product_sales_analytics.units_sold"]);
+  // A wrong value type is not an encoding difference: it still fails closed.
+  assert.equal(invalid.length, 1);
+  // The next request replays Claude's own tool_use blocks untouched.
+  assert.deepEqual(bodies[1]!.messages[1], { role: "assistant", content });
 });
 
 test("redacted thinking and tool caller metadata replay without mutation", async () => {

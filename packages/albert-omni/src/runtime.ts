@@ -262,6 +262,17 @@ function extractMessageText(item: unknown): string {
     .join("");
 }
 
+/** Whether a ComposeAnswer output accepted the composition (`{"ok":true,...}`). */
+function composeAccepted(output: unknown): boolean {
+  if (typeof output !== "string") return false;
+  try {
+    const parsed: unknown = JSON.parse(output);
+    return Boolean(parsed && typeof parsed === "object" && (parsed as { ok?: unknown }).ok === true);
+  } catch {
+    return false;
+  }
+}
+
 /** Whether a tool output item reports success: JSON with ok !== false, or a plain document. */
 function toolOutputSucceeded(item: unknown): boolean {
   const record = item && typeof item === "object" ? item as { output?: unknown; rawItem?: { output?: unknown } } : {};
@@ -492,7 +503,7 @@ export async function runGovernedAnalyticalTurn(
         error: `Invalid arguments: ${detail}`,
         guidance: issues
           ? "Match the tool's parameter schema exactly (every field present, unused fields null) and call it again."
-          : "The arguments were not valid JSON for this tool's schema. The most common cause is passing an object-typed parameter (such as `query`) as a JSON string: pass it as a nested object, include every field (null when unused), and call the tool again.",
+          : "The arguments did not satisfy this tool's schema. Check them against its parameters: every field present (null when unused), object parameters such as `query` passed as objects rather than strings, member names written as fully qualified view.field, each filter in exactly one form (member + operator + values, or and, or or, with the other fields null), and every list within its limit. Then call the tool again.",
       });
     };
 
@@ -1472,6 +1483,13 @@ export async function runGovernedAnalyticalTurn(
         await emit({ type: "narrative", text: sanitizeTraceText(trimmed, 500) });
       },
       onCheckpoint: writeCheckpoint,
+      // Chat content comes only from the accepted composition, so the turn is
+      // done the moment one is accepted. A dashboard build still wants its
+      // hand-over reply.
+      ...(dashboardMode ? {} : {
+        isFinalToolResult: (toolName: string, output: unknown) =>
+          toolName === composeAnswerTool.name && acceptedAnswer !== null && composeAccepted(output),
+      }),
       ...(options.resume ? {
         resume: {
           history: options.resume.history,
@@ -1785,6 +1803,15 @@ function createSdkRunnerDriver(
         }),
     },
     tools: [...input.tools],
+    ...(input.isFinalToolResult ? {
+      // An accepted composition is the deliverable. Another model request
+      // would only write the hand-over the answer path discards, one full
+      // step (and its thinking) on every turn.
+      toolUseBehavior: (_context: unknown, results: readonly Readonly<{ type: string; tool: Readonly<{ name: string }>; output?: unknown }>[]) =>
+        results.some((result) => result.type === "function_output" && input.isFinalToolResult!(result.tool.name, result.output))
+          ? { isFinalOutput: true as const, isInterrupted: undefined, finalOutput: "" }
+          : { isFinalOutput: false as const, isInterrupted: undefined },
+    } : {}),
   });
   const runner = new Runner({
     modelProvider: createAlbertModelProvider(transport),

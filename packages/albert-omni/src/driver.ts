@@ -59,6 +59,11 @@ export type OmniAgentDriverInput = Readonly<{
   onNarrative: (text: string) => Promise<void>;
   /** Called after each completed tool result so the turn can checkpoint. */
   onCheckpoint: () => Promise<void>;
+  /**
+   * A tool result that delivers the turn (an accepted ComposeAnswer). The
+   * run ends on it rather than asking the model for a hand-over nobody reads.
+   */
+  isFinalToolResult?: (toolName: string, output: unknown) => boolean;
   resume?: OmniDriverResume;
 }>;
 

@@ -434,3 +434,36 @@ test("a header may name a window by its days but never carry a figure", () => {
   assert.equal(compose(source, { markdown: "Sales:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item", "sales"], headers: ["Product", "Margin 30"], limit: 5 }] }).ok, false);
   assert.match(text(compose(source, { markdown: "Sales:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item", "sales"], headers: ["Product", "Sep to 19"], limit: 5 }] })), /\| Product \| Sep to 19 \|/u);
 });
+
+test("a value the prose never places is dropped, an unplaced table is refused, and an unbound figure is shown in its sentence", () => {
+  // Production, September 2026: about half of all composition refusals were
+  // only "Placeholder {{x}} was defined but not used", each one a full model
+  // round trip for a value that could never reach the owner.
+  const source = evidence([{ key: "item", label: "Item name", type: "string" }, money], [{ item: "Gear inner wire", sales: 516.98 }, { item: "Brake cable", sales: 237.26 }]);
+  const spare = compose(source, { markdown: "Gear wire led with {{wire}}.", values: [value(source, "wire", "sales"), value(source, "cable", "sales", 1)] });
+  assert.equal(text(spare), "Gear wire led with $516.98.");
+  assert.ok(spare.ok);
+  assert.deepEqual(spare.answer.claims.map((claim) => claim.refs[0]?.rowIndex), [0]);
+  // A table the model defined but never placed would vanish from the answer, so it is still refused.
+  const lostTable = compose(source, { markdown: "Gear wire led with {{wire}}.", values: [value(source, "wire", "sales")], tables: [{ id: "parts", resultId: source.resultId, columnKeys: ["item", "sales"], limit: 5 }] });
+  assert.match(lostTable.ok ? "" : lostTable.issues.join(" "), /Table \{\{parts\}\} was defined but not placed/u);
+  // The refusal names the sentence, so every figure is repaired in one pass.
+  const typed = compose(source, { markdown: "Gear wire led with {{wire}}. Fourteen of the parts kept their price.", values: [value(source, "wire", "sales")] });
+  assert.match(typed.ok ? "" : typed.issues.join(" "), /Unbound figures: Fourteen \(in "Fourteen of the parts kept their price\."\)/u);
+  assert.match(typed.ok ? "" : typed.issues.join(" "), /Never swap in another count, number word or approximation/u);
+});
+
+test("a header may repeat the owner's words or the result's window, and a derived table's input years are in evidence", () => {
+  // The owner's workorder question (2026-09-23) lost two composition rounds to
+  // "Price 12 months ago" and "Units (12 weeks)", both true to the ask.
+  const question = "show me the top 40 items that sell through workorders, then show me current price, current GP margin, and the price of that item 12 months ago";
+  const source = evidence([{ key: "item", label: "Item name", type: "string" }, { key: "units", label: "Units sold (net)", type: "number" }, { key: "then", label: "Average shelf price (before discounts)", type: "currency", currency: "AUD" }],
+    [{ item: "Gear inner wire", units: 52, then: 9.99 }, { item: "Brake cable", units: 24, then: 9.99 }], semantics(["items"], "complete", { inputWindows: [JSON.stringify({ timezone: "Australia/Melbourne", ranges: [{ dateRange: ["2025-09-01", "2025-09-30"], compareDateRange: null }] })] }),
+    { provenance: { sources: [{ connector: "lightspeed", label: "Fixture", dataThrough: "2026-09-18" }], timeRange: { label: "last 12 weeks", start: "unknown", end: "unknown", timezone: "Australia/Melbourne" }, definitions: [], semanticBundleHash: "fixture", identityGraph: { version: 0, hash: "fixture" } } });
+  const table = { id: "t", resultId: source.resultId, columnKeys: ["item", "units", "then"], headers: ["Item", "Units (12 weeks)", "Price 12 months ago"], limit: 40 };
+  const answer = text(compose(source, { markdown: "Prices held against September 2025.\n\n{{t}}", tables: [table] }, { question }));
+  assert.match(answer, /\| Item \| Units \\\(12 weeks\\\) \| Price 12 months ago \|/u);
+  // A number neither the owner nor the window carries is still a figure.
+  const invented = compose(source, { markdown: "Prices held.\n\n{{t}}", tables: [{ ...table, headers: ["Item", "Units (90 days)", "Price"] }] }, { question });
+  assert.match(invented.ok ? "" : invented.issues.join(" "), /states a figure/u);
+});

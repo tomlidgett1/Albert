@@ -179,12 +179,21 @@ cubes:
         sql: unit_price
         type: number
         format: currency
-        description: Actual unit price charged on this line.
+        description: >
+          Shelf price per unit the line was rung up at, before line and
+          transaction discounts (those are recorded separately), on the same tax
+          basis as the item's list price: tax inclusive where the shop prices
+          inclusive.
+      # Lightspeed R-Series leaves normalUnitPrice at 0 on every line this
+      # connector lands (checked across June 2025 - September 2026), so the
+      # member is hidden: a model reading "the price at the time" from it
+      # reported every past price as $0.00. unit_price carries that price.
       - name: normal_unit_price
         sql: normal_unit_price
         type: number
         format: currency
-        description: The item's normal (undiscounted) unit price at the time of sale.
+        public: false
+        description: Not populated by the Lightspeed connector (always 0); unit_price is the pre-discount price at the time of sale.
       - name: displayable_unit_price
         sql: displayable_unit_price
         type: number
@@ -447,6 +456,30 @@ cubes:
         format: currency
         title: Average selling price (ex tax, after discounts)
         description: Post-discount net revenue per unit sold.
+      - name: average_shelf_price
+        type: number
+        sql: >
+          SUM(CASE WHEN {CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false
+                    AND {CUBE}.unit_quantity > 0 AND {CUBE}.unit_price > 0
+               THEN {CUBE}.unit_price * {CUBE}.unit_quantity END)
+          / NULLIF(SUM(CASE WHEN {CUBE}.effective_completed = true AND COALESCE({CUBE}.effective_voided, false) = false
+                    AND {CUBE}.unit_quantity > 0 AND {CUBE}.unit_price > 0
+               THEN {CUBE}.unit_quantity END), 0)
+        format: currency
+        title: Average shelf price (before discounts)
+        description: >
+          Unit-weighted average of the price the item was rung up at on
+          completed, non-voided sales in the period, before line and transaction
+          discounts and on the same tax basis as the list price (tax inclusive
+          where the shop prices inclusive). Return and zero-price lines are
+          left out.
+        meta:
+          ai_context: >
+            The price an item carried at a past time. For "what did it sell for a
+            year ago" or "has the price changed", query this for the earlier
+            period grouped by item and set it beside items_default_price (the
+            current list price, same basis). Never compare a list price with
+            average_selling_price, which is ex tax and after discounts.
       - name: distinct_items_sold
         type: count_distinct
         sql: item_id

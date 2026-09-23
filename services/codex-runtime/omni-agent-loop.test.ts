@@ -42,6 +42,36 @@ test("an accepted composition is delivered when the model has no redundant final
   });
 });
 
+test("an accepted composition ends the run without another model request", async (context) => {
+  // The hand-over the model writes after an accepted ComposeAnswer is never
+  // shown, yet it cost one full model request (with its thinking) per turn.
+  context.mock.method(Runner.prototype, "run", async (agent: Agent) => {
+    const behaviour = agent.toolUseBehavior;
+    assert.equal(typeof behaviour, "function");
+    const finalises = async (name: string, output: string) => {
+      const candidate = agent.tools.find((tool) => tool.name === name);
+      const outcome = await (behaviour as (context: RunContext, results: unknown[]) => Promise<{ isFinalOutput: boolean }> | { isFinalOutput: boolean })(new RunContext(), [{ type: "function_output", tool: candidate, output }]);
+      return outcome.isFinalOutput;
+    };
+    await invoke(agent, "SearchSemanticModel", { topicName: "sales_analytics", searchPattern: null });
+    const queried = JSON.parse(String(await invoke(agent, "GenerateSemanticQuery", { name: "August sales", topic: "sales_analytics", query: { measures: ["sales_analytics.gross_takings"], dimensions: null, segments: null, timeDimensions: [{ dimension: "sales_analytics.completed_at", granularity: null, dateRange: "2026-08-01 to 2026-08-31", compareDateRange: null }], filters: null, order: null, limit: null } })));
+    const rejected = String(await invoke(agent, "ComposeAnswer", { outcome: "answer", markdown: "Gross takings were $5,000.", values: [], tables: [], citedResultIds: [queried.resultId], limitations: [], followUps: [] }));
+    assert.equal(JSON.parse(rejected).ok, false);
+    assert.equal(await finalises("ComposeAnswer", rejected), false);
+    const accepted = String(await invoke(agent, "ComposeAnswer", { outcome: "answer", markdown: "Gross takings were {{sales}}.", values: [{ id: "sales", resultId: queried.resultId, rowIndex: 0, columnKey: "sales_analytics_gross_takings", format: "auto", decimals: null }], tables: [], citedResultIds: [queried.resultId], limitations: [], followUps: [] }));
+    assert.equal(JSON.parse(accepted).ok, true);
+    assert.equal(await finalises("GenerateSemanticQuery", accepted), false);
+    assert.equal(await finalises("ComposeAnswer", accepted), true);
+    return { async *[Symbol.asyncIterator]() {}, completed: Promise.resolve(), rawResponses: [], history: [], finalOutput: "" };
+  });
+  await fixture(async (turn, url) => {
+    const events: OmniTraceEventInput[] = [];
+    const result = await runOmniSemanticTurn({ turn, cubeApiUrl: url, openai: { apiKey: "synthetic-fixture", baseUrl: "https://provider.example.test" }, emit: (event) => { events.push(event); } });
+    assert.equal(result.answerState, "Verified");
+    assert.equal(events.find((event) => event.type === "answer")?.text, "Gross takings were $600.00.");
+  });
+});
+
 test("a task that only says to write the answer is settled by the answer, and an open check adds no sentence", async (context) => {
   // The model cannot tick "Compose the answer" before composing and rarely
   // comes back to tick it after; that alone used to cost a Verified answer its

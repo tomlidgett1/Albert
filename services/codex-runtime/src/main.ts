@@ -1,8 +1,17 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
+import { setSensitiveDataLoggingEnabled } from "@openai/agents";
 import { assertEmbeddedServiceBuildIdentity } from "../../../packages/config/src/build-identity.js";
 import { loadCodexRuntimeConfig } from "./config.js";
 import { CodexRuntimeHttpHandler } from "./http.js";
+
+// With tool data redacted, the Agents SDK strips the Zod issues from a tool
+// call whose arguments fail validation, so Omni's error function could only
+// tell the model (and the trail) "Invalid JSON input for tool" and the model
+// guessed at the fix, one model request per guess. The SDK writes tool data
+// only through its `debug` logger, which production never enables (DEBUG is
+// unset), so this keeps the issues without logging anything more.
+setSensitiveDataLoggingEnabled(true);
 
 const releaseSha = assertEmbeddedServiceBuildIdentity(process.env);
 const config = loadCodexRuntimeConfig();
