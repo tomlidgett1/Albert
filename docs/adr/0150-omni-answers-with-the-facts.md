@@ -71,7 +71,9 @@ The answer was thin, and it was also wrong.
    products ("the IZALCO MAX 9.7 road bike", "a Trace 20"), and the composer
    refused the number unless the whole label was quoted. A number that
    follows the capitalised words of a name is now excused when a cited label
-   carries those words and that number together; a number after ordinary
+   carries those words and that number together; the closest words decide
+   ("a Lazer Nutz 2.0" against "HELMET LAZER - NUTZ 2.0 ...") and an
+   apostrophe the label drops ("P'nut") is ignored. A number after ordinary
    words ("sold 20") is still a figure.
 6. **The seller of record is the sale's.** Checking who served the biggest
    sale showed product_sales_analytics' "seller of record" returning the
@@ -113,3 +115,20 @@ omni20 on Sol high passed 20 of 20 (median 37 s, p90 64 s, one refusal).
 Haiku alone still put a lifetime purchase count beside this year's spend
 ("$7.7k across 5 purchases", 2 of them this year). The sales view's guidance
 now says lifetime fields are all-time and how to count a period.
+
+## Deploy (2026-09-24)
+
+Cube (`albert-cube`): `nulls-last-b-20260923` (the dialect),
+`seller-of-record-20260923` (the `sale_employees` join) and
+`answer-detail-20260923` (view guidance). The first dialect deploy overrode
+only `orderHashToString` and changed nothing: Cube 1.7's default Tesseract
+planner renders ORDER BY from the dialect's `order_by` template. Each Cube
+change after that was proven in the production image before it shipped: the
+dialect rendered through both real planners, and the full model (96 files)
+compiled with the new join.
+
+Runtime `albert-codex-runtime` deployment `answer-detail-b-20260923` and web
+`dpl_Gm4QJqQ6ezEz79P5ev9hdUrhEFen`, both release acce1d1. In production on
+Haiku 4.5 high the Trace and helmet questions came back with the customer, the
+staff member and the price against list, in 49 s and 37 s, with no refused
+compositions; GPT-6 Luna high the same in 40 s and 52 s.
