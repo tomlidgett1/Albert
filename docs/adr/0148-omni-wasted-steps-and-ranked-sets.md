@@ -88,20 +88,44 @@ nothing the owner saw:
 
 ## Results
 
-Replays of the owner's question on a private runtime (Haiku 4.5 max unless
-noted), before and after:
+The owner's question, before and after. "Replay" runs are the eval harness
+(`scripts/albert-eval/run-omni.mts --question …`) against a private runtime;
+"production" runs are the same harness against `albert-codex-runtime` after the
+deploy.
 
-| Run | Time | Model requests | Invalid calls | Refusals | Answered price, margin, price a year ago |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Production turn (before) | 183 s | 18 | 2 | 3 | No |
-| Replay, before | 314 s | n/a | 1 | 7 | No |
-| Replay, adapter + prompt + early stop | 179 s | 14 | 1 | 3 | Yes |
+| Run | Model | Time | Model requests | Invalid calls | Refusals | Price, margin and price a year ago |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| Owner's production turn, before | Haiku 4.5 max | 183 s | 18 | 2 | 3 | No |
+| Replay, before | Haiku 4.5 max | 314 s | 23 | 1 | 7 | No |
+| Replay, after (new Cube) | GPT-6 Sol high | 90 s | 6 | 0 | 0 | Yes |
+| Replay, after (new Cube) | Haiku 4.5 max | 188 s | 8 | 1 | 2 | Yes |
+| **Production, after** | **Haiku 4.5 max** | **62 s** | **7** | **0** | **3** | **Yes** |
+| **Production, after** | **GPT-6 Sol high** | **76 s** | **5** | **0** | **0** | **Yes** |
 
-The final verification after the Cube deploy is recorded below.
+GPT-6 Sol ran the intended plan every time: one ranking query carrying the
+current list price and margin, one September 2025 `average_shelf_price` query
+filtered to the ranked SKUs, one DeriveResult left join, one composition.
+Haiku 4.5 at max answers every column now but stays the slower and weaker
+analyst: one replay spent 82 s thinking on a single step, its ranking window
+drifts (all time, or a one-week "12 months ago"), and its prose still types
+figures the composer sends back. Its remaining invalid call was fixed in one
+step because the model now saw the Zod issue (member names not written as
+view.field).
 
-## Deploy
+Suites: `npm run test:contracts` 1706/1709 (the one failure is the known
+`runtime-comparison-isolation` source-regex test, two skipped); the Omni,
+Claude and managed suites 223/223; `tsc` shows only the known
+`scripts/test-managed-state.mts` error.
 
-Cube (`albert-cube`) first, so the guidance and the new measure exist when the
-runtime's prompt points at them; then the runtime (`albert-codex-runtime`). The
-web app and the iMessage bridge call the runtime and need no deploy: no
-contract changed.
+## Deploy (2026-09-23)
+
+1. Cube `albert-cube:shelf-price-20260923` (previous image
+   `deployment-01M25TGAYTB2TVH31EVCSAW203`): live meta shows
+   `average_shelf_price` and no `normal_unit_price`.
+2. Runtime `albert-codex-runtime` deployment `omni-wasted-steps-20260923`,
+   release `47b7abf` (readyz confirms).
+3. Web `dpl_8nXVf54NsKDDv7cTJXjmzt3sqmXg`, aliased to albert-chi, `/api/health`
+   release `47b7abf`, `/dash` redirects to login. The web bundles the same
+   Claude adapter (the v3 path) and runs the Omni runtime in-process for
+   `/newagent`, so it ships too. No contract changed, and the iMessage bridge
+   calls the runtime over HTTP, so it needs no deploy.
