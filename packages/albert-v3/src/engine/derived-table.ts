@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import Decimal from "decimal.js";
 
 import type {
   TraceCell,
+  TraceDerivedCalculationOperator,
   TraceDerivedCellExpression,
   TraceDerivedNumericOperand,
   TraceDerivedSourceCell,
@@ -100,7 +102,13 @@ function expressionValue(
   const left = numericOperand(expression.left, sources);
   const right = numericOperand(expression.right, sources);
   if (left === null || right === null) return null;
-  switch (expression.operator) {
+  const value = calculate(expression.operator, left, right);
+  // Four decimal places, as exact arithmetic rounds a calculated cell: 0.1 + 0.2 replays as 0.3.
+  return value === null ? null : new Decimal(value).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toNumber();
+}
+
+function calculate(operator: TraceDerivedCalculationOperator, left: number, right: number): number | null {
+  switch (operator) {
     case "add": return left + right;
     case "subtract": return left - right;
     case "multiply": return left * right;

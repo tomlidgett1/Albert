@@ -453,3 +453,325 @@ test("a join sets two periods side by side, labelled by window, and adds the cha
   assert.ok(blank.ok);
   assert.equal(blank.result.rows[2]!.matched_sales, null);
 });
+
+// ---- Units, rates and keys --------------------------------------------------
+
+import { calculateValues } from "../../packages/albert-omni/src/calculate.js";
+import { formatTraceCell } from "../../app/dash/components/analytical-values.js";
+
+const categories: PivotSourceResult = {
+  resultId: "01CATG00000000000000000000",
+  topic: "Category sales",
+  columns: [
+    { key: "category_id", label: "Category ID", type: "string" },
+    { key: "revenue", label: "Revenue", type: "currency", currency: "AUD" },
+    { key: "units", label: "Units", type: "number" },
+    { key: "margin", label: "Gross margin", type: "percent", percentScale: "percent" },
+    { key: "margin_last_month", label: "Gross margin, August", type: "percent", percentScale: "percent" },
+  ],
+  rows: [
+    { category_id: "c1", revenue: "999.90", units: 10, margin: 45, margin_last_month: 40 },
+    { category_id: "c2", revenue: 480, units: 32, margin: 30, margin_last_month: 32 },
+    { category_id: "c3", revenue: 90, units: 4, margin: 0.75, margin_last_month: 0.25 },
+  ],
+  provenance: provenance("Category sales"),
+  semantics: completeSemantics("category_id", 3),
+};
+const categorySources = new Map([[categories.resultId, categories]]);
+
+/** A derived result registered as a source, as the runtime does with each DeriveResult output. */
+function asSource(resultId: string, outcome: ReturnType<typeof deriveResult>): PivotSourceResult {
+  assert.ok(outcome.ok, JSON.stringify(outcome));
+  const { columns, rows, provenance: derivedProvenance, semantics } = outcome.result;
+  return { resultId, topic: "Derived", columns, rows, provenance: derivedProvenance, semantics };
+}
+
+/** Sales lines: one product may sell on several lines. */
+const lines: PivotSourceResult = {
+  ...sold,
+  resultId: "01LNES00000000000000000000",
+  rows: [
+    { item_id: "sku-003", units_sold: 20 },
+    { item_id: "sku-003", units_sold: 11 },
+    { item_id: "sku-004", units_sold: 56 },
+  ],
+  semantics: completeSemantics("item_id", 3),
+};
+
+test("an amount over a count is money per unit; money over money and a rate over a count are plain ratios", () => {
+  const outcome = deriveResult({
+    ...base,
+    operation: "compute",
+    resultId: categories.resultId,
+    expressions: [
+      { label: "Revenue per unit", kind: "ratio", leftKey: "revenue", rightKey: "units" },
+      { label: "Revenue cover", kind: "ratio", leftKey: "revenue", rightKey: "revenue" },
+      { label: "Margin per unit", kind: "ratio", leftKey: "margin", rightKey: "units" },
+    ],
+  }, categorySources);
+  assert.ok(outcome.ok, JSON.stringify(outcome));
+  assert.deepEqual(outcome.result.columns.slice(-3), [
+    { key: "revenue_per_unit", label: "Revenue per unit", type: "currency", currency: "AUD" },
+    { key: "revenue_cover", label: "Revenue cover", type: "number" },
+    { key: "margin_per_unit", label: "Margin per unit", type: "number" },
+  ]);
+  assert.deepEqual(outcome.result.rows.map((row) => row.revenue_per_unit), [99.99, 15, 22.5]);
+});
+
+test("a change in a rate is in percentage points, and rates are never added or given a percent change", () => {
+  const moved = deriveResult({
+    ...base,
+    operation: "compute",
+    resultId: categories.resultId,
+    expressions: [
+      { label: "Margin move", kind: "difference", leftKey: "margin", rightKey: "margin_last_month" },
+      { label: "Margin change (pts)", kind: "difference", leftKey: "margin", rightKey: "margin_last_month" },
+    ],
+  }, categorySources);
+  assert.ok(moved.ok, JSON.stringify(moved));
+  // 40% to 45% is 5 points, never "5%".
+  assert.deepEqual(moved.result.columns.slice(-2), [
+    { key: "margin_move", label: "Margin move (percentage points)", type: "number" },
+    { key: "margin_change_pts", label: "Margin change (pts)", type: "number" },
+  ]);
+  assert.deepEqual(moved.result.rows.map((row) => row.margin_move), [5, -2, 0.5]);
+  assert.match(moved.result.provenance.calculations?.[0]?.formula ?? "", /percentage points$/u);
+  const { derivation } = moved.result;
+  assert.ok(derivation, moved.result.notes.join(" "));
+  const replayed = materializeDerivedTable(derivation, [{ resultId: categories.resultId, columns: categories.columns, rows: categories.rows }], "Australia/Melbourne");
+  assert.deepEqual(replayed.rows.map((row) => row.margin_move), [5, -2, 0.5]);
+
+  for (const kind of ["sum", "percent_change"] as const) {
+    const refused = deriveResult({
+      ...base,
+      operation: "compute",
+      resultId: categories.resultId,
+      expressions: [{ label: "Margin", kind, leftKey: "margin", rightKey: "margin_last_month" }],
+    }, categorySources);
+    assert.equal(refused.ok, false, kind);
+    assert.match(refused.ok ? "" : refused.guidance, kind === "sum" ? /percent_of/u : /kind difference/u);
+  }
+  // CalculateValues holds the same line for a pair of cells.
+  const id = "01KZN20VTX2EWW1TQ2AA3MCPW6";
+  const cell = (columnKey: string) => ({ resultId: id, rowIndex: 0, columnKey });
+  const growth = calculateValues({
+    caption: "Margin change",
+    calculations: [{ key: "growth", label: "Margin growth", kind: "percent_change", left: cell("margin"), right: cell("margin_last_month") }],
+  }, new Map([[id, { ...categories, resultId: id }]]));
+  assert.equal(growth.ok, false);
+  assert.match(growth.ok ? "" : growth.issues.join(" "), /difference/u);
+});
+
+test("unmatchedAsZero fills only totals and counts: a rate, a ratio or an average stays blank", () => {
+  const august: PivotSourceResult = {
+    resultId: "01AGST00000000000000000000",
+    topic: "Category sales",
+    columns: [
+      { key: "category_id", label: "Category ID", type: "string" },
+      { key: "revenue", label: "Revenue", type: "currency", currency: "AUD" },
+      { key: "units", label: "Units", type: "number" },
+      { key: "margin", label: "Gross margin", type: "percent", percentScale: "percent" },
+      { key: "average_sale", label: "Average sale", type: "currency", currency: "AUD" },
+    ],
+    rows: [{ category_id: "c1", revenue: 800, units: 8, margin: 40, average_sale: 100 }],
+    provenance: provenance("Category sales"),
+    semantics: completeSemantics("category_id", 1),
+  };
+  const both = new Map([[categories.resultId, categories], [august.resultId, august]]);
+  const joined = deriveResult({
+    ...base,
+    operation: "join",
+    resultId: categories.resultId,
+    secondResultId: august.resultId,
+    leftKey: "category_id",
+    rightKey: "category_id",
+    joinMode: "left",
+    unmatchedAsZero: true,
+    includeColumns: ["revenue", "units", "margin", "average_sale"],
+  }, both);
+  assert.ok(joined.ok, JSON.stringify(joined));
+  assert.deepEqual(joined.result.rows.map((row) => [row.matched_revenue, row.matched_units, row.matched_margin, row.average_sale]), [
+    [800, 8, 40, 100],
+    [0, 0, null, null],
+    [0, 0, null, null],
+  ]);
+  assert.match(joined.result.notes.join(" "), /2 unmatched rows read 0 for Revenue, Units\./u);
+  assert.match(joined.result.notes.join(" "), /Gross margin, Average sale stay blank/u);
+
+  // A ratio this tool derived is a rate whatever its name.
+  const yields = asSource("01YLDS00000000000000000000", deriveResult({
+    ...base,
+    operation: "compute",
+    resultId: august.resultId,
+    expressions: [{ label: "Yield", kind: "ratio", leftKey: "revenue", rightKey: "units" }],
+  }, both));
+  const withYield = deriveResult({
+    ...base,
+    operation: "join",
+    resultId: categories.resultId,
+    secondResultId: yields.resultId,
+    leftKey: "category_id",
+    rightKey: "category_id",
+    joinMode: "left",
+    unmatchedAsZero: true,
+    includeColumns: ["yield"],
+  }, new Map([...both, [yields.resultId, yields]]));
+  assert.ok(withYield.ok, JSON.stringify(withYield));
+  assert.deepEqual(withYield.result.rows.map((row) => row.yield), [100, null, null]);
+});
+
+test("aggregate will not add up or average a rate, and keeps a rate's own scale", () => {
+  for (const fn of ["sum", "avg"] as const) {
+    const refused = deriveResult({
+      ...base,
+      operation: "aggregate",
+      resultId: categories.resultId,
+      metrics: [{ valueKey: "margin", fn, label: "Margin" }],
+    }, categorySources);
+    assert.equal(refused.ok, false, fn);
+    assert.match(refused.ok ? "" : refused.guidance, /numerator and denominator/u);
+  }
+  // A ratio derived per row is a rate too.
+  const yields = asSource("01YLDA00000000000000000000", deriveResult({
+    ...base,
+    operation: "compute",
+    resultId: categories.resultId,
+    expressions: [{ label: "Yield", kind: "ratio", leftKey: "revenue", rightKey: "units" }],
+  }, categorySources));
+  const averaged = deriveResult({
+    ...base,
+    operation: "aggregate",
+    resultId: yields.resultId,
+    metrics: [{ valueKey: "yield", fn: "avg", label: "Average yield" }],
+  }, new Map([[yields.resultId, yields]]));
+  assert.equal(averaged.ok, false);
+  // The lowest and highest rate are fine, on the rate's own scale: 0.75% never reads as 75%.
+  const range = deriveResult({
+    ...base,
+    operation: "aggregate",
+    resultId: categories.resultId,
+    metrics: [{ valueKey: "margin", fn: "min", label: "Lowest margin" }, { valueKey: "margin", fn: "max", label: "Highest margin" }],
+  }, categorySources);
+  assert.ok(range.ok, JSON.stringify(range));
+  const lowest = range.result.columns.find((column) => column.key === "lowest_margin")!;
+  assert.equal(lowest.percentScale, "percent");
+  assert.equal(formatTraceCell(range.result.rows[0]!.lowest_margin ?? null, lowest), "+0.75%");
+});
+
+test("a carried column is matched_ plus its whole key, so a long measure key still compares in one call", () => {
+  const key = "product_sales_analytics_line_revenue";
+  const period = (resultId: string, window: string, values: number[]): PivotSourceResult => ({
+    resultId,
+    topic: "Product sales",
+    columns: [
+      { key: "product_id", label: "Product ID", type: "string" },
+      { key, label: "Line revenue", type: "currency", currency: "AUD" },
+    ],
+    rows: values.map((value, index) => ({ product_id: `p${index + 1}`, [key]: value })),
+    provenance: provenance("Product sales"),
+    semantics: { ...completeSemantics("product_id", values.length), window },
+  });
+  const sep = period("01SEPP00000000000000000000", "sep", [150, 80]);
+  const aug = period("01AUGP00000000000000000000", "aug", [100, 100]);
+  const periods = new Map([[sep.resultId, sep], [aug.resultId, aug]]);
+  const compare = (resultId: string, sources: ReadonlyMap<string, PivotSourceResult>, rightKey: string) => deriveResult({
+    ...base,
+    operation: "join",
+    resultId,
+    secondResultId: aug.resultId,
+    leftKey: "product_id",
+    rightKey: "product_id",
+    joinMode: "left",
+    expressions: [{ label: "Change", kind: "percent_change", leftKey: key, rightKey }],
+  }, sources);
+  const compared = compare(sep.resultId, periods, `matched_${key}`);
+  assert.ok(compared.ok, JSON.stringify(compared));
+  assert.deepEqual(compared.result.columns.map((column) => column.key), ["product_id", key, `matched_${key}`, "change"]);
+  assert.deepEqual(compared.result.rows.map((row) => row.change), [50, -20]);
+  // A left result that already has that name gets a distinct key, never a clash.
+  const again = asSource("01AGIN00000000000000000000", compared);
+  const twice = compare(again.resultId, new Map([...periods, [again.resultId, again]]), `matched_${key}_2`);
+  assert.ok(twice.ok, JSON.stringify(twice));
+  const keys = twice.result.columns.map((column) => column.key);
+  assert.equal(new Set(keys).size, keys.length);
+  assert.ok(keys.includes(`matched_${key}_2`), keys.join(", "));
+});
+
+test("an aggregate by an identifier keeps that identity, so its result can be joined", () => {
+  const bySku = deriveResult({
+    ...base,
+    operation: "aggregate",
+    resultId: lines.resultId,
+    groupBy: "item_id",
+    metrics: [{ valueKey: "units_sold", fn: "sum", label: "Units sold" }],
+  }, new Map([[lines.resultId, lines]]));
+  assert.ok(bySku.ok, JSON.stringify(bySku));
+  assert.deepEqual(bySku.result.semantics.keys, { item_id: lines.semantics!.keys.item_id });
+  const totals = asSource("01TTLS00000000000000000000", bySku);
+  const joined = deriveResult({
+    ...base,
+    operation: "join",
+    resultId: stock.resultId,
+    secondResultId: totals.resultId,
+    leftKey: "item_id",
+    rightKey: "item_id",
+    joinMode: "inner",
+  }, new Map([[stock.resultId, stock], [totals.resultId, totals]]));
+  assert.ok(joined.ok, JSON.stringify(joined));
+  assert.deepEqual(joined.result.rows.map((row) => [row.item_id, row.units_sold]), [["sku-003", 31], ["sku-004", 56]]);
+});
+
+test("an anti join needs only membership, so repeated right-hand keys are fine; a left join still refuses them", () => {
+  const withLines = new Map([[stock.resultId, stock], [lines.resultId, lines]]);
+  const never = deriveResult({
+    ...base,
+    operation: "join",
+    resultId: stock.resultId,
+    secondResultId: lines.resultId,
+    leftKey: "item_id",
+    rightKey: "item_id",
+    joinMode: "anti",
+  }, withLines);
+  assert.ok(never.ok, JSON.stringify(never));
+  assert.deepEqual(never.result.rows.map((row) => row.item_id), ["sku-001", "sku-002"]);
+  const attached = deriveResult({
+    ...base,
+    operation: "join",
+    resultId: stock.resultId,
+    secondResultId: lines.resultId,
+    leftKey: "item_id",
+    rightKey: "item_id",
+    joinMode: "left",
+  }, withLines);
+  assert.equal(attached.ok, false);
+  assert.match(attached.ok ? "" : attached.error, /duplicate join keys/u);
+});
+
+test("replayed calculations carry four decimal places, as the exact arithmetic does", () => {
+  const fractions: PivotSourceResult = {
+    resultId: "01FRCT00000000000000000000",
+    topic: "Fractions",
+    columns: [
+      { key: "day", label: "Day", type: "date" },
+      { key: "part", label: "Part", type: "number" },
+      { key: "whole", label: "Whole", type: "number" },
+    ],
+    rows: [{ day: "2026-08-28", part: 0.1, whole: 0.2 }, { day: "2026-08-29", part: 1210, whole: 3100 }],
+    provenance: provenance("Fractions"),
+    semantics: completeSemantics("day", 2, true),
+  };
+  const outcome = deriveResult({
+    ...base,
+    operation: "compute",
+    resultId: fractions.resultId,
+    expressions: [
+      { label: "Total", kind: "sum", leftKey: "part", rightKey: "whole" },
+      { label: "Share", kind: "percent_of", leftKey: "part", rightKey: "whole" },
+    ],
+  }, new Map([[fractions.resultId, fractions]]));
+  assert.ok(outcome.ok && outcome.result.derivation, JSON.stringify(outcome));
+  // 0.1 + 0.2 is 0.3, never 0.30000000000000004.
+  assert.deepEqual(outcome.result.rows.map((row) => [row.total, row.share]), [[0.3, 50], [4310, 39.0323]]);
+  const replayed = materializeDerivedTable(outcome.result.derivation, [{ resultId: fractions.resultId, columns: fractions.columns, rows: fractions.rows }], "Australia/Melbourne");
+  assert.deepEqual(replayed.rows, outcome.result.rows);
+});

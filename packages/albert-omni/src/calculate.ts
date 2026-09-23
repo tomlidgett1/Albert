@@ -25,6 +25,14 @@ export function decimalCell(value: Decimal): TraceCell {
   return Number.isFinite(numeric) && new Exact(numeric).equals(rounded) ? numeric : rounded.toFixed(4);
 }
 
+/** A move between two rates is a number of percentage points, and its label says so. */
+export function pointsLabel(label: string): string {
+  return /\b(?:points?|pts|pp)\b/iu.test(label) ? label : `${label} (percentage points)`;
+}
+
+/** A rate's change is its difference in points: a relative change of a rate reads as the move itself. */
+export const RATE_CHANGE_GUIDANCE = "Use kind difference: a rate moves in percentage points (a margin going from 40% to 45% is 5 points, not a 12.5% change).";
+
 export function calculateValues(input: CalculateValuesInput, sources: ReadonlyMap<string, PivotSourceResult>):
   | { ok: true; result: Omit<PivotSourceResult, "resultId">; notes: string[] }
   | { ok: false; issues: string[] } {
@@ -47,13 +55,14 @@ export function calculateValues(input: CalculateValuesInput, sources: ReadonlyMa
     if (!["number", "currency", "percent"].includes(lc.type) || !["number", "currency", "percent"].includes(rc.type)) { issues.push(`${calculation.key} requires numeric cells.`); continue; }
     if (lc.currency && rc.currency && lc.currency !== rc.currency) { issues.push(`${calculation.key} mixes currencies.`); continue; }
     if (["sum", "difference", "percent_change"].includes(calculation.kind) && (lc.type !== rc.type || lc.currency !== rc.currency)) { issues.push(`${calculation.key} requires matching units.`); continue; }
+    if (calculation.kind === "percent_change" && lc.type === "percent") { issues.push(`${calculation.key} is a percent change of a rate. ${RATE_CHANGE_GUIDANCE}`); continue; }
     if (["sum", "difference", "percent_change"].includes(calculation.kind) && lc.type === "percent" && (lc.percentScale ?? "percent") !== (rc.percentScale ?? "percent")) { issues.push(`${calculation.key} requires matching percentage scales.`); continue; }
     if (left.semantics?.window !== right.semantics?.window && !(["difference", "percent_change"].includes(calculation.kind) && lc.key === rc.key)) { issues.push(`${calculation.key} mixes incompatible windows. Query the same scope or compare the same metric across explicit periods.`); continue; }
     used.set(left.resultId, left); used.set(right.resultId, right);
     const percentagePoints = calculation.kind === "difference" && lc.type === "percent";
     const type = percentagePoints ? "number" : ["percent_of", "percent_change"].includes(calculation.kind) ? "percent"
       : calculation.kind === "ratio" ? (lc.type === "currency" && rc.type === "number" ? "currency" : "number") : lc.type;
-    const label = percentagePoints && !/\b(?:points?|pp)\b/iu.test(calculation.label) ? `${calculation.label} (percentage points)` : calculation.label;
+    const label = percentagePoints ? pointsLabel(calculation.label) : calculation.label;
     columns.push({ key: calculation.key, label, type, ...(type === "currency" && lc.currency ? { currency: lc.currency } : {}), ...(type === "percent" ? { percentScale: calculation.kind === "sum" ? lc.percentScale ?? "percent" : "percent" as const } : {}) });
     let value: TraceCell = null;
     try {
