@@ -185,6 +185,73 @@ test("direction said in words is not said again by a minus sign", () => {
   assert.equal(text(compose(source, { markdown: "Sales are down -{{c}}.", values: [values[0]!] })), "Sales are down 19.9%.");
 });
 
+test("a comparative after a change figure is its direction: said once, and never contradicted", () => {
+  // A live week-on-week answer read "that's -2.5% fewer transactions".
+  const source = evidence([
+    { key: "tc", label: "Transaction change", type: "percent", percentScale: "percent" },
+    { key: "rise", label: "Takings change", type: "percent", percentScale: "percent" },
+    { key: "profit", label: "Net profit", type: "currency", currency: "AUD" },
+  ], [{ tc: -2.4691, rise: 8.2, profit: -512.4 }]);
+  const values = [value(source, "tc", "tc"), value(source, "rise", "rise"), value(source, "p", "profit")];
+  assert.equal(text(compose(source, { markdown: "That's **{{tc}}** fewer transactions, and takings ran {{rise}} higher.", values })),
+    "That's **2.5%** fewer transactions, and takings ran 8.2% higher.");
+  const refused = (markdown: string) => {
+    const result = compose(source, { markdown, values });
+    return result.ok ? "" : result.issues.join(" ");
+  };
+  assert.match(refused("Takings were {{rise}} lower than last week."), /\{\{rise\}\} is a rise \(it renders "8\.2%"\), but the word after it says it fell/u);
+  assert.match(refused("There were {{tc}} more transactions."), /\{\{tc\}\} is a fall \(it renders "-2\.5%"\), but the word after it says it rose/u);
+  // A level keeps its sign: a loss "less than budget" is not a change.
+  assert.equal(text(compose(source, { markdown: "Profit came in at {{p}} less than budget.", values })), "Profit came in at -$512.40 less than budget.");
+});
+
+test("a clarification carries no figures: an answer is never shown as a question awaiting a choice", () => {
+  // A live week-on-week answer came back as outcome clarification, so the
+  // owner saw "Needs a choice" on a finished answer.
+  const source = evidence([money], [{ sales: 6719.9 }]);
+  const answered = compose(source, { outcome: "clarification", markdown: "The latest full week took {{s}}.", values: [value(source, "s", "sales")] });
+  assert.match(answered.ok ? "" : answered.issues.join(" "), /Use outcome answer when presenting data values: clarification only asks the one blocking question/u);
+  const asked = compose(source, { outcome: "clarification", markdown: "Which store do you mean, the city shop or the beach shop?", citedResultIds: [] });
+  assert.ok(asked.ok && asked.answer.state === "Clarification");
+});
+
+test("a refused outcome names the one to use instead", () => {
+  // "How were sales yesterday?" with an empty yesterday and a non-empty latest
+  // day bounced between no_data and answer two or three times.
+  const latest = evidence([money], [{ sales: 1697.25 }]);
+  const noData = compose(latest, { outcome: "no_data", markdown: "No sales were recorded yesterday; the latest day took {{s}}.", values: [value(latest, "s", "sales")] });
+  assert.match(noData.ok ? "" : noData.issues.join(" "), /To say the period asked about is empty while showing figures from another period \(such as the latest day with data\), use outcome answer, cite both, and bind those figures/u);
+  const empty = evidence([money], []);
+  const bare = compose(empty, { outcome: "answer", markdown: "No sales were recorded yesterday." });
+  assert.match(bare.ok ? "" : bare.issues.join(" "), /use outcome no_data and cite only that empty result/u);
+  assert.equal(compose(empty, { outcome: "no_data", markdown: "No sales were recorded yesterday." }).ok, true);
+});
+
+test("an answer never guesses why data is behind or when it will arrive", () => {
+  // With the Lightspeed sync stopped for four days, live answers said "hasn't
+  // synced yet", "will fill in when that syncs" and "typically completes its
+  // sync within a few hours of trading": all read as nothing being wrong.
+  const latest = evidence([money], [{ sales: 1697.25 }]);
+  const values = [value(latest, "s", "sales")];
+  const refused = (markdown: string, limitations: string[] = []) => {
+    const result = compose(latest, { markdown, values, limitations });
+    return result.ok ? "" : result.issues.join(" ");
+  };
+  assert.match(refused("**Sales data hasn't synced yet for this week.** The latest day took {{s}}."), /"hasn't synced" guesses at the data sync: Albert can see where a source's data ends, not why or when it will update/u);
+  assert.match(refused("The latest day took {{s}}; wage cost will fill in when that syncs."), /"when that syncs" guesses at the data sync/u);
+  assert.match(refused("The latest day took {{s}}. Lightspeed typically completes its sync within a few hours of trading."), /guesses at the data sync/u);
+  assert.match(refused("The latest day took {{s}}.", ["This week's floor takings haven't synced yet."]), /"haven't synced" guesses at the data sync/u);
+  for (const markdown of [
+    "Sales data stops at Saturday 19 September, when you took {{s}}.",
+    "Deputy timesheets are synced through today; the latest sales day took {{s}}.",
+    "The latest day took {{s}}. Once sales catch up to last year's pace, margin should follow.",
+  ]) assert.equal(compose(latest, { markdown, values }).ok, true, markdown);
+});
+
+test("the composer names a week bucket by its first day", () => {
+  assert.match(COMPOSE_ANSWER_INSTRUCTIONS, /the row dated 2026-09-14 is "the week of 14 September" \(Monday 14 to Sunday 20\), never "the week ending 14 September"/u);
+});
+
 test("a mark or a direction word the figure contradicts is refused, with the fix", () => {
   // Each of these shipped as Verified (audit, September 2026): the cell was
   // rendered faithfully and the words typed around it said something else.

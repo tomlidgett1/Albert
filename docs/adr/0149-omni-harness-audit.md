@@ -103,25 +103,73 @@ Deputy, including follow-up threads) on a private runtime, before and after
 every change. Times exclude queue waits; "rejections" are refused answer
 compositions and "invalid" refused tool arguments.
 
-| Run | Pass | p50 | p90 | Max | Requests | Queries | Rejections | Invalid | Input tokens per turn |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| GPT-6 Sol high, before | 20/20 | 37 s | 76 s | 85 s | 5.9 | 3.9 | 8 | 0 | 131k |
-| GPT-6 Sol high, after | 20/20 | 36 s | 74 s | 77 s | 5.5 | 3.5 | 2 | 0 | 113k |
-| Haiku 4.5 max, before | 20/20 | 75 s | 172 s | 203 s | 7.8 | 2.0 | 28 | 7 | 220k |
-| Haiku 4.5 max, after | 20/20 | 73 s | 164 s | 185 s | 7.8 | 1.8 | 25 | 8 | — |
-| Haiku 4.5 high, after | 20/20 | 55 s | 124 s | 153 s | 7.8 | 1.9 | 23 | 10 | — |
+| Run | Pass | Verified | p50 | p90 | Max | Requests | Queries | Rejections | Invalid | Input tokens per turn |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| GPT-6 Sol high, before | 20/20 | 2 | 37 s | 76 s | 85 s | 5.9 | 3.9 | 8 | 0 | 131k |
+| GPT-6 Sol high, after | 20/20 | 5 | 36 s | 74 s | 77 s | 5.5 | 3.5 | 2 | 0 | 113k |
+| Haiku 4.5 max, before | 20/20 | 5 | 75 s | 172 s | 203 s | 7.8 | 2.0 | 28 | 7 | 220k |
+| Haiku 4.5 max, after | 20/20 | 8 | 73 s | 164 s | 185 s | 7.8 | 1.8 | 25 | 8 | 192k |
+| Haiku 4.5 high, after | 20/20 | 5 | 55 s | 124 s | 153 s | 7.8 | 1.9 | 23 | 10 | 193k |
+| GPT-6 Sol high, second pass | 20/20 | 6 | 44 s | 64 s | 71 s | 5.6 | 3.9 | 2 | 0 | 114k |
+| Haiku 4.5 max, second pass | 20/20 | 6 | 62 s | 120 s | 133 s | 7.4 | 1.6 | 27 | 4 | 180k |
 
 Haiku's remaining rejections are legitimate (figures typed instead of bound,
 "no data" without an empty query); its latency is its own per-step thinking.
-Max effort buys Haiku nothing over high on this battery but about 20 s.
+At high effort Haiku passed the same 20 as at max, with three fewer answers
+Verified, and was 18 s faster at the median and 40 s faster at p90.
 GPT-6 Sol high is twice as fast as the product default (Haiku max), runs
 twice the queries, and almost never has an answer refused.
+
+The second pass (items 13 to 17 below) took Haiku max to a 62 s median and
+120 s p90, with half the invalid calls and no answer labelled as a question;
+every refusal left was an unbound figure. Sol ran slightly more queries per
+turn, checking recency and answering from the latest period that has data:
+"How many hours did my team work last week?", with timesheets ending
+12 September, went from No data to a Verified answer for the latest week.
 
 Production after the deploy (release fc2181e): the owner's workorder question
 answered in 42 s on GPT-6 Sol high with every asked column (items, revenue,
 current list price, margin, September 2025 shelf price on the same basis);
 an iMessage-channel Haiku turn answered honestly that the latest sales data is
 Saturday 19 September.
+
+## Second pass: when data stops
+
+Probing the deployed fixes with recency questions ("How were sales
+yesterday?", "How is this week tracking against last week?") while the
+Fivetran sync was stopped showed five more defects:
+
+13. **Freshness probes missed their budget whenever turns overlapped.** The
+    control-plane freshness feed is empty for Ashburton, so every turn derives
+    each source's last day from latest-date probes and waits at most 5 s.
+    Each turn fired its own 14 queries; four turns starting together each
+    waited the full 5 s and got no cutoff at all, so each spent a step finding
+    the latest day itself and the composer refused correct dates after it (a
+    lone cold turn took about 3 s). Concurrent turns now share one probe run,
+    a caller keeps every probe that landed within the budget, and Omni probes
+    only the last day (the earliest-date half serves only the business
+    profile). Four concurrent cold turns: 2.7 s, all seven cutoffs.
+14. **Answers explained a gap they cannot see.** "Lightspeed typically
+    completes its sync within a few hours of trading", "hasn't synced yet",
+    "will fill in when that syncs": with the sync stopped for four days, each
+    told the owner nothing was wrong. The prompt says to state where data
+    stops and never guess why or when; the composer refuses sync guesses,
+    because Haiku ignored the prompt rule in two of three probes.
+15. **An empty asked-for period became a question or an empty answer.** "How
+    is this week tracking?" drew "Which would you prefer?", labelled "Needs a
+    choice", or "I can't compare yet". The prompt now says to state the gap
+    first and answer with the latest period that has data, like for like; a
+    clarification carrying figures is refused; and the no_data and answer
+    refusals each name the other outcome (models bounced between them two or
+    three times).
+16. **Weeks were misnamed.** A week bucket dated 14 September was called "the
+    week ending 14 September", and Haiku compared Tuesday to Saturday
+    ("15–19 September") as last week. The prompt now spells out yesterday and
+    this and last week's dates, and the composer instructions name a week by
+    its first day.
+17. **"-2.5% fewer transactions".** A comparative after a change figure now
+    drops its minus, as a direction word before it already did, and one that
+    contradicts the figure is refused.
 
 ## Open
 

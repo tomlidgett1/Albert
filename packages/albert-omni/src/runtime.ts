@@ -422,6 +422,8 @@ export async function runGovernedAnalyticalTurn(
         activeConnectors: turn.activeConnectors.map((key) => normalizeV3Connector(key) ?? key),
         known: knownFreshness,
         signal,
+        // The prompt and the composer read only each source's last day.
+        edges: "latest",
       }).catch(() => knownFreshness),
     ]);
     const catalogue = filteredCatalogue(rawCatalogue, descriptors);

@@ -348,6 +348,26 @@ const FALLING_WORDS = /\b(?:down|fell|fallen|falling|dropped|drop|declined?|decr
 const FALLING_BY = /\b(?:down|fell|fallen|falling|dropped|declined|decreased|lower|below|behind|under|short|trailing|trails?|shrank|weaker|softer)\b[^.;:!?\n]{0,48}\bby\s+(?:about\s+|around\s+|roughly\s+|just\s+|nearly\s+)?$/iu;
 /** Prose that says a figure rose, directly before it: "up ", "a rise of ", "grew by ". */
 const RISING_WORDS = /\b(?:up|rose|risen|rising|rise|grew|grown|growing|gained|gain|increased?|higher|climbed|jumped|lifted)(?:\s+(?:by|of))?\s+(?:about\s+|around\s+|roughly\s+|just\s+|nearly\s+)?$/iu;
+/**
+ * A comparative directly after a change figure says which way it went:
+ * "{{c}} fewer transactions", "{{c}} lower than last week". Only a change
+ * figure is read this way ("{{profit}} less than budget" states a level).
+ */
+const FALLING_AFTER = /^\s*(?:fewer|less|lower|smaller|down|below|under)\b/iu;
+const RISING_AFTER = /^\s*(?:more|higher|greater|larger|bigger|up|above)\b/iu;
+/**
+ * Prose that guesses at a data sync ("hasn't synced yet", "when that syncs",
+ * "usually syncs within a few hours"). Albert sees where a source's data
+ * ends, never why or when it will move; with a sync that had in fact
+ * stopped, these told the owner all was well.
+ */
+const SYNC_GUESSES = [
+  /\b(?:[a-z]+n['’]t|not)\s+(?:(?:been|yet|fully|properly)\s+)*synced\b/iu,
+  /\byet to (?:be\s+)?synced?\b/iu,
+  /\bstill syncing\b/iu,
+  /\b(?:when|once|until|after|as soon as)\b[^.;:!?\n]{0,40}\b(?:syncs|re-?syncs|finishes syncing|is synced|has synced|gets synced)\b/iu,
+  /\bsync(?:s|ed|ing)?\b[^.;:!?\n]{0,60}\bwithin (?:a few|several|\d+) (?:hours|minutes)\b/iu,
+];
 /** A placeholder with the marks typed around it: a minus or "$" before it, a "%" or a points unit after it. */
 const PLACED_FIGURE = /(-?)(\$?)\{\{([a-z][a-z_]{0,39})\}\}(%?)(\s*(?:percentage points?|points?|pts|pp)\b)?/gu;
 const CURRENCY_MARK = /[$€£¥]|\b[A-Z]{3}\b/u;
@@ -355,6 +375,11 @@ const CURRENCY_MARK = /[$€£¥]|\b[A-Z]{3}\b/u;
 /** The words just before a placed figure, emphasis aside ("**down {{c}}**"). */
 function leadBefore(markdown: string, offset: number): string {
   return markdown.slice(Math.max(0, offset - 72), offset).replace(/\*\*/gu, "");
+}
+
+/** The words just after a placed figure, emphasis aside ("**{{c}}** fewer"). */
+function trailAfter(markdown: string, end: number): string {
+  return markdown.slice(end, end + 40).replace(/\*\*/gu, "");
 }
 
 /**
@@ -626,6 +651,13 @@ export function composeAnswer(
     if (figure.directional && negative && RISING_WORDS.test(lead)) {
       issues.push(`${placeholder} is a fall (it renders "${figure.text}"), but the word before it says it rose. Say it fell ("down ${placeholder}" drops the minus), or bind the figure that rose.`);
     }
+    const trail = trailAfter(request.markdown, match.index + match[0].length);
+    if (figure.directional && !negative && /[1-9]/u.test(figure.text) && FALLING_AFTER.test(trail)) {
+      issues.push(`${placeholder} is a rise (it renders "${figure.text}"), but the word after it says it fell. Say it rose ("${placeholder} more", "${placeholder} higher"), or bind the figure that fell.`);
+    }
+    if (figure.directional && negative && RISING_AFTER.test(trail)) {
+      issues.push(`${placeholder} is a fall (it renders "${figure.text}"), but the word after it says it rose. Say it fell ("${placeholder} fewer", "${placeholder} lower" drop the minus), or bind the figure that rose.`);
+    }
     // A hyphen that joins words or a range ("year-{{c}}", "{{low}}-{{high}}") is not a minus sign.
     if (minus && !negative && !/[\p{L}\p{N}\}%)]$/u.test(request.markdown.slice(0, match.index))) {
       issues.push(`The minus typed before ${placeholder} would show "-${figure.text}", but the figure is not negative. Remove it: a placeholder renders its own sign.`);
@@ -633,6 +665,11 @@ export function composeAnswer(
     if (dollar && !CURRENCY_MARK.test(figure.text)) issues.push(`The "$" typed before ${placeholder} would show "$${figure.text}", but the figure is not money. Remove it, or bind a currency field.`);
     if (percent && !figure.text.endsWith("%")) issues.push(`The "%" typed after ${placeholder} would show "${figure.text}%", but the figure is not a percentage. Remove it, or bind a percentage field.`);
   }
+
+  const syncGuess = [request.markdown, ...request.limitations]
+    .flatMap((part) => SYNC_GUESSES.map((pattern) => pattern.exec(part)?.[0]))
+    .find(Boolean);
+  if (syncGuess) issues.push(`"${syncGuess}" guesses at the data sync: Albert can see where a source's data ends, not why or when it will update. Say where it stops instead ("Sales data stops at Saturday 19 September").`);
 
   // Values from result cells must travel through a reference, never borrow
   // support from an unrelated equal number somewhere in the evidence pool.
@@ -713,19 +750,26 @@ export function composeAnswer(
     issues.push(`Unbound figures: ${checked.figures.slice(0, 12).map((token) => figureInContext(written, token)).join("; ")}. Bind each with a {{value_name}} or {{table_name}} reference (work out a new figure first: CalculateValues between two cells, DeriveResult across rows or results), or rewrite that sentence without it. Never swap in another count, number word or approximation ("almost half", "zero", "three"): each is checked the same way.`);
   }
   if (/\{\{|\}\}/u.test(plain)) issues.push("Malformed answer placeholder.");
-  if (request.outcome === "answer" && (!sources.length || claims.length === 0)) issues.push("An analytical answer requires cited evidence and at least one value or table reference.");
-  if (request.outcome === "no_data" && (!sources.length || sources.some((source) => source.rows.length > 0))) issues.push("No data requires an executed empty query for the requested scope.");
+  // Each of these names the other outcome: a model told only what is wrong
+  // bounced between them (two or three refusals on "how were sales yesterday"
+  // when yesterday was empty and the latest day was not).
+  if (request.outcome === "answer" && (!sources.length || claims.length === 0)) issues.push("An analytical answer requires cited evidence and at least one value or table reference. If the period asked about returned no rows and there is nothing else to show, use outcome no_data and cite only that empty result.");
+  if (request.outcome === "no_data" && (!sources.length || sources.some((source) => source.rows.length > 0))) issues.push("No data requires an executed empty query for the requested scope, and cites only empty results. To say the period asked about is empty while showing figures from another period (such as the latest day with data), use outcome answer, cite both, and bind those figures.");
   if (request.outcome === "explanation" && (values.length || request.tables.length)) issues.push("Use outcome answer when presenting data values.");
+  // A clarification is shown to the owner as a question awaiting their choice
+  // ("Needs a choice"); one carrying figures is an answer wearing that label.
+  if (request.outcome === "clarification" && (values.length || request.tables.length)) issues.push("Use outcome answer when presenting data values: clarification only asks the one blocking question, without figures. If you answered a nearby question instead, say so in the answer.");
   if (issues.length) return { ok: false, issues };
 
   // A placeholder renders with its own sign, currency symbol and percent sign;
   // a model that also types one around it would show "$$9,126" and "26.8%%",
   // and one that writes the direction in words would show "down -19.9%".
   // A points figure followed by the model's own unit ("{{m}} percentage points") keeps the model's words.
-  const resolved = request.markdown.replace(PLACED_FIGURE, (_match, minus: string, dollar: string, id: string, percent: string, unit: string | undefined, offset: number, whole: string) => {
+  const resolved = request.markdown.replace(PLACED_FIGURE, (placed: string, minus: string, dollar: string, id: string, percent: string, unit: string | undefined, offset: number, whole: string) => {
     const slot = slots.get(id)!;
     const lead = leadBefore(whole, offset);
-    const saidInWords = slot.startsWith("-") && (FALLING_WORDS.test(lead) || FALLING_BY.test(lead));
+    const saidInWords = slot.startsWith("-") && (FALLING_WORDS.test(lead) || FALLING_BY.test(lead)
+      || (Boolean(placedFigures.get(id)?.directional) && FALLING_AFTER.test(trailAfter(whole, offset + placed.length))));
     const signed = saidInWords ? slot.slice(1) : slot;
     const value = unit && signed.endsWith(" pts") ? signed.slice(0, -" pts".length) : signed;
     // A minus typed before a negative figure is its own sign said twice, even where the words say it too ("down -{{c}}").
@@ -787,9 +831,9 @@ export const COMPOSE_ANSWER_INSTRUCTIONS = `# Composing the final answer
 
 Use ComposeAnswer to deliver the answer. Its accepted content is exactly what the owner receives.
 Write the answer in markdown, replacing EVERY analytical figure with a named placeholder like {{sales}}. Define it in values using the resultId, zero-based rowIndex and exact columnKey returned by a tool. Do not type the value yourself.
-A placeholder renders complete: its own minus sign, currency symbol, thousands separators and percent sign. Write "{{sales}}" and "up {{change}}", never "\${{sales}}" or "{{change}}%". A mark or a direction word the figure contradicts is refused: "\${{units}}" on a count, "{{ratio}}%" on a plain number, "-{{change}}" or "fell {{change}}" on a rise, "up {{change}}" on a fall. format auto shows whole dollars from $1,000 up, cents below that, and one decimal on a percentage; format compact rounds for reading ($19.4k, $1.2M) and is the right choice for most amounts inside a sentence, because the table beside it carries the exact figure. Leave decimals null unless a specific precision matters. A date cell renders as the period it names (a month bucket as "Aug 2026", a week as "6 Jul", a day as "Sat 12 Sep").
+A placeholder renders complete: its own minus sign, currency symbol, thousands separators and percent sign. Write "{{sales}}" and "up {{change}}", never "\${{sales}}" or "{{change}}%". A mark or a direction word the figure contradicts is refused: "\${{units}}" on a count, "{{ratio}}%" on a plain number, "-{{change}}" or "fell {{change}}" on a rise, "up {{change}}" on a fall. format auto shows whole dollars from $1,000 up, cents below that, and one decimal on a percentage; format compact rounds for reading ($19.4k, $1.2M) and is the right choice for most amounts inside a sentence, because the table beside it carries the exact figure. Leave decimals null unless a specific precision matters. A date cell renders as the period it names (a month bucket as "Aug 2026", a week as "6 Jul", a day as "Sat 12 Sep"). A week bucket is dated by its first day, a Monday: the row dated 2026-09-14 is "the week of 14 September" (Monday 14 to Sunday 20), never "the week ending 14 September".
 Calendar dates are not figures: type a date or a day range directly, digits and all ("Sunday 13 September", "1–19 September"), whenever it falls inside the window your cited results cover or is today. That is how you name a day that has no row of its own, such as a day the store was closed. Never spell a date out in words ("the nineteenth") to avoid digits. Give the weekday only when you are sure of it; a mismatch is rejected. The article "one", a window length that comes from a field you queried ("no sale in 90 days"), and the row count of a table that shows its whole result or the head of a ranking the owner asked for ("these eight bikes", "the top three") are likewise fine to type; every other count or amount is a placeholder.
-For tables, put {{weekly_table}} in its own paragraph, alone on a line with a blank line before and after, and define it in tables with resultId, columnKeys, headers and limit. headers is one short, plain header per column key, in the same order ("Product", "Revenue", "Units", "Week"): the governed field labels are long and technical, so always supply them. A header names the column and never carries a figure; period columns of a pivot keep their own period names whatever you pass. Choose only the columnKeys that earn a place and set limit to the rows worth reading; sort orders the rows by one column first ({columnKey: "change", direction: "asc"} puts the biggest falls first), and null keeps the result's order. Do not wrap the placeholder in a Markdown table or add your own header or separator row: the server supplies the complete table. Never hand-copy or transpose a numerical table. ComposePivotTable and DeriveResult prepare new shapes before composition: a table that compares periods is presented with its change, from ComposePivotTable with change true (metrics down) or a DeriveResult percent_change column beside the two periods (named entities). The server signs a pivot's change and a percent_change column in a table, and writes a rate's change in points; cited in a sentence, a change reads with the direction in your words ("up {{takings_change}}" renders "up 12.4%", "down {{margin_change}}" renders "down 3.1 pts"). Arithmetic is never typed: CalculateValues does exact arithmetic between two result cells, including period-on-period change across two rows of a comparison query, and DeriveResult does anything across rows or results.
+For tables, put {{weekly_table}} in its own paragraph, alone on a line with a blank line before and after, and define it in tables with resultId, columnKeys, headers and limit. headers is one short, plain header per column key, in the same order ("Product", "Revenue", "Units", "Week"): the governed field labels are long and technical, so always supply them. A header names the column and never carries a figure; period columns of a pivot keep their own period names whatever you pass. Choose only the columnKeys that earn a place and set limit to the rows worth reading; sort orders the rows by one column first ({columnKey: "change", direction: "asc"} puts the biggest falls first), and null keeps the result's order. Do not wrap the placeholder in a Markdown table or add your own header or separator row: the server supplies the complete table. Never hand-copy or transpose a numerical table. ComposePivotTable and DeriveResult prepare new shapes before composition: a table that compares periods is presented with its change, from ComposePivotTable with change true (metrics down) or a DeriveResult percent_change column beside the two periods (named entities). The server signs a pivot's change and a percent_change column in a table, and writes a rate's change in points; cited in a sentence, a change reads with the direction in your words ("up {{takings_change}}" renders "up 12.4%", "down {{margin_change}}" renders "down 3.1 pts", "{{transactions_change}} fewer transactions" renders "2.5% fewer transactions"). Arithmetic is never typed: CalculateValues does exact arithmetic between two result cells, including period-on-period change across two rows of a comparison query, and DeriveResult does anything across rows or results.
 Never type an em dash; use a comma, a colon or a full stop.
 Use citedResultIds for every result that supports the conclusion.
 limitations is the answer's single footnote, shown once in small type beneath it. Give it zero to two short items, each under twenty words, and only what would change how the owner reads a figure: a proxy, a partial period, a missing source, a known data gap. Never repeat there what the body already says, and never list routine basis (currency, timezone, "completed non-voided sales") that would not mislead anyone. The harness adds its own note when a table is cut short. limitations cannot bind a figure, so never type a count or amount there. The harness decides the answer state; you cannot promote an answer to Verified.
