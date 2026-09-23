@@ -14,7 +14,8 @@
  *   npx tsx scripts/albert-eval/run-omni.mts --run smoke --ids OM-LS-01
  *   npx tsx scripts/albert-eval/run-omni.mts --run adhoc --question "How were sales last week?"
  * Options: --concurrency N (default 3), --timeout-ms (default 780000),
- *   --limit N, --resume, --fast, --model, --effort, --service-url URL.
+ *   --limit N, --resume, --fast, --model, --effort, --service-url URL,
+ *   --channel imessage (the bridge's text-message answer contract).
  *
  * Results append to evals/albert/runs/<run>/results.jsonl; raw runtime events
  * per turn go to evals/albert/runs/<run>/events/<id>.jsonl.
@@ -75,6 +76,8 @@ type Args = {
   trials: number;
   /** Which agent loop runs the turn (ADR 0141). */
   harness: "omni" | "oai-codex";
+  /** Delivery channel: "imessage" runs the iMessage answer contract the bridge uses. */
+  channel?: "imessage";
 };
 
 function parseArgs(argv: string[]): Args {
@@ -108,6 +111,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--corpus") args.corpus = next() as Args["corpus"];
     else if (a === "--trials") args.trials = Number(next());
     else if (a === "--harness") args.harness = next() as Args["harness"];
+    else if (a === "--channel") { const channel = next(); if (channel !== "imessage") throw new Error("--channel must be imessage"); args.channel = channel; }
     else throw new Error(`Unknown argument ${a}`);
   }
   if (args.harness !== "omni" && args.harness !== "oai-codex") throw new Error("--harness must be omni or oai-codex");
@@ -408,6 +412,7 @@ async function runTurnOnce(
       fastMode: args.fastMode,
       // OAI Codex (ADR 0141) runs the same turn on OpenAI's managed harness.
       ...(args.harness === "oai-codex" ? { harness: "oai-codex" as const } : {}),
+      ...(args.channel ? { channel: args.channel } : {}),
     };
     const receiveEvent = async (event: OmniTraceEventInput) => {
       const at = Date.now() - t0;

@@ -356,7 +356,14 @@ function figureInContext(text: string, token: string): string {
 export function composeAnswer(
   input: ComposeAnswerInput,
   evidence: ReadonlyMap<string, AnswerEvidence>,
-  options: Readonly<{ question: string; today: string; hadQueryFailures?: boolean; imessage?: boolean }>,
+  options: Readonly<{
+    question: string;
+    today: string;
+    hadQueryFailures?: boolean;
+    imessage?: boolean;
+    /** Each source's data cutoff for this turn (the "Data freshness" anchors the model was given). */
+    freshness?: readonly Readonly<{ dataThrough?: string | null }>[];
+  }>,
 ): Readonly<{ ok: true; answer: ComposedAnswer }> | Readonly<{ ok: false; issues: readonly string[] }> {
   const parsed = composeAnswerSchema.safeParse({
     ...input,
@@ -465,7 +472,7 @@ export function composeAnswer(
     ]);
     const headers = typed.map((column, index) => {
       const written = periods.has(column.key) ? undefined : table.headers?.[index]?.trim();
-      const figures = written?.replace(HEADER_DATE, " ").match(/\d[\d,.]*/gu) ?? [];
+      const figures = written?.replace(HEADER_DATE, " ").replace(/\b(?:12|24)[ -]?h(?:ou)?r?\b/giu, " ").match(/\d[\d,.]*/gu) ?? [];
       // A header may repeat the owner's own words ("Price 12 months ago") or
       // the window the result covers ("Units (12 weeks)"); any other number in
       // a header is a figure the cells should carry.
@@ -551,7 +558,7 @@ export function composeAnswer(
 
   // Values from result cells must travel through a reference, never borrow
   // support from an unrelated equal number somewhere in the evidence pool.
-  const plain = [request.markdown.replace(/\{\{[^}]+\}\}/gu, ""), ...request.limitations].join("\n");
+  const plain = [request.markdown.replace(/\{\{[^}]+\}\}(?::[0-5]\d\b)?/gu, ""), ...request.limitations].join("\n");
   const dateLabels = [options.today, ...sources.flatMap((source) => [source.provenance.timeRange.label, source.provenance.timeRange.start, source.provenance.timeRange.end])];
   // A derived table (a ranking joined to last year's prices) carries the
   // windows it was built from; their years are in evidence as much as its own.
@@ -563,6 +570,15 @@ export function composeAnswer(
   const todayIso = /\b(\d{4}-\d{2}-\d{2})\b/u.exec(options.today)?.[1];
   const spans: (readonly [string, string])[] = [
     ...(todayIso ? [[todayIso, todayIso] as const] : []),
+    // The prompt tells the model to name where a source's data ends and what
+    // that leaves uncovered ("sales run through 19 September, so Sunday 20
+    // September is missing"): the cutoff and the days from it to today are
+    // stated facts of this turn, not figures to bind.
+    ...(options.freshness ?? []).flatMap((entry) => {
+      const through = entry.dataThrough?.slice(0, 10);
+      if (!through || !/^\d{4}-\d{2}-\d{2}$/u.test(through)) return [];
+      return [[through, todayIso && todayIso > through ? todayIso : through] as const];
+    }),
     ...sources.flatMap((source) => [
       ...reportingRanges(source),
       ...source.columns.filter((column) => ["date", "datetime"].includes(column.type)).flatMap((column) => {

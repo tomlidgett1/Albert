@@ -481,22 +481,26 @@ export async function runGovernedAnalyticalTurn(
         ? (error as { originalError?: unknown; cause?: unknown }).originalError
           ?? (error as { cause?: unknown }).cause
         : undefined;
-      const issues = original && typeof original === "object" && Array.isArray((original as { issues?: unknown }).issues)
-        ? ((original as { issues: unknown[] }).issues as Array<{ path?: unknown; message?: unknown }>)
-          .slice(0, 6)
-          .map((issue) => `${Array.isArray(issue.path) && issue.path.length > 0 ? issue.path.join(".") : "input"}: ${typeof issue.message === "string" ? issue.message : "invalid"}`)
-          .join("; ")
+      const zodIssues = original && typeof original === "object" && Array.isArray((original as { issues?: unknown }).issues)
+        ? ((original as { issues: unknown[] }).issues as Array<{ path?: unknown; message?: unknown }>).slice(0, 6)
+        : [];
+      const issuePath = (issue: { path?: unknown }) => Array.isArray(issue.path) && issue.path.length > 0 ? issue.path.join(".") : "input";
+      const issues = zodIssues.length
+        ? zodIssues.map((issue) => `${issuePath(issue)}: ${typeof issue.message === "string" ? issue.message : "invalid"}`).join("; ")
         : original instanceof Error ? original.message : "";
       const detail = [error instanceof Error ? error.message : String(error), issues]
         .filter(Boolean)
         .join(": ")
         .slice(0, 600);
+      // The model gets every issue verbatim; the owner's trail names only the
+      // fields, never a validator's regex or a parser message.
+      const fields = [...new Set(zodIssues.map(issuePath))].slice(0, 4);
       await emit({
         type: "progress",
         status: "warning",
         stage: "query",
         label: sanitizeTraceText(`${toolLabel} call had invalid arguments`, 200),
-        detail: sanitizeTraceText(detail, 300),
+        detail: sanitizeTraceText(fields.length ? `Field${fields.length > 1 ? "s" : ""} to fix: ${fields.join(", ")}` : "The arguments did not match the tool's schema.", 300),
       });
       return JSON.stringify({
         ok: false,
@@ -1357,6 +1361,7 @@ export async function runGovernedAnalyticalTurn(
           today: todayLine,
           hadQueryFailures,
           imessage: turn.channel === "imessage",
+          freshness: connectorFreshness,
         });
         if (!result.ok) {
           await emit({ type: "validation", status: "warning", name: "Answer evidence", outcome: "failed", detail: sanitizeTraceText(result.issues.join(" "), 500) });
@@ -1548,7 +1553,7 @@ export async function runGovernedAnalyticalTurn(
               validateFinal: async (value: unknown): Promise<readonly string[]> => {
                 if (dashboardMode && !acceptedPlan) return ["Call ComposeDashboard with a valid, evidence-backed plan before finishing."];
                 const composed = composeManagedAnswer(value, new Map(evidence.map((source) => [source.resultId, source])), (alias) => references!.resolve(alias), {
-                  question: turn.message, today: todayLine, hadQueryFailures,
+                  question: turn.message, today: todayLine, hadQueryFailures, freshness: connectorFreshness,
                 });
                 if (!composed.ok) {
                   await emit({ type: "validation", status: "warning", name: "Answer evidence", outcome: "failed", detail: sanitizeTraceText(composed.issues.join(" "), 500) });

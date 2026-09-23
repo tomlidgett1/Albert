@@ -478,3 +478,23 @@ test("a part code a cited label carries is a name, not a figure; a bare number s
   const bare = compose(source, { markdown: "The cassette sold 1270 units at {{loss}}.", values: [value(source, "loss", "margin")] });
   assert.match(bare.ok ? "" : bare.issues.join(" "), /Unbound figures: 1270/u);
 });
+
+test("a source's data cutoff and the uncovered days since are statable facts, and clock formatting is not a figure", () => {
+  // The prompt requires "lead with the last date it covers"; the composer
+  // refused exactly that ("Sales data runs through 19 September") on three of
+  // twenty baseline turns, each a wasted model round trip.
+  const hour: TraceTableColumn = { key: "hour", label: "Completed hour of day", type: "number" };
+  const source = evidence([hour, money], [{ hour: 11, sales: 4210 }, { hour: 14, sales: 3900 }], semantics(["sales.completed_hour_of_day"]));
+  const today = "Today is Wednesday, 23 September 2026 (2026-09-23).";
+  const withFreshness = (markdown: string, tables: ComposeAnswerInput["tables"] = []) => composeAnswer(
+    { ...base, citedResultIds: [source.resultId], markdown, values: [value(source, "peak", "hour"), value(source, "peak_sales", "sales")], tables },
+    new Map([[source.resultId, source]]),
+    { question: "What hour is busiest?", today, freshness: [{ dataThrough: "2026-09-19" }] },
+  );
+  assert.equal(text(withFreshness("The {{peak}}:00 to {{peak}}:59 hour took {{peak_sales}}. Sales data runs through Saturday 19 September, so Sunday 20 September is missing.")),
+    "The 11:00 to 11:59 hour took $4,210. Sales data runs through Saturday 19 September, so Sunday 20 September is missing.");
+  assert.ok(withFreshness("The {{peak}} hour took {{peak_sales}}.\n\n{{t}}", [{ id: "t", resultId: source.resultId, columnKeys: ["hour", "sales"], headers: ["Hour (24h)", "Sales"], limit: 5 }]).ok);
+  // A date before the cutoff that no cited evidence covers is still a claim to bind.
+  const earlier = withFreshness("The {{peak}} hour took {{peak_sales}}, as it did on 2 August.");
+  assert.match(earlier.ok ? "" : earlier.issues.join(" "), /Unbound figures: 2/u);
+});
