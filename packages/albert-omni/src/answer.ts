@@ -588,10 +588,16 @@ export function composeAnswer(
     ...source.provenance.definitions.flatMap((definition) => [definition.metric, definition.label]),
     (source as Readonly<{ queryYaml?: unknown }>).queryYaml,
   ]).flatMap((name) => typeof name === "string" ? name.match(/\d+/gu) ?? [] : []));
+  const labelText = labels.join("\n").toLowerCase();
   const prose = scoped.text
     .replace(/(?<![\p{L}\d$£€¥.,-])(\d{1,4})(?:\s*-\s*|\s+)(?:day|week|month|year)s?\b/giu, (match, length: string) => fieldNumbers.has(length) ? " the window " : match)
     // "one soft spot", "one-off": never "twenty-one" or "one hundred".
-    .replace(/(?<![\p{L}-])one(?![\p{L}]|-(?:hundred|thousand|million|billion|and)\b|\s+(?:hundred|thousand|million|billion)\b)/giu, " ");
+    .replace(/(?<![\p{L}-])one(?![\p{L}]|-(?:hundred|thousand|million|billion|and)\b|\s+(?:hundred|thousand|million|billion)\b)/giu, " ")
+    // A model or part code ("XG-1270", "M7100", "10-33t") is part of a name when
+    // a cited label carries it, even where the answer shortens the rest of the
+    // name: "the SRAM Force XG-1270 cassette" is not the figure 1,270. A bare
+    // number is never excused this way.
+    .replace(/(?<![\p{L}\d])(?=[\p{L}\d./-]*\p{L})(?=[\p{L}\d./-]*\d)[\p{L}\d]+(?:[./-][\p{L}\d]+)*(?![\p{L}\d])/gu, (code) => labelText.includes(code.toLowerCase()) ? " code " : code);
   const unsupported = findUngroundedNumbersWithEvidence(prose, [...allowed, ...shownRowCounts], labels);
   if (unsupported.length) {
     const written = [request.markdown, ...request.limitations].join("\n");

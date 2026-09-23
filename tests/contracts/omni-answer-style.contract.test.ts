@@ -467,3 +467,14 @@ test("a header may repeat the owner's words or the result's window, and a derive
   const invented = compose(source, { markdown: "Prices held.\n\n{{t}}", tables: [{ ...table, headers: ["Item", "Units (90 days)", "Price"] }] }, { question });
   assert.match(invented.ok ? "" : invented.issues.join(" "), /states a figure/u);
 });
+
+test("a part code a cited label carries is a name, not a figure; a bare number still is", () => {
+  // "the SRAM Force XG-1270 cassette" cost the owner's workorder answer a
+  // composition round, and the rewrite then bound its margin to the wrong row.
+  const source = evidence([{ key: "item", label: "Item name", type: "string" }, { key: "margin", label: "Line gross margin %", type: "percent", percentScale: "percent" }],
+    [{ item: "SRAM Force XG-1270 Cassette - 12-Speed, 10-33t, Silver", margin: -2 }, { item: "Shimano SLX M7100 1x12S Groupset", margin: 35.3 }]);
+  const named = compose(source, { markdown: "The SRAM Force XG-1270 cassette sold at {{loss}}, while the M7100 groupset held {{slx}}.", values: [value(source, "loss", "margin"), value(source, "slx", "margin", 1)] });
+  assert.equal(text(named), "The SRAM Force XG-1270 cassette sold at -2%, while the M7100 groupset held 35.3%.");
+  const bare = compose(source, { markdown: "The cassette sold 1270 units at {{loss}}.", values: [value(source, "loss", "margin")] });
+  assert.match(bare.ok ? "" : bare.issues.join(" "), /Unbound figures: 1270/u);
+});
