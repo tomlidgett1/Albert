@@ -98,7 +98,30 @@ Quality:
 
 ## Results
 
-To be completed with the final eval batteries.
+The omni20 battery (20 production-shaped questions across Lightspeed, Xero and
+Deputy, including follow-up threads) on a private runtime, before and after
+every change. Times exclude queue waits; "rejections" are refused answer
+compositions and "invalid" refused tool arguments.
+
+| Run | Pass | p50 | p90 | Max | Requests | Queries | Rejections | Invalid | Input tokens per turn |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| GPT-6 Sol high, before | 20/20 | 37 s | 76 s | 85 s | 5.9 | 3.9 | 8 | 0 | 131k |
+| GPT-6 Sol high, after | 20/20 | 36 s | 74 s | 77 s | 5.5 | 3.5 | 2 | 0 | 113k |
+| Haiku 4.5 max, before | 20/20 | 75 s | 172 s | 203 s | 7.8 | 2.0 | 28 | 7 | 220k |
+| Haiku 4.5 max, after | 20/20 | 73 s | 164 s | 185 s | 7.8 | 1.8 | 25 | 8 | — |
+| Haiku 4.5 high, after | 20/20 | 55 s | 124 s | 153 s | 7.8 | 1.9 | 23 | 10 | — |
+
+Haiku's remaining rejections are legitimate (figures typed instead of bound,
+"no data" without an empty query); its latency is its own per-step thinking.
+Max effort buys Haiku nothing over high on this battery but about 20 s.
+GPT-6 Sol high is twice as fast as the product default (Haiku max), runs
+twice the queries, and almost never has an answer refused.
+
+Production after the deploy (release fc2181e): the owner's workorder question
+answered in 42 s on GPT-6 Sol high with every asked column (items, revenue,
+current list price, margin, September 2025 shelf price on the same basis);
+an iMessage-channel Haiku turn answered honestly that the latest sales data is
+Saturday 19 September.
 
 ## Open
 
@@ -109,5 +132,16 @@ To be completed with the final eval batteries.
 - The hourly brief runs every hour (`ALBERT_DAILY_BRIEF_REFRESH_SECONDS=3600`
   on the deployed bridge) while `deploy/fly/imessage-bridge.toml` says 86400;
   redeploying the bridge from mainline would switch it to daily.
-- The Omni product default is Claude Haiku 4.5 at max effort; see Results for
-  the comparison with GPT-6 Sol.
+- The Omni product default is Claude Haiku 4.5 at max effort
+  (`DEFAULT_OMNI_PREFERENCES`, `ALBERT_OMNI_DEFAULT_MODEL`). On the evidence
+  above GPT-6 Sol high is the faster and stronger default, and Haiku at high
+  effort is faster than at max for the same result; switching is a cost and
+  provider decision for the owner.
+
+## Deploy (2026-09-23)
+
+Runtime `albert-codex-runtime` deployment `omni-audit-20260923` and web
+`dpl_Hw5KTvjcmM6ihSXAQT7qzLuHyrJ5`, both release fc2181e. No contract or
+schema changed and no migration was needed: the failure class rides in the
+existing `result_digest` pattern. The iMessage bridge calls the runtime over
+HTTP and was not redeployed.
