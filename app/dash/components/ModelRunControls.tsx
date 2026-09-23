@@ -18,6 +18,7 @@ import {
   isAnthropicModel,
   modelSupportsFastMode,
   normalizeAgentPreferences,
+  openAiModelRequiresGlobalHost,
   reasoningEffortsForModel,
   type AgentRunPreferences,
   type AlbertModelId,
@@ -50,7 +51,7 @@ type ModelRunControlsProps = {
   popoverAlign?: "trigger-end" | "shell-start";
 };
 
-/** Highest effort first, matching OpenAI GPT-5.6 reasoning.effort. */
+/** Highest effort first, matching OpenAI reasoning.effort (GPT-6 Astra has no None). */
 const EFFORT_OPTIONS = [
   { id: "max", label: "Max" },
   { id: "xhigh", label: "XHigh" },
@@ -60,8 +61,15 @@ const EFFORT_OPTIONS = [
   { id: "none", label: "None" },
 ] as const satisfies ReadonlyArray<{ id: ReasoningEffort; label: string }>;
 
-/** Left-to-right model tabs: GPT family, then the additional providers. */
+/**
+ * Left-to-right model tabs: GPT-6, then the retired GPT-5.6 tabs the legacy
+ * runtimes still offer, then the additional providers. Each runtime shows
+ * only the models it admits.
+ */
 const MODEL_TAB_ORDER = [
+  "gpt-6-luna",
+  "gpt-6-sol",
+  "gpt-6-astra",
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
@@ -669,6 +677,10 @@ export function ModelRunControls({
               <p className={styles.modelControlsDisclosure} role="note">
                 Data is processed globally by Anthropic, not in Australia. Haiku starts at Low;
                 High and Max can take minutes. Fast mode is unavailable.
+              </p>
+            ) : openAiModelRequiresGlobalHost(value.model) ? (
+              <p className={styles.modelControlsDisclosure} role="note">
+                GPT-6 runs on OpenAI&apos;s global service, so its data is not held in Australia.
               </p>
             ) : null}
           </div>

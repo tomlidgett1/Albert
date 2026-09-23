@@ -18,8 +18,11 @@ export type CodexRuntimeConfig = Readonly<{
   pinnedCliVersion: string;
   releaseSha: string;
   deploymentId: string;
-  /** Direct Responses credentials for the Omni agent runtime (no CLI child). */
-  omniOpenAi?: Readonly<{ apiKey: string; baseUrl: string }>;
+  /**
+   * Direct Responses credentials for the Omni agent runtime (no CLI child).
+   * `globalApproved` admits GPT-6 on OpenAI's global host (ADR 0145).
+   */
+  omniOpenAi?: Readonly<{ apiKey: string; baseUrl: string; globalApproved: boolean }>;
   /** Native Anthropic Messages credentials for Omni turns on Claude models. */
   omniAnthropic?: Readonly<{ apiKey: string; baseUrl: string }>;
   /**
@@ -27,7 +30,7 @@ export type CodexRuntimeConfig = Readonly<{
    * same deployer key as Omni; the base URL may be pinned separately because
    * the managed harness is a distinct (beta) surface from Responses.
    */
-  oaiCodex?: Readonly<{ apiKey: string; baseUrl: string; retainSessions: boolean }>;
+  oaiCodex?: Readonly<{ apiKey: string; baseUrl: string; retainSessions: boolean; globalApproved: boolean }>;
   omniJobDatabaseUrl?: string;
   omniJobDirectory?: string;
   omniDurabilityRequired?: boolean;
@@ -111,6 +114,11 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
   // retention is explicitly switched on for debugging.
   const oaiCodexBaseUrl = source.ALBERT_OAI_CODEX_BASE_URL?.trim() || omniBaseUrl;
   const oaiCodexRetainSessions = source.ALBERT_OAI_CODEX_RETAIN_SESSIONS?.trim() === "true";
+  // GPT-6 is served only from OpenAI's global host (ADR 0145). In production
+  // it runs only with the explicit APP 8 cross-border approval, the same
+  // bar Claude's Anthropic processing clears.
+  const openaiGlobalApproved = source.NODE_ENV !== "production"
+    || source.ALBERT_OPENAI_GLOBAL_APP8_APPROVED === "true";
   // Claude models run Omni turns over the native Anthropic Messages API. In
   // production the credentials are honoured only with the same explicit APP 8
   // and ZDR approvals the web runtime requires for Anthropic processing.
@@ -143,11 +151,13 @@ export function loadCodexRuntimeConfig(source: NodeJS.ProcessEnv = process.env):
       omniOpenAi: Object.freeze({
         apiKey: omniApiKey,
         baseUrl: serviceUrl(omniBaseUrl, "OPENAI_BASE_URL"),
+        globalApproved: openaiGlobalApproved,
       }),
       oaiCodex: Object.freeze({
         apiKey: omniApiKey,
         baseUrl: serviceUrl(oaiCodexBaseUrl, "ALBERT_OAI_CODEX_BASE_URL"),
         retainSessions: oaiCodexRetainSessions,
+        globalApproved: openaiGlobalApproved,
       }),
     } : {}),
     ...(anthropicApiKey ? {

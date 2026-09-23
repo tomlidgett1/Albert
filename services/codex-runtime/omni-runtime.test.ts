@@ -161,6 +161,7 @@ test("Omni runtime config carries direct Responses credentials in api mode", () 
   assert.deepEqual(config.omniOpenAi, {
     apiKey: "sk-test",
     baseUrl: "https://au.api.openai.com/v1",
+    globalApproved: true,
   });
   assert.equal(config.omniAnthropic, undefined);
 });
@@ -205,7 +206,8 @@ test("Production Omni runtime honours Anthropic credentials only with APP 8 and 
   });
 });
 
-function omniHandler(credentials: Readonly<{ openai?: boolean; anthropic?: boolean }>): CodexRuntimeHttpHandler {
+function omniHandler(credentials: Readonly<{ openai?: boolean; anthropic?: boolean; openaiGlobal?: boolean }>): CodexRuntimeHttpHandler {
+  const globalApproved = credentials.openaiGlobal !== false;
   return new CodexRuntimeHttpHandler(Object.freeze({
     port: 8792,
     listenHost: "127.0.0.1" as const,
@@ -221,8 +223,8 @@ function omniHandler(credentials: Readonly<{ openai?: boolean; anthropic?: boole
     releaseSha: "development",
     deploymentId: "test",
     ...(credentials.openai ? {
-      omniOpenAi: Object.freeze({ apiKey: "sk-fixture", baseUrl: "https://au.api.openai.com/v1" }),
-      oaiCodex: Object.freeze({ apiKey: "sk-fixture", baseUrl: "https://au.api.openai.com/v1", retainSessions: false }),
+      omniOpenAi: Object.freeze({ apiKey: "sk-fixture", baseUrl: "https://au.api.openai.com/v1", globalApproved }),
+      oaiCodex: Object.freeze({ apiKey: "sk-fixture", baseUrl: "https://au.api.openai.com/v1", retainSessions: false, globalApproved }),
     } : {}),
     ...(credentials.anthropic ? {
       omniAnthropic: Object.freeze({ apiKey: "sk-ant-fixture", baseUrl: "https://api.anthropic.com" }),
@@ -458,7 +460,7 @@ test("Omni runtime config derives the OAI Codex harness credentials from the dep
     OPENAI_API_KEY: "sk-test",
     OPENAI_BASE_URL: "https://au.api.openai.com/v1",
   });
-  assert.deepEqual(config.oaiCodex, { apiKey: "sk-test", baseUrl: "https://au.api.openai.com/v1", retainSessions: false });
+  assert.deepEqual(config.oaiCodex, { apiKey: "sk-test", baseUrl: "https://au.api.openai.com/v1", retainSessions: false, globalApproved: true });
   const pinned = loadCodexRuntimeConfig({
     NODE_ENV: "test",
     ALBERT_CODEX_RUNTIME_SIGNING_SECRET: signingSecret,
@@ -468,5 +470,46 @@ test("Omni runtime config derives the OAI Codex harness credentials from the dep
     ALBERT_OAI_CODEX_BASE_URL: "https://api.openai.com/v1/",
     ALBERT_OAI_CODEX_RETAIN_SESSIONS: "true",
   });
-  assert.deepEqual(pinned.oaiCodex, { apiKey: "sk-test", baseUrl: "https://api.openai.com/v1", retainSessions: true });
+  assert.deepEqual(pinned.oaiCodex, { apiKey: "sk-test", baseUrl: "https://api.openai.com/v1", retainSessions: true, globalApproved: true });
+});
+
+test("Production Omni runtime admits GPT-6 on the global host only with the APP 8 approval", () => {
+  const productionEnvironment = {
+    NODE_ENV: "production",
+    ALBERT_CODEX_RUNTIME_SIGNING_SECRET: signingSecret,
+    ALBERT_SERVICE_VERSION: "a".repeat(40),
+    CUBE_API_URL: "https://cube.example.test",
+    OPENAI_API_KEY: "sk-test",
+    OPENAI_BASE_URL: "https://au.api.openai.com/v1",
+  } as const;
+  const unapproved = loadCodexRuntimeConfig(productionEnvironment);
+  assert.equal(unapproved.omniOpenAi?.globalApproved, false);
+  assert.equal(unapproved.oaiCodex?.globalApproved, false);
+  // The regional base URL is untouched: GPT-5.6 keeps running in Australia.
+  assert.equal(unapproved.omniOpenAi?.baseUrl, "https://au.api.openai.com/v1");
+  const approved = loadCodexRuntimeConfig({ ...productionEnvironment, ALBERT_OPENAI_GLOBAL_APP8_APPROVED: "true" });
+  assert.equal(approved.omniOpenAi?.globalApproved, true);
+  assert.equal(approved.oaiCodex?.globalApproved, true);
+  assert.equal(approved.omniOpenAi?.baseUrl, "https://au.api.openai.com/v1");
+});
+
+test("Omni jobs endpoint refuses GPT-6 without the global approval and never falls back", async () => {
+  for (const model of ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"]) {
+    for (const harness of ["omni", "oai-codex"]) {
+      const refused = await omniHandler({ openai: true, openaiGlobal: false })
+        .handle(await signedOmniRequest(JSON.stringify({ ...fixtureOmniTurn(), model, harness })));
+      assert.equal(refused.status, 503, `${model} ${harness}`);
+      const payload = await refused.json() as { error?: { code?: string; message?: string } };
+      assert.equal(payload.error?.code, "omni_unavailable");
+      assert.match(payload.error?.message ?? "", /GPT 6 models are not approved/u);
+
+      const accepted = await omniHandler({ openai: true })
+        .handle(await signedOmniRequest(JSON.stringify({ ...fixtureOmniTurn(), model, harness })));
+      assert.equal(accepted.status, 202, `${model} ${harness}`);
+    }
+  }
+  // Retired GPT-5.6 still runs on the regional host without the approval.
+  const regional = await omniHandler({ openai: true, openaiGlobal: false })
+    .handle(await signedOmniRequest(JSON.stringify({ ...fixtureOmniTurn(), model: "gpt-5.6-luna" })));
+  assert.equal(regional.status, 202);
 });

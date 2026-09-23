@@ -23,7 +23,11 @@ import {
 import { ALBERT_OMNI_DEFAULT_HARNESS, omniServiceTurnSchema, type OmniHarness, type OmniServiceTurn, type OmniSemanticTurnResult } from "../../../packages/albert-omni/src/contracts.js";
 import { runOmniSemanticTurn } from "../../../packages/albert-omni/src/runtime.js";
 import { ALBERT_OAI_CODEX_HARNESS, createOaiCodexDriver } from "../../../packages/albert-oai-codex/src/index.js";
-import { providerForModel } from "../../../packages/shared/src/agent-runtime.js";
+import {
+  OPENAI_GLOBAL_API_BASE_URL,
+  openAiModelRequiresGlobalHost,
+  providerForModel,
+} from "../../../packages/shared/src/agent-runtime.js";
 import type { AnalyticalQueryRecorder } from "../../../packages/shared/src/query-audit.js";
 import type { CodexRuntimeConfig } from "./config.js";
 
@@ -320,6 +324,15 @@ export class CodexRuntimeHttpHandler {
           ? "The OAI Codex harness is not configured on this environment."
           : "The Omni runtime is not configured on this environment.");
       }
+      // GPT-6 runs only on OpenAI's global host, and only where ADR 0145's
+      // approval is set: refuse before a job exists, never fall back.
+      const omniModel = omniParsed.data.model as (typeof ALBERT_OMNI_MODEL_IDS)[number];
+      if (
+        openAiModelRequiresGlobalHost(omniModel)
+        && !("globalApproved" in omniCredentials && omniCredentials.globalApproved)
+      ) {
+        return jsonError("omni_unavailable", 503, "GPT 6 models are not approved for production data on this Albert environment.");
+      }
       if (this.config.omniDurabilityRequired && !this.omniStore) return jsonError("omni_unavailable", 503, "The durable Omni job store is not configured.");
       this.pruneReplayIds();
       if (this.requestIds.has(omniParsed.data.requestId) || this.jobs.has(omniParsed.data.requestId)) {
@@ -614,7 +627,11 @@ export class CodexRuntimeHttpHandler {
       ...(harness === ALBERT_OAI_CODEX_HARNESS && oaiCodex ? {
         driver: createOaiCodexDriver({
           apiKey: oaiCodex.apiKey,
-          baseUrl: oaiCodex.baseUrl,
+          // GPT-6 is served only from the global host (ADR 0145); the
+          // approval was enforced when the job was submitted.
+          baseUrl: openAiModelRequiresGlobalHost(turn.model as (typeof ALBERT_OMNI_MODEL_IDS)[number])
+            ? OPENAI_GLOBAL_API_BASE_URL
+            : oaiCodex.baseUrl,
           retainSessions: oaiCodex.retainSessions,
         }),
       } : {}),

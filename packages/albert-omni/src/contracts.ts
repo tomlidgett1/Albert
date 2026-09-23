@@ -10,12 +10,20 @@ import { resultSemanticsSchema } from "../../shared/src/result-semantics.js";
 export const ALBERT_OMNI_RUNTIME = "omni-agent" as const;
 export const ALBERT_OMNI_ANALYTICAL_RUNTIME = "cube-omni-v1" as const;
 export const ALBERT_OMNI_PROTOCOL_VERSION = 1 as const;
+/**
+ * GPT-6 is the offered OpenAI family (ADR 0145). GPT-5.6 is retired from the
+ * pickers but still admitted, on the regional host, so stored preferences and
+ * the comparison views keep working.
+ */
 export const ALBERT_OMNI_MODEL_IDS = [
+  "gpt-6-luna",
+  "gpt-6-sol",
+  "gpt-6-astra",
+  CLAUDE_SONNET_5_MODEL_ID,
+  CLAUDE_HAIKU_4_5_MODEL_ID,
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
-  CLAUDE_SONNET_5_MODEL_ID,
-  CLAUDE_HAIKU_4_5_MODEL_ID,
 ] as const;
 /**
  * The agent loops that can drive an Omni-style turn (ADR 0141): the

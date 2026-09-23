@@ -17,6 +17,7 @@ import {
   isAnthropicModel,
   isXaiModel,
   normalizeAgentPreferences,
+  upgradeRetiredGptPreferences,
   type AgentRunPreferences,
   type AlbertModelId,
   type ReasoningEffort,
@@ -232,21 +233,22 @@ const CODEX_MODEL_IDS = Object.freeze([
   "gpt-5.6-terra",
   "gpt-5.6-sol",
 ] as const satisfies readonly AlbertModelId[]);
+/** Omni offers GPT-6 (global host, ADR 0145) and Claude; GPT-5.6 is retired here. */
 const OMNI_MODEL_IDS = Object.freeze([
-  "gpt-5.6-luna",
-  "gpt-5.6-terra",
-  "gpt-5.6-sol",
+  "gpt-6-luna",
+  "gpt-6-sol",
+  "gpt-6-astra",
   CLAUDE_SONNET_5_MODEL_ID,
   CLAUDE_HAIKU_4_5_MODEL_ID,
 ] as const satisfies readonly AlbertModelId[]);
 /** OAI Codex runs OpenAI's managed Codex harness, so OpenAI models only (ADR 0141). */
 const OAI_CODEX_MODEL_IDS = Object.freeze([
-  "gpt-5.6-luna",
-  "gpt-5.6-terra",
-  "gpt-5.6-sol",
+  "gpt-6-luna",
+  "gpt-6-sol",
+  "gpt-6-astra",
 ] as const satisfies readonly AlbertModelId[]);
 const DEFAULT_OAI_CODEX_PREFERENCES: AgentRunPreferences = Object.freeze({
-  model: "gpt-5.6-luna",
+  model: "gpt-6-luna",
   reasoningEffort: "max",
   fastMode: false,
 });
@@ -2050,6 +2052,10 @@ export default function DashPage() {
       restoredPreferences = normalizeAgentPreferences(turn.runtime_profile);
     }
     if (restored.length === 0) return null;
+    // A follow-up in an older Omni analysis continues on GPT-6 (ADR 0145).
+    if (isOmniStyleRuntime(restoredRuntime)) {
+      restoredPreferences = upgradeRetiredGptPreferences(restoredPreferences);
+    }
     return {
       messages: restored,
       preferences: restoredPreferences,

@@ -11,10 +11,47 @@ export type AlbertModelProvider = (typeof ALBERT_MODEL_PROVIDERS)[number];
 
 export const XAI_API_BASE_URL = "https://api.x.ai/v1";
 export const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com";
+/**
+ * OpenAI's global API host. GPT-6 is served only here: the Australian
+ * data-residency endpoint answers `401 incorrect_hostname` for every GPT-6
+ * model (verified 2026-09-23). ADR 0145 admits GPT-6 on this host under an
+ * explicit cross-border approval, as Claude runs under APP 8 and ZDR.
+ */
+export const OPENAI_GLOBAL_API_BASE_URL = "https://api.openai.com/v1";
 export const CLAUDE_HAIKU_4_5_MODEL_ID = "claude-haiku-4-5-20251001";
 export const CLAUDE_SONNET_5_MODEL_ID = "claude-sonnet-5";
 
+/**
+ * GPT-6 (Astra, Sol, Luna) is the current OpenAI family. GPT-5.6 is retired
+ * from every model picker (ADR 0145) but stays admitted, on the regional
+ * host, so stored preferences, the legacy runtimes and the labels of past
+ * turns keep working.
+ */
 export const ALBERT_MODELS = [
+  {
+    id: "gpt-6-astra",
+    label: "GPT 6 Astra",
+    shortLabel: "Astra",
+    description: "Most capable",
+    tier: "frontier",
+    provider: "openai",
+  },
+  {
+    id: "gpt-6-sol",
+    label: "GPT 6 Sol",
+    shortLabel: "Sol",
+    description: "Best balance",
+    tier: "balanced",
+    provider: "openai",
+  },
+  {
+    id: "gpt-6-luna",
+    label: "GPT 6 Luna",
+    shortLabel: "Luna",
+    description: "Most efficient",
+    tier: "efficient",
+    provider: "openai",
+  },
   {
     id: "gpt-5.6-sol",
     label: "GPT 5.6 Sol",
@@ -90,6 +127,15 @@ export const GROK_REASONING_EFFORTS = [
 ] as const satisfies readonly ReasoningEffort[];
 
 export type GrokReasoningEffort = (typeof GROK_REASONING_EFFORTS)[number];
+
+/** GPT-6 Astra rejects `none`; its reasoning always runs (verified 2026-09-23). */
+export const GPT_6_ASTRA_REASONING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const satisfies readonly ReasoningEffort[];
 
 /**
  * Haiku 4.5 predates Anthropic's `output_config.effort` control. Albert maps
@@ -199,6 +245,23 @@ export function isAnthropicModel(id: AlbertModelId): boolean {
   return providerForModel(id) === "anthropic";
 }
 
+/** GPT-6 runs only on OpenAI's global host, never the regional one (ADR 0145). */
+export function openAiModelRequiresGlobalHost(id: AlbertModelId): boolean {
+  return id === "gpt-6-astra" || id === "gpt-6-sol" || id === "gpt-6-luna";
+}
+
+/**
+ * The GPT-6 model that replaced a retired GPT-5.6 one, tier for tier (ADR
+ * 0145): Sol (most capable) became Astra, Terra (balance) became Sol, Luna
+ * stayed Luna. Every other model is its own successor.
+ */
+export function currentGptModel(id: AlbertModelId): AlbertModelId {
+  if (id === "gpt-5.6-sol") return "gpt-6-astra";
+  if (id === "gpt-5.6-terra") return "gpt-6-sol";
+  if (id === "gpt-5.6-luna") return "gpt-6-luna";
+  return id;
+}
+
 export function modelSupportsFastMode(id: AlbertModelId): boolean {
   return !isAnthropicModel(id);
 }
@@ -215,22 +278,40 @@ export function serviceTierForPreferences(
 }
 
 export function reasoningEffortsForModel(id: AlbertModelId): readonly ReasoningEffort[] {
-  return isXaiModel(id) ? GROK_REASONING_EFFORTS : REASONING_EFFORTS;
+  if (isXaiModel(id)) return GROK_REASONING_EFFORTS;
+  if (id === "gpt-6-astra") return GPT_6_ASTRA_REASONING_EFFORTS;
+  return REASONING_EFFORTS;
 }
 
 /**
  * Maps Albert's shared effort control onto the values the selected provider
  * accepts. Grok 4.6 has no `none` or `max`; those clamp to `low` and `xhigh`.
+ * GPT-6 Astra has no `none`; it clamps to `low`.
  */
 export function clampReasoningEffort(
   model: AlbertModelId,
   effort: ReasoningEffort,
 ): ReasoningEffort {
+  if (model === "gpt-6-astra") return effort === "none" ? "low" : effort;
   if (!isXaiModel(model)) return effort;
   if (effort === "none") return "low";
   if (effort === "max") return "xhigh";
   if (grokReasoningEfforts.has(effort)) return effort;
   return "high";
+}
+
+/**
+ * Moves preferences saved on a retired GPT-5.6 model to its GPT-6 successor,
+ * keeping the effort where the new model allows it.
+ */
+export function upgradeRetiredGptPreferences(preferences: AgentRunPreferences): AgentRunPreferences {
+  const model = currentGptModel(preferences.model);
+  if (model === preferences.model) return preferences;
+  return Object.freeze({
+    ...preferences,
+    model,
+    reasoningEffort: clampReasoningEffort(model, preferences.reasoningEffort),
+  });
 }
 
 export type ResolvedAlbertModelTransport = Readonly<{
@@ -241,14 +322,18 @@ export type ResolvedAlbertModelTransport = Readonly<{
 }>;
 
 /**
- * Resolves the native endpoint for the selected model. GPT profiles stay on
- * the configured OpenAI base URL, Grok 4.6 uses xAI Responses, and Haiku uses
- * Anthropic Messages. Provider credentials are never reused across hosts.
+ * Resolves the native endpoint for the selected model. GPT-5.6 stays on the
+ * configured OpenAI base URL (the Australian endpoint in production), GPT-6
+ * uses OpenAI's global host only when the caller carries the explicit
+ * approval ADR 0145 requires, Grok 4.6 uses xAI Responses, and Claude uses
+ * Anthropic Messages. Provider credentials are never reused across providers.
  */
 export function resolveAlbertModelTransport(input: Readonly<{
   model: AlbertModelId;
   openaiApiKey?: string;
   openaiBaseUrl?: string;
+  /** ADR 0145: the environment approves OpenAI processing on the global host. */
+  openaiGlobalApproved?: boolean;
   xaiApiKey?: string;
   xaiBaseUrl?: string;
   anthropicApiKey?: string;
@@ -285,6 +370,19 @@ export function resolveAlbertModelTransport(input: Readonly<{
   const apiKey = input.openaiApiKey?.trim() ?? "";
   if (!apiKey) {
     throw new Error("The OpenAI conversation runtime is not fully configured.");
+  }
+  if (openAiModelRequiresGlobalHost(input.model)) {
+    // Never falls back to the regional host: GPT-6 is not served there, and
+    // an environment without the approval refuses the model outright.
+    if (!input.openaiGlobalApproved) {
+      throw new Error(`${albertModelById(input.model).label} is not approved on this Albert environment.`);
+    }
+    return Object.freeze({
+      provider: "openai",
+      model: input.model,
+      apiKey,
+      baseUrl: OPENAI_GLOBAL_API_BASE_URL,
+    });
   }
   const baseUrl = (input.openaiBaseUrl?.trim() || "https://api.openai.com/v1").replace(/\/+$/u, "");
   return Object.freeze({

@@ -67,6 +67,9 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
   assert.deepEqual(
     shared.ALBERT_MODELS.map(({ id }) => id),
     [
+      "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -177,6 +180,65 @@ test("server model policy normalizes untrusted preferences to the allowlist", ()
       baseUrl: "https://api.anthropic.com",
     },
   );
+});
+
+test("GPT-6 runs only on OpenAI's global host and only with the explicit approval", () => {
+  for (const model of ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) {
+    assert.equal(shared.providerForModel(model), "openai");
+    assert.equal(shared.openAiModelRequiresGlobalHost(model), true);
+    // Never silently rerouted to the regional host, approved or not.
+    assert.throws(
+      () => shared.resolveAlbertModelTransport({
+        model,
+        openaiApiKey: "sk-test",
+        openaiBaseUrl: "https://au.api.openai.com/v1",
+      }),
+      /not approved on this Albert environment/u,
+    );
+    assert.deepEqual(
+      shared.resolveAlbertModelTransport({
+        model,
+        openaiApiKey: "sk-test",
+        openaiBaseUrl: "https://au.api.openai.com/v1",
+        openaiGlobalApproved: true,
+      }),
+      { provider: "openai", model, apiKey: "sk-test", baseUrl: "https://api.openai.com/v1" },
+    );
+  }
+  // Retired GPT-5.6 keeps the configured (regional) host.
+  assert.equal(shared.openAiModelRequiresGlobalHost("gpt-5.6-luna"), false);
+  assert.deepEqual(
+    shared.resolveAlbertModelTransport({
+      model: "gpt-5.6-luna",
+      openaiApiKey: "sk-test",
+      openaiBaseUrl: "https://au.api.openai.com/v1/",
+      openaiGlobalApproved: true,
+    }),
+    { provider: "openai", model: "gpt-5.6-luna", apiKey: "sk-test", baseUrl: "https://au.api.openai.com/v1" },
+  );
+});
+
+test("GPT-6 Astra refuses None and retired GPT-5.6 preferences move up a generation", () => {
+  assert.deepEqual(shared.reasoningEffortsForModel("gpt-6-astra"), ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(shared.reasoningEffortsForModel("gpt-6-sol"), shared.REASONING_EFFORTS);
+  assert.deepEqual(
+    shared.normalizeAgentPreferences({ model: "gpt-6-astra", reasoningEffort: "none", fastMode: true }),
+    { model: "gpt-6-astra", reasoningEffort: "low", fastMode: true },
+  );
+  assert.deepEqual(
+    shared.normalizeAgentPreferences({ model: "gpt-6-luna", reasoningEffort: "none", fastMode: true }),
+    { model: "gpt-6-luna", reasoningEffort: "none", fastMode: true },
+  );
+  assert.equal(shared.currentGptModel("gpt-5.6-sol"), "gpt-6-astra");
+  assert.equal(shared.currentGptModel("gpt-5.6-terra"), "gpt-6-sol");
+  assert.equal(shared.currentGptModel("gpt-5.6-luna"), "gpt-6-luna");
+  assert.equal(shared.currentGptModel("claude-haiku-4-5-20251001"), "claude-haiku-4-5-20251001");
+  assert.deepEqual(
+    shared.upgradeRetiredGptPreferences({ model: "gpt-5.6-sol", reasoningEffort: "none", fastMode: true }),
+    { model: "gpt-6-astra", reasoningEffort: "low", fastMode: true },
+  );
+  const current = Object.freeze({ model: "gpt-6-sol", reasoningEffort: "high", fastMode: false });
+  assert.equal(shared.upgradeRetiredGptPreferences(current), current);
 });
 
 test("Fast mode remains independent where the selected provider supports it", () => {

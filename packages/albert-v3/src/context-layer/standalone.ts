@@ -26,6 +26,8 @@ export async function runStandaloneBusinessContextRefresh(input: Readonly<{
   cubeApiSecret: string;
   openaiApiKey: string;
   openaiBaseUrl?: string;
+  /** ADR 0145: GPT-6 may run on OpenAI's global host. */
+  openaiGlobalApproved?: boolean;
   xaiApiKey?: string;
   xaiBaseUrl?: string;
   anthropicApiKey?: string;
@@ -47,6 +49,7 @@ export async function runStandaloneBusinessContextRefresh(input: Readonly<{
     model: input.preferences.model,
     openaiApiKey: input.openaiApiKey,
     openaiBaseUrl: input.openaiBaseUrl,
+    openaiGlobalApproved: input.openaiGlobalApproved === true,
     xaiApiKey: input.xaiApiKey,
     xaiBaseUrl: input.xaiBaseUrl,
     anthropicApiKey: input.anthropicApiKey,

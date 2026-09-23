@@ -36,7 +36,13 @@ import {
   detectCodexSocialMessage,
 } from "@/packages/albert-codex/src";
 import { signCubeJwt } from "@/packages/albert-v3/src/cube/jwt";
-import { isAnthropicModel, normalizeAgentPreferences, providerForModel, type AgentRunPreferences } from "@/packages/shared/src";
+import {
+  isAnthropicModel,
+  normalizeAgentPreferences,
+  openAiModelRequiresGlobalHost,
+  providerForModel,
+  type AgentRunPreferences,
+} from "@/packages/shared/src";
 import {
   correlationIdFromHeader,
   createServiceLogger,
@@ -117,7 +123,7 @@ export const OMNI_ROUTE_PROFILE: OmniHarnessRouteProfile = Object.freeze({
   analyticalRuntime: ALBERT_OMNI_ANALYTICAL_RUNTIME,
   runtimeHeader: "omni",
   modelIds: ALBERT_OMNI_MODEL_IDS,
-  unsupportedModelMessage: "Omni supports GPT-5.6 Luna, Terra, Sol, Claude Sonnet 5, and Claude Haiku 4.5 only.",
+  unsupportedModelMessage: "Omni supports GPT-6 Luna, Sol, Astra, Claude Sonnet 5, and Claude Haiku 4.5 only.",
   defaultPreferences: Object.freeze({
     model: ALBERT_OMNI_DEFAULT_MODEL,
     reasoningEffort: ALBERT_OMNI_DEFAULT_EFFORT,
@@ -136,7 +142,7 @@ export const OAI_CODEX_ROUTE_PROFILE: OmniHarnessRouteProfile = Object.freeze({
   analyticalRuntime: ALBERT_OAI_CODEX_ANALYTICAL_RUNTIME,
   runtimeHeader: ALBERT_OAI_CODEX_RUNTIME_HEADER,
   modelIds: ALBERT_OAI_CODEX_MODEL_IDS,
-  unsupportedModelMessage: "OAI Codex supports GPT-5.6 Luna, Terra and Sol only.",
+  unsupportedModelMessage: "OAI Codex supports GPT-6 Luna, Sol and Astra only.",
   defaultPreferences: Object.freeze({
     model: ALBERT_OAI_CODEX_DEFAULT_MODEL,
     reasoningEffort: ALBERT_OAI_CODEX_DEFAULT_EFFORT,
@@ -240,6 +246,19 @@ export async function handleOmniHarnessConversation(
   ) {
     return jsonError(
       "Claude models are not approved for production data on this Albert environment.",
+      503,
+      correlationId,
+    );
+  }
+  // GPT-6 is served only from OpenAI's global host (ADR 0145), so it needs
+  // the same explicit cross-border approval before production data reaches it.
+  if (
+    openAiModelRequiresGlobalHost(preferences.model)
+    && process.env.NODE_ENV === "production"
+    && process.env.ALBERT_OPENAI_GLOBAL_APP8_APPROVED !== "true"
+  ) {
+    return jsonError(
+      "GPT 6 models are not approved for production data on this Albert environment.",
       503,
       correlationId,
     );

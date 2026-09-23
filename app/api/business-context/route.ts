@@ -168,6 +168,9 @@ export async function POST(request: Request): Promise<Response> {
         cubeApiSecret,
         openaiApiKey,
         openaiBaseUrl: process.env.OPENAI_BASE_URL || undefined,
+        // GPT-6 runs on OpenAI's global host only with ADR 0145's approval.
+        openaiGlobalApproved: process.env.NODE_ENV !== "production"
+          || process.env.ALBERT_OPENAI_GLOBAL_APP8_APPROVED === "true",
         xaiApiKey: process.env.XAI_API_KEY || undefined,
         xaiBaseUrl: process.env.XAI_BASE_URL || undefined,
         anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,

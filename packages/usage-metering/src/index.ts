@@ -30,6 +30,35 @@ export const OPENAI_GPT_5_6_RATE_CARD = Object.freeze({
 } as const);
 
 /**
+ * OpenAI GPT-6 standard rates (2026-09-23). GPT-6 is served only from
+ * OpenAI's global host (ADR 0145), so there is no regional-processing uplift.
+ * Cache writes are 1.25x input, Fast is 2x, and prompts over 272K input tokens
+ * price at 2x input and 1.5x output for the whole request.
+ */
+export const OPENAI_GPT_6_RATE_CARD = Object.freeze({
+  id: "openai-gpt-6-global-2026-09-23",
+  effectiveAt: "2026-09-23T00:00:00.000Z",
+  source: "https://developers.openai.com/api/docs/pricing",
+  dataResidencyRegion: "global",
+  longContextThresholdInputTokens: 272_000,
+  models: Object.freeze({
+    "gpt-6-astra": Object.freeze({ input: 10_000n, cachedInput: 1_000n, output: 50_000n }),
+    "gpt-6-sol": Object.freeze({ input: 2_000n, cachedInput: 200n, output: 10_000n }),
+    "gpt-6-luna": Object.freeze({ input: 100n, cachedInput: 10n, output: 500n }),
+  }),
+  cacheWriteInputNumerator: 5n,
+  cacheWriteInputDenominator: 4n,
+  fastModeNumerator: 2n,
+  fastModeDenominator: 1n,
+  longContextInputNumerator: 2n,
+  longContextInputDenominator: 1n,
+  longContextOutputNumerator: 3n,
+  longContextOutputDenominator: 2n,
+  regionalProcessingNumerator: 1n,
+  regionalProcessingDenominator: 1n,
+} as const);
+
+/**
  * Official xAI Grok 4.6 rate card. Cached input is $0.50 / 1M below 200k
  * prompt tokens and $1.00 / 1M at or above that threshold. There is no
  * Australian residency uplift. Fast maps to xAI Priority Processing at 2x.
@@ -174,6 +203,9 @@ function multiplyRatio(value: bigint, numerator: bigint, denominator: bigint): b
 function rateCardFor(model: AlbertModelId) {
   if (model === "grok-4.6") return XAI_GROK_4_6_RATE_CARD;
   if (model === "claude-haiku-4-5-20251001") return ANTHROPIC_HAIKU_4_5_RATE_CARD;
+  if (model === "gpt-6-astra" || model === "gpt-6-sol" || model === "gpt-6-luna") {
+    return OPENAI_GPT_6_RATE_CARD;
+  }
   return OPENAI_GPT_5_6_RATE_CARD;
 }
 
@@ -181,6 +213,9 @@ function tokenRatesFor(model: AlbertModelId) {
   if (model === "grok-4.6") return XAI_GROK_4_6_RATE_CARD.models["grok-4.6"];
   if (model === "claude-haiku-4-5-20251001") {
     return ANTHROPIC_HAIKU_4_5_RATE_CARD.models["claude-haiku-4-5-20251001"];
+  }
+  if (model === "gpt-6-astra" || model === "gpt-6-sol" || model === "gpt-6-luna") {
+    return OPENAI_GPT_6_RATE_CARD.models[model];
   }
   if (model === "gpt-5.6-sol" || model === "gpt-5.6-terra" || model === "gpt-5.6-luna") {
     return OPENAI_GPT_5_6_RATE_CARD.models[model];

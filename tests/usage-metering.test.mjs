@@ -4,6 +4,7 @@ import {
   ANTHROPIC_HAIKU_4_5_RATE_CARD,
   meterOpenAIUsage,
   OPENAI_GPT_5_6_RATE_CARD,
+  OPENAI_GPT_6_RATE_CARD,
   toModelUsageRpcPayload,
   XAI_GROK_4_6_RATE_CARD,
 } from "../packages/usage-metering/src/index.ts";
@@ -94,6 +95,44 @@ test("uses the published Terra and Luna short-context rate card", () => {
   // $0.02 input + $0.012 output, plus the 10% AU data-residency uplift.
   assert.equal(luna.estimatedCostUsdMicros, 35_200);
   assert.equal(OPENAI_GPT_5_6_RATE_CARD.source, "https://developers.openai.com/api/docs/pricing");
+});
+
+test("meters GPT-6 on its global rate card without the AU uplift", () => {
+  const sol = meterOpenAIUsage({
+    model: "gpt-6-sol",
+    fastMode: true,
+    usage: {
+      requests: 1,
+      inputTokens: 1_000,
+      outputTokens: 100,
+      totalTokens: 1_100,
+      requestUsageEntries: [{
+        inputTokens: 1_000,
+        outputTokens: 100,
+        inputTokensDetails: { cached_tokens: 200, cache_write_tokens: 100 },
+      }],
+    },
+  });
+  // Standard cost is 2,690µ and Fast is 2x; the global host adds no uplift.
+  assert.equal(sol.estimatedCostUsdMicros, 5_380);
+  assert.equal(sol.rateCardId, OPENAI_GPT_6_RATE_CARD.id);
+
+  const luna = meterOpenAIUsage({
+    model: "gpt-6-luna",
+    fastMode: false,
+    usage: { requests: 1, inputTokens: 100_000, outputTokens: 10_000, totalTokens: 110_000 },
+  });
+  // $0.01 input + $0.005 output.
+  assert.equal(luna.estimatedCostUsdMicros, 15_000);
+
+  const astra = meterOpenAIUsage({
+    model: "gpt-6-astra",
+    fastMode: false,
+    usage: { requests: 1, inputTokens: 1_000, outputTokens: 100, totalTokens: 1_100 },
+  });
+  // $0.01 input + $0.005 output.
+  assert.equal(astra.estimatedCostUsdMicros, 15_000);
+  assert.equal(OPENAI_GPT_6_RATE_CARD.dataResidencyRegion, "global");
 });
 
 test("rejects usage details that cannot reconcile", () => {

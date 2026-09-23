@@ -101,8 +101,11 @@ export type EmitOmniTrace = (event: OmniTraceEventInput) => unknown | Promise<un
 export type OmniSemanticTurnOptions = Readonly<{
   turn: OmniServiceTurn;
   cubeApiUrl: string;
-  /** Present when this environment can run OpenAI-provider Omni models. */
-  openai?: Readonly<{ apiKey: string; baseUrl: string }>;
+  /**
+   * Present when this environment can run OpenAI-provider Omni models.
+   * `globalApproved` admits GPT-6 on OpenAI's global host (ADR 0145).
+   */
+  openai?: Readonly<{ apiKey: string; baseUrl: string; globalApproved?: boolean }>;
   /** Present when this environment can run Anthropic-provider Omni models. */
   anthropic?: Readonly<{ apiKey: string; baseUrl: string }>;
   signal?: AbortSignal;
@@ -1729,7 +1732,7 @@ export async function runGovernedAnalyticalTurn(
 function createSdkRunnerDriver(
   input: OmniAgentDriverInput,
   credentials: Readonly<{
-    openai?: Readonly<{ apiKey: string; baseUrl: string }>;
+    openai?: Readonly<{ apiKey: string; baseUrl: string; globalApproved?: boolean }>;
     anthropic?: Readonly<{ apiKey: string; baseUrl: string }>;
   }>,
 ): OmniAgentDriver {
@@ -1738,6 +1741,7 @@ function createSdkRunnerDriver(
     model: preferences.model,
     openaiApiKey: credentials.openai?.apiKey,
     openaiBaseUrl: credentials.openai?.baseUrl,
+    openaiGlobalApproved: credentials.openai?.globalApproved === true,
     anthropicApiKey: credentials.anthropic?.apiKey,
     anthropicBaseUrl: credentials.anthropic?.baseUrl,
   });
