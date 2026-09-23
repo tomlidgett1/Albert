@@ -190,3 +190,67 @@ test("duplicate period labels are rejected with actionable guidance", () => {
   if (outcome.ok) return;
   assert.match(outcome.error, /appears more than once/u);
 });
+
+test("a change column compares the latest period with the one before, in points on a rate", () => {
+  const sales = salesResult(ulid());
+  // Newest week first: the change still runs from the week before to the latest.
+  const hours = hoursResult(ulid());
+  const margin: PivotSourceResult = {
+    resultId: ulid(),
+    topic: "Sales analytics",
+    columns: [
+      { key: "sales_analytics_completed_at", label: "Week", type: "date" },
+      { key: "sales_analytics_margin", label: "Gross margin", type: "percent", percentScale: "percent" },
+    ],
+    rows: weeks.map((week, index) => ({ sales_analytics_completed_at: week, sales_analytics_margin: [50, 52.5, 49][index] })),
+    provenance,
+  };
+  const sources = new Map([[sales.resultId, sales], [hours.resultId, hours], [margin.resultId, margin]]);
+  const outcome = composePivotTable({
+    caption: "Weekly scorecard",
+    columnsFromResultId: hours.resultId,
+    labelKey: "workforce_analytics_rostered_date",
+    change: true,
+    metrics: [
+      { resultId: sales.resultId, valueKey: "sales_analytics_gross_takings", labelKey: "sales_analytics_completed_at", label: "**Sales**" },
+      { resultId: margin.resultId, valueKey: "sales_analytics_margin", labelKey: "sales_analytics_completed_at", label: "Gross margin" },
+    ],
+  }, sources, "Australia/Melbourne");
+  assert.ok(outcome.ok, outcome.ok ? "" : outcome.error);
+  const { pivot } = outcome;
+  const change = pivot.columns.at(-1)!;
+  assert.deepEqual({ key: change.key, label: change.label, type: change.type, percentScale: change.percentScale }, { key: "change", label: "Change", type: "percent", percentScale: "percent" });
+  // Emphasis typed into a metric name is not part of the label.
+  assert.equal(pivot.rows[0]!.metric, "Sales");
+  // 1,100 → 1,200 is a 9.1% rise; a margin of 52.5% → 49% is 3.5 points down.
+  assert.ok(Math.abs(Number(pivot.rows[0]!.change) - 9.0909) < 0.001, String(pivot.rows[0]!.change));
+  assert.equal(pivot.rows[1]!.change, -3.5);
+  assert.match(pivot.notes.join(" "), /Change compares 24 Aug 2026 with 17 Aug 2026/u);
+  // A dashboard refresh recomputes the change from the same governed cells.
+  const replayed = materializeDerivedTable(pivot.derivation, [...sources.values()].map((source) => ({ resultId: source.resultId, columns: source.columns, rows: source.rows })), "Australia/Melbourne");
+  assert.deepEqual(replayed.rows, pivot.rows);
+
+  // A change's unit depends on its row, so even a single-unit pivot carries row formats.
+  const salesOnly = composePivotTable({
+    caption: "Weekly takings",
+    columnsFromResultId: sales.resultId,
+    labelKey: "sales_analytics_completed_at",
+    change: true,
+    metrics: [{ resultId: sales.resultId, valueKey: "sales_analytics_gross_takings", labelKey: null, label: "Sales" }],
+  }, sources, "Australia/Melbourne");
+  assert.ok(salesOnly.ok);
+  assert.deepEqual(salesOnly.pivot.rowFormats, [{ type: "currency", currency: "AUD" }]);
+
+  // One period has nothing to compare with: no change column, and the model is told why.
+  const single: PivotSourceResult = { ...sales, resultId: ulid(), rows: sales.rows.slice(0, 1) };
+  const lone = composePivotTable({
+    caption: "One week",
+    columnsFromResultId: single.resultId,
+    labelKey: "sales_analytics_completed_at",
+    change: true,
+    metrics: [{ resultId: single.resultId, valueKey: "sales_analytics_gross_takings", labelKey: null, label: "Sales" }],
+  }, new Map([[single.resultId, single]]), "Australia/Melbourne");
+  assert.ok(lone.ok);
+  assert.equal(lone.pivot.columns.some((column) => column.key === "change"), false);
+  assert.match(lone.pivot.notes.join(" "), /needs at least two periods/u);
+});

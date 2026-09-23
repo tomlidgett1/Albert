@@ -442,6 +442,14 @@ export type SemanticV2AnswerState = (typeof SEMANTIC_V2_ANSWER_STATES)[number];
 
 export type TraceStatus = "pending" | "running" | "complete" | "warning" | "error";
 
+/**
+ * A composed pivot's change column: the latest period against the one before
+ * it, as a percent change on amount and count rows and a percentage-point
+ * difference on rate rows. It keeps its own format whatever a row's format
+ * says, so renderers exempt it from `rowFormats`.
+ */
+export const PIVOT_CHANGE_COLUMN_KEY = "change";
+
 export type TraceCell = string | number | null;
 
 export type TraceTimeRange = Readonly<{
@@ -495,8 +503,12 @@ export type TraceProvenance = Readonly<{
   view?: Readonly<{ name: string; label: string; description: string }>;
   /** Filters and time windows the query applied, so a result's scope is inspectable. */
   filters?: readonly TraceProvenanceFilter[];
-  /** For composed tables: how each calculated column was derived, in words. */
-  calculations?: readonly Readonly<{ column: string; formula: string }>[];
+  /**
+   * For composed tables: how each calculated column was derived, in words,
+   * and the arithmetic when it is one of the derived-table operators (so an
+   * answer can sign a `percent_change` column: "+12.4%").
+   */
+  calculations?: readonly Readonly<{ column: string; formula: string; operator?: TraceDerivedCalculationOperator }>[];
 }>;
 
 export interface TraceEventBase {
@@ -699,7 +711,8 @@ export type TraceDerivedCellExpression =
       kind: "calculation";
       /**
        * Binary arithmetic over two operands. `percent_change` is
-       * (left − right) / right × 100 and `percent_of` is left / right × 100,
+       * (left − right) / |right| × 100 (so a negative base still gives the
+       * direction of the move) and `percent_of` is left / right × 100,
        * both on the 0–100 scale Cube percent measures use; either is null
        * when right is zero.
        */

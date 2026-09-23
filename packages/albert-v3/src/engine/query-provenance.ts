@@ -200,7 +200,7 @@ export function describeDerivedCalculations(
       case "subtract": return `${left} − ${right}`;
       case "multiply": return `${left} × ${right}`;
       case "divide": return `${left} ÷ ${right}`;
-      case "percent_change": return `(${left} − ${right}) ÷ ${right} × 100`;
+      case "percent_change": return `(${left} − ${right}) ÷ |${right}| × 100`;
       case "percent_of": return `${left} ÷ ${right} × 100`;
     }
   };

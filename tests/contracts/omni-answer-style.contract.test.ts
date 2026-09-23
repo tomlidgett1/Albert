@@ -89,8 +89,8 @@ test("a statement's total lines are emphasised so the renderer can rule them off
   assert.match(answer, /\| Sales revenue \| \$41,769 \| \$42,017 \|/u);
   assert.match(answer, /\| \*\*Gross profit\*\* \| \*\*\$21,772\*\* \| \*\*\$25,109\*\* \|/u);
   assert.match(answer, /\| \*\*Total operating expenses\*\* \|/u);
-  // A missing cell stays a plain dash rather than a bold one.
-  assert.match(answer, /\| \*\*Net profit\*\* \| \*\*\$5,608\*\* \| — \|/u);
+  // A missing cell stays blank rather than a bold nothing.
+  assert.match(answer, /\| \*\*Net profit\*\* \| \*\*\$5,608\*\* \| \|$/mu);
   assert.match(renderAssistantMarkdown(answer), /<td><strong>Net profit<\/strong><\/td>/u);
 
   // A scorecard that merely lists Net profit and a margin is not a statement.
@@ -196,7 +196,8 @@ test("caveats are one footnote, said once, and never cost the answer its state",
   // Said in the body already, and said twice in limitations: each survives once.
   assert.doesNotMatch(notes[0]!, /cost/iu);
   assert.equal((notes[0]!.match(/current/giu) ?? []).length, 1);
-  assert.match(notes[0]!, /Tables list the top rows, not every row\./u);
+  // The result itself is capped, so the note cannot give a total.
+  assert.match(notes[0]!, /The table shows the first 5 rows, not every row\./u);
   assert.doesNotMatch(answer, /does not establish a total for the full population/u);
   assert.equal(result.ok && result.answer.state, "Qualified");
 
@@ -293,4 +294,143 @@ test("the chat contract asks for short answers and tells the model how the compo
   for (const rule of [/under 50 words/u, /Under 110 words of prose/u, /Under 230 words of prose and at most two tables/u, /What never appears in the body/u, /The same fact twice/u, /That is the only bold figure in the answer/u, /At most 5 columns/u, /Match the owner's register/u]) assert.match(instructions, rule);
   for (const retired of [/There is no length limit/u, /Structure generously/u, /Several hundred words is right here/u, /full formatting toolkit/u]) assert.doesNotMatch(instructions, retired);
   for (const rule of [/never "\$\{\{sales\}\}" or "\{\{change\}\}%"/u, /headers is one short, plain header per column key/u, /single footnote/u, /Calendar dates are not figures/u, /Never spell a date out in words/u]) assert.match(COMPOSE_ANSWER_INSTRUCTIONS, rule);
+});
+
+test("a pivot's change reads signed, in points on a rate, and a week heading says it is a week", () => {
+  const source = evidence([
+    { key: "metric", label: "Metric", type: "string" },
+    { key: "w1", label: "7 Sep 2026", type: "number" },
+    { key: "w2", label: "14 Sep 2026", type: "number" },
+    { key: "change", label: "Change", type: "percent", percentScale: "percent" },
+  ], [
+    { metric: "Gross takings", w1: 18000, w2: 20232.5, change: 12.4027 },
+    { metric: "Gross margin", w1: 58.2, w2: 55.1, change: -3.1 },
+    { metric: "Transactions", w1: 80, w2: 80, change: 0 },
+  ], semantics(["metric"]), { rowFormats: [{ type: "currency", currency: "AUD" }, { type: "percent", percentScale: "percent" }, { type: "number" }] });
+  const answer = text(compose(source, { markdown: "Takings rose.\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["metric", "w1", "w2", "change"], headers: null, limit: 10 }] }));
+  assert.match(answer, /\| Metric \| Week of 7 Sep \| Week of 14 Sep \| Change \|/u);
+  assert.match(answer, /\| Gross takings \| \$18,000 \| \$20,233 \| \+12\.4% \|/u);
+  assert.match(answer, /\| Gross margin \| 58\.2% \| 55\.1% \| -3\.1 pts \|/u);
+  assert.match(answer, /\| Transactions \| 80 \| 80 \| 0\.0% \|/u);
+});
+
+test("an em dash never reaches the owner, in the body or the footnote", () => {
+  const source = evidence([money], [{ sales: 19435.48 }]);
+  const answer = text(compose(source, {
+    markdown: "Sales were {{s}} — a solid week.\n\n- Workshop — steady",
+    values: [value(source, "s", "sales")],
+    limitations: ["Deputy — wage cost excludes super."],
+  }));
+  assert.doesNotMatch(answer, /—/u);
+  assert.match(answer, /^Sales were \$19,435, a solid week\./u);
+  assert.match(answer, /\n- Workshop, steady\n/u);
+  assert.ok(answer.endsWith(`${ANSWER_NOTE_PREFIX}Deputy, wage cost excludes super.`), answer);
+  // A line with no em dash is left exactly as written, trailing comma and all.
+  assert.match(text(compose(source, { markdown: "Sales were {{s}},\nabout as expected.", values: [value(source, "s", "sales")] })), /^Sales were \$19,435,\nabout as expected\.$/u);
+});
+
+test("an empty cell is blank, an empty label says so, and a figure is never cited from one", () => {
+  const source = evidence([{ key: "brand", label: "Brand", type: "string" }, money], [{ brand: null, sales: 1200 }, { brand: "**Giant**", sales: null }]);
+  assert.match(text(compose(source, { markdown: "By brand:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["brand", "sales"], headers: ["Brand", "Sales"], limit: 10 }] })),
+    /\| Not set \| \$1,200 \|\n\| Giant \| \|$/u);
+  const cited = compose(source, { markdown: "Giant sold {{g}}.", values: [value(source, "g", "sales", 1)] });
+  assert.equal(cited.ok, false);
+  assert.match(cited.ok ? "" : cited.issues.join(" "), /empty cell/u);
+});
+
+test("a table cut short from a complete result says how many rows it shows", () => {
+  const source = evidence([{ key: "item", label: "Item", type: "string" }, money], Array.from({ length: 12 }, (_, index) => ({ item: `Bike ${index}`, sales: 5000 - index })), semantics(["item"]));
+  const answer = text(compose(source, { markdown: "Stock to clear:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item", "sales"], headers: ["Bike", "Cost"], limit: 5 }] }));
+  assert.ok(answer.endsWith(`${ANSWER_NOTE_PREFIX}The table shows 5 of 12 rows.`), answer);
+});
+
+test("a pivot's change cited in a sentence keeps its own unit, never its row's money format", () => {
+  const source = evidence([
+    { key: "metric", label: "Metric", type: "string" },
+    { key: "aug", label: "1 Aug 2026", type: "number" },
+    { key: "sep", label: "1 Sep 2026", type: "number" },
+    { key: "change", label: "Change", type: "percent", percentScale: "percent" },
+  ], [
+    { metric: "Takings", aug: 16737, sep: 22190, change: 32.58 },
+    { metric: "Gross margin", aug: 65.9, sep: 62.4, change: -3.5 },
+    { metric: "Average sale", aug: 110.84, sep: 95.65, change: -13.7 },
+  ], semantics(["metric"]), { rowFormats: [{ type: "currency", currency: "AUD" }, { type: "percent", percentScale: "percent" }, { type: "currency", currency: "AUD" }] });
+  const answer = text(compose(source, {
+    markdown: "Takings are {{t}}, up {{tc}}; margin is down {{mc}} and the average sale fell {{ac}}. Margin moved {{mc_again}} percentage points.",
+    values: [value(source, "t", "sep", 0, "compact"), value(source, "tc", "change", 0), value(source, "mc", "change", 1), value(source, "ac", "change", 2), value(source, "mc_again", "change", 1)],
+  }));
+  assert.equal(answer, "Takings are $22.2k, up 32.6%; margin is down 3.5 pts and the average sale fell 13.7%. Margin moved -3.5 percentage points.");
+});
+
+test("a derived percent change reads signed in a table, and its blank-cell note appears only with a blank on show", () => {
+  const source = evidence([
+    { key: "category", label: "Category", type: "string" },
+    { key: "sep", label: "September", type: "currency", currency: "AUD" },
+    { key: "aug", label: "August", type: "currency", currency: "AUD" },
+    { key: "change", label: "Change", type: "percent", percentScale: "percent" },
+  ], [
+    { category: "Services", sep: 7137, aug: 3475, change: 105.38 },
+    { category: "Kids bikes", sep: 660, aug: 1319, change: -49.96 },
+    { category: "Brakes", sep: 1170, aug: 1170, change: 0 },
+    { category: "Gravel bikes", sep: 900, aug: 0, change: null },
+  ], semantics(["category"], "complete", { qualifications: ["A blank calculated figure had a missing or zero value to work from."] }));
+  const withCalc = { ...source, provenance: { ...source.provenance, calculations: [{ column: "change", formula: "(sep − aug) ÷ aug × 100", operator: "percent_change" as const }] } };
+  const table = (limit: number) => text(compose(withCalc, { markdown: "Services led.\n\n{{t}}", tables: [{ id: "t", resultId: withCalc.resultId, columnKeys: ["category", "sep", "aug", "change"], headers: ["Category", "September", "August", "Change"], limit }] }));
+  const full = table(4);
+  assert.match(full, /\| Services \| \$7,137 \| \$3,475 \| \+105\.4% \|/u);
+  assert.match(full, /\| Kids bikes \| \$660 \| \$1,319 \| -50\.0% \|/u);
+  assert.match(full, /\| Brakes \| \$1,170 \| \$1,170 \| 0\.0% \|/u);
+  assert.match(full, /Note: A blank calculated figure had a missing or zero value to work from\./u);
+  // The blank row is cut from view, so its note goes with it.
+  assert.doesNotMatch(table(3), /blank calculated/u);
+  // An answer that already explains its blanks is not told twice.
+  const explained = text(compose(withCalc, { markdown: "Services led.\n\n{{t}}", limitations: ["A blank change means no August sales."], tables: [{ id: "t", resultId: withCalc.resultId, columnKeys: ["category", "sep", "aug", "change"], headers: ["Category", "September", "August", "Change"], limit: 4 }] }));
+  assert.match(explained, /A blank change means no August sales\./u);
+  assert.doesNotMatch(explained, /blank calculated/u);
+});
+
+test("a timestamp on the store's clock reads as its calendar day", () => {
+  const source = evidence([{ key: "item", label: "Item", type: "string" }, { key: "last_sold", label: "Last sold", type: "datetime" }],
+    [{ item: "Apollo Trail D 20", last_sold: "2024-01-16T17:39:16.000" }, { item: "Izalco Max", last_sold: null }]);
+  assert.match(text(compose(source, { markdown: "Stale stock:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item", "last_sold"], headers: ["Product", "Last sold"], limit: 5 }] })),
+    /\| Apollo Trail D 20 \| 16 Jan 2024 \|\n\| Izalco Max \| \|$/u);
+});
+
+test("a single-unit pivot with a change keeps one precision down each column", () => {
+  const currency = { type: "currency" as const, currency: "AUD" };
+  const source = evidence([
+    { key: "metric", label: "Metric", type: "string" },
+    { key: "sep", label: "1 Sep 2026", type: "currency", currency: "AUD" },
+    { key: "aug", label: "1 Aug 2026", type: "currency", currency: "AUD" },
+    { key: "change", label: "Change", type: "percent", percentScale: "percent" },
+  ], [
+    { metric: "Services", sep: 7137, aug: 3475, change: 105.38 },
+    { metric: "Computers", sep: 685, aug: null, change: null },
+    { metric: "Helmets", sep: 509.94, aug: 709.93, change: -28.17 },
+  ], semantics(["metric"]), { rowFormats: [currency, currency, currency] });
+  const answer = text(compose(source, { markdown: "Services led.\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["metric", "sep", "aug", "change"], headers: null, limit: 10 }] }));
+  assert.match(answer, /\| Services \| \$7,137 \| \$3,475 \| \+105% \|/u);
+  assert.match(answer, /\| Computers \| \$685 \| \| \|/u);
+  assert.match(answer, /\| Helmets \| \$510 \| \$710 \| -28\.2% \|/u);
+});
+
+test("a table can be ordered by one column before its limit, and each cell still cites its own row", () => {
+  const source = evidence([{ key: "item", label: "Item", type: "string" }, { key: "drop", label: "Drop", type: "currency", currency: "AUD" }],
+    [{ item: "Tube", drop: -12 }, { item: "Helmet", drop: -710 }, { item: "Tyre", drop: null }, { item: "Bike", drop: -1820 }]);
+  const result = compose(source, { markdown: "Biggest falls:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item", "drop"], headers: ["Product", "Drop"], limit: 3, sort: { columnKey: "drop", direction: "asc" } }] });
+  assert.match(text(result), /\| Bike \| -\$1,820 \|\n\| Helmet \| -\$710 \|\n\| Tube \| -\$12 \|/u);
+  assert.ok(result.ok && result.answer.claims.some((claim) => claim.refs[0]?.rowIndex === 3 && claim.statement === "Item: Bike"));
+  // Blank cells sort last either way.
+  assert.match(text(compose(source, { markdown: "Smallest falls:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item", "drop"], headers: ["Product", "Drop"], limit: 4, sort: { columnKey: "drop", direction: "desc" } }] })), /\| Tube \| -\$12 \|\n\| Helmet \| -\$710 \|\n\| Bike \| -\$1,820 \|\n\| Tyre \| \|/u);
+  const unknown = compose(source, { markdown: "Falls:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item"], headers: null, limit: 3, sort: { columnKey: "nope", direction: "asc" } }] });
+  assert.equal(unknown.ok, false);
+});
+
+test("a header may name a window by its days but never carry a figure", () => {
+  const source = evidence([{ key: "item", label: "Item", type: "string" }, money], [{ item: "Bike", sales: 1200 }, { item: "Tube", sales: 12 }]);
+  assert.match(text(compose(source, { markdown: "Sales:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item", "sales"], headers: ["Product", "1–19 Sep"], limit: 5 }] })), /\| Product \| 1–19 Sep \|/u);
+  assert.equal(compose(source, { markdown: "Sales:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item", "sales"], headers: ["Product", "Sales 1200"], limit: 5 }] }).ok, false);
+  // A word that merely starts like a month ("Margin", "Decline") is not a date.
+  assert.equal(compose(source, { markdown: "Sales:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item", "sales"], headers: ["Product", "Margin 30"], limit: 5 }] }).ok, false);
+  assert.match(text(compose(source, { markdown: "Sales:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item", "sales"], headers: ["Product", "Sep to 19"], limit: 5 }] })), /\| Product \| Sep to 19 \|/u);
 });

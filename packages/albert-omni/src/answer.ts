@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { formatReportingRange, reportingRanges, stripScopedCalendarDates } from "../../shared/src/reporting-dates.js";
-import type { ResultSemantics, TraceAnswerEvent, TraceTableColumn, TraceRowFormat } from "../../shared/src/index.js";
+import { PIVOT_CHANGE_COLUMN_KEY, type ResultSemantics, type TraceAnswerEvent, type TraceTableColumn, type TraceRowFormat } from "../../shared/src/index.js";
 import { publicColumnKey } from "../../albert-v3/src/cube/presentation.js";
 import { sanitizeAnswerText, sanitizeTraceText } from "../../shared/src/index.js";
 import { findUngroundedNumbersWithEvidence, ownerStatedGroundingValues } from "../../../services/conversation/src/grounding.js";
 import type { PivotSourceResult } from "./pivot.js";
 import { answerPeriodIssues } from "./answer-scope.js";
 import { extractOmniFollowUps } from "./follow-ups.js";
+import { BLANK_CALCULATION_NOTE } from "./derive.js";
 
 const slotId = z.string().regex(/^[a-z][a-z_]{0,39}$/u);
 const resultId = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u);
@@ -30,6 +31,8 @@ export const composeAnswerSchema = z.object({
     // for a table in a chat column.
     headers: z.array(z.string().min(1).max(40)).min(1).max(14).nullable(),
     limit: z.number().int().min(1).max(50),
+    // Rows ordered by one column before the limit ("biggest falls first"); null keeps the result's order.
+    sort: z.object({ columnKey: z.string().min(1).max(160), direction: z.enum(["asc", "desc"]) }).strict().nullable(),
   }).strict()).max(12),
   citedResultIds: z.array(resultId).max(30),
   limitations: z.array(z.string().min(1).max(500)).max(12),
@@ -37,9 +40,9 @@ export const composeAnswerSchema = z.object({
 }).strict();
 type ParsedAnswerInput = z.infer<typeof composeAnswerSchema>;
 type AnswerTableInput = ParsedAnswerInput["tables"][number];
-/** Callers built before headers existed may omit them; the model-facing schema stays strict. */
+/** Callers built before headers and sorting existed may omit them; the model-facing schema stays strict. */
 export type ComposeAnswerInput = Omit<ParsedAnswerInput, "tables"> & Readonly<{
-  tables: readonly (Omit<AnswerTableInput, "headers"> & Readonly<{ headers?: AnswerTableInput["headers"] }>)[];
+  tables: readonly (Omit<AnswerTableInput, "headers" | "sort"> & Readonly<{ headers?: AnswerTableInput["headers"]; sort?: AnswerTableInput["sort"] }>)[];
 }>;
 export type AnswerEvidence = PivotSourceResult & Readonly<{ rowFormats?: readonly (TraceRowFormat | null)[]; priorTurn?: boolean }>;
 export type ComposedAnswer = Readonly<{
@@ -138,22 +141,38 @@ function periodHeaders(columns: readonly TraceTableColumn[], semantics: ResultSe
   if (parsed.length < 2) return new Map();
   const declared = [...new Set(columnGrains(semantics).values())];
   const grain = declared.length === 1 ? declared[0]! : inferGrain(parsed.map((entry) => entry.date));
-  return grain ? new Map(parsed.map((entry) => [entry.key, periodLabel(entry.date, grain, currentYear)])) : new Map();
+  // A pivot heading stands alone, so a week says it is one: "Week of 7 Sep", never a bare "7 Sep".
+  return grain
+    ? new Map(parsed.map((entry) => [entry.key, `${grain === "week" ? "Week of " : ""}${periodLabel(entry.date, grain, currentYear)}`]))
+    : new Map();
 }
+
+/** An empty numeric cell is left blank, and an empty label says so: a dash reads as a figure. */
+const EMPTY_CELL = "";
+/** A calendar phrase in a header ("1–19 Sep", "Sep to 19") names a window, not a figure. */
+const HEADER_MONTH = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\b\\.?";
+const HEADER_DATE = new RegExp(`\\b\\d{1,2}(?:\\s*[–-]\\s*\\d{1,2})?\\s+${HEADER_MONTH}|\\b${HEADER_MONTH}\\s+(?:to\\s+)?\\d{1,2}(?:\\s*[–-]\\s*\\d{1,2})?\\b`, "giu");
+const EMPTY_LABEL = "Not set";
 
 function displayCell(value: unknown, column: TraceTableColumn, style: CellStyle = {}): string {
   const { format = "auto", decimals = null } = style;
-  if (value === null || value === undefined) return "—";
+  if (value === null || value === undefined) return column.type === "string" ? EMPTY_LABEL : EMPTY_CELL;
   if (typeof value === "string" && /(?:^|[._])(?:compare_date_range|compareDateRange)$/u.test(column.key)) return escapeCell(formatReportingRange(value));
   if (["date", "datetime"].includes(column.type)) {
     const date = midnightDate(value);
     if (date && style.grain) return escapeCell(periodLabel(date, style.grain, style.currentYear));
     if (date) return `${date.getUTCDate()} ${MONTHS_SHORT[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+    // An instant on the store's own clock (no zone) reads as its calendar day: to the owner a last-sold time is a date.
+    const local = typeof value === "string" ? /^(\d{4})-(\d{2})-(\d{2})[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/u.exec(value) : null;
+    const month = local ? MONTHS_SHORT[Number(local[2]) - 1] : undefined;
+    if (local && month) return `${Number(local[3])} ${month} ${local[1]}`;
   }
   if (!["number", "currency", "percent"].includes(column.type)) {
     // A source system's enum ("COST_OF_SALES") is a code, not a label. Only the
     // underscored form is rewritten: an all-caps word may be a brand ("SRAM").
-    const label = String(value);
+    // Emphasis written into a label ("**Gross profit**") would print its marks literally once escaped.
+    const label = String(value).replace(/\*\*|__|`/gu, "").trim();
+    if (!label) return EMPTY_LABEL;
     return escapeCell(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/u.test(label) ? `${label[0]}${label.slice(1).toLowerCase().replaceAll("_", " ")}` : label);
   }
   const exact = typeof value === "number" ? value : String(value).replaceAll(",", "");
@@ -184,6 +203,37 @@ function displayCell(value: unknown, column: TraceTableColumn, style: CellStyle 
     // "$3.7k" is how the figure is written; ICU's "$3.7K" reads as a unit.
     .replace(/(?<=\d)K$/u, "k");
   return column.type === "percent" ? `${text}%` : text;
+}
+
+type PivotChange = Readonly<{ rate: boolean; scale: TraceTableColumn["percentScale"] }>;
+
+/**
+ * A composed pivot's change cell (metric rows, a closing change column) keeps
+ * its own unit whatever its row's format says: null when the cell is not one,
+ * else whether the row is a rate, whose change is a difference in points.
+ */
+function pivotChange(source: AnswerEvidence, column: TraceTableColumn, rowIndex: number): PivotChange | null {
+  if (source.columns[0]?.key !== "metric" || column.key !== PIVOT_CHANGE_COLUMN_KEY || column.type !== "percent") return null;
+  const rowFormat = source.rowFormats?.[rowIndex];
+  const period = source.columns.find((candidate) => ["number", "currency", "percent"].includes(candidate.type) && candidate.key !== PIVOT_CHANGE_COLUMN_KEY);
+  return { rate: (rowFormat?.type ?? period?.type) === "percent", scale: rowFormat?.percentScale ?? period?.percentScale };
+}
+
+/**
+ * A pivot's change: one decimal, a percent change on an amount or a count and
+ * percentage points on a rate. A table signs it ("+12.4%", "-3.1 pts") so a
+ * reader never works out which way it moved; a sentence says the direction in
+ * words, so there only a fall keeps its sign.
+ */
+function changeCell(value: unknown, change: PivotChange, signed: boolean): string {
+  if (value === null || value === undefined || value === "") return EMPTY_CELL;
+  const numeric = Number(typeof value === "string" ? value.replaceAll(",", "") : value);
+  if (!Number.isFinite(numeric)) throw new Error("Non-numeric change cell.");
+  const shown = change.rate && change.scale === "ratio" ? numeric * 100 : numeric;
+  const places = Math.abs(shown) >= 100 ? 0 : 1;
+  const rounded = Number(shown.toFixed(places));
+  const text = new Intl.NumberFormat("en-AU", { minimumFractionDigits: places, maximumFractionDigits: places }).format(Math.abs(rounded));
+  return `${rounded < 0 ? "-" : rounded > 0 && signed ? "+" : ""}${text}${change.rate ? " pts" : "%"}`;
 }
 
 /** One precision for a count or rate column: none if every cell is whole, otherwise one decimal (two for small rates). */
@@ -263,6 +313,18 @@ function calmBold(markdown: string): string {
 }
 
 /**
+ * No em dashes in an answer: the owners' house style reads a clause set off by
+ * dashes between commas instead. Table rows are left alone.
+ */
+function withoutEmDashes(markdown: string): string {
+  return markdown.split("\n").map((line) => (/^\s*\|/u.test(line) || !line.includes("—") ? line : line
+    .replace(/\s*—\s*/gu, ", ")
+    .replace(/,\s*([,.;:!?])/gu, "$1")
+    .replace(/^(\s*(?:[-*]|\d+[.)])?\s*),\s*/u, "$1")
+    .replace(/,\s*$/u, ""))).join("\n");
+}
+
+/**
  * Row labels that close a section of a financial statement. A table is only
  * treated as a statement when at least two of its rows do: a P&L has Gross
  * profit and Net profit, whereas a scorecard that happens to list Net profit
@@ -287,7 +349,7 @@ export function composeAnswer(
 ): Readonly<{ ok: true; answer: ComposedAnswer }> | Readonly<{ ok: false; issues: readonly string[] }> {
   const parsed = composeAnswerSchema.safeParse({
     ...input,
-    tables: Array.isArray(input.tables) ? input.tables.map((table) => ({ headers: null, ...table })) : input.tables,
+    tables: Array.isArray(input.tables) ? input.tables.map((table) => ({ headers: null, sort: null, ...table })) : input.tables,
   });
   if (!parsed.success) return { ok: false, issues: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`) };
   const request = parsed.data;
@@ -297,6 +359,10 @@ export function composeAnswer(
   const claims: NonNullable<TraceAnswerEvent["claims"]>[number][] = [];
   const currentYear = Number(/\b((?:19|20)\d{2})\b/u.exec(options.today)?.[1]) || null;
   let truncatedTable = false;
+  /** Whether any table shows a blank calculated cell, the only time the note on blank calculations is worth its place. */
+  let blankCalculation = false;
+  /** Each table cut short: rows shown, and the full count when the result is complete. */
+  const truncations: { shown: number; total: number | null }[] = [];
   /** How many rows each presented table shows: a count the server itself rendered ("the eight bikes above"). */
   const shownRowCounts: number[] = [];
   const put = (id: string, value: string) => {
@@ -311,9 +377,15 @@ export function composeAnswer(
       issues.push(`Value ${value.id} references an unknown result, row or column.`);
       continue;
     }
+    if (row[column.key] === null || row[column.key] === undefined) {
+      issues.push(`Value ${value.id} points at an empty cell. Say in words that there is no figure (for example "no sales recorded") instead of citing it.`);
+      continue;
+    }
     selected.add(source.resultId);
     try {
-      const text = displayCell(row[column.key], source.rowFormats?.[value.rowIndex] ? { ...column, ...source.rowFormats[value.rowIndex] } : column, {
+      // A pivot's change is a percent or points whatever its row's format: never "$32.58".
+      const change = pivotChange(source, column, value.rowIndex);
+      const text = change ? changeCell(row[column.key], change, false) : displayCell(row[column.key], source.rowFormats?.[value.rowIndex] ? { ...column, ...source.rowFormats[value.rowIndex] } : column, {
         format: value.format, decimals: value.decimals, grain: grainFor(source, column), currentYear,
       });
       put(value.id, text);
@@ -338,25 +410,59 @@ export function composeAnswer(
     if (table.headers && table.headers.length !== table.columnKeys.length) { issues.push(`Table ${table.id} needs exactly one header per column key (${table.columnKeys.length}), or null.`); continue; }
     selected.add(source.resultId);
     const typed = columns as TraceTableColumn[];
-    const rows = source.rows.slice(0, table.limit);
-    if (rows.length < source.rows.length || source.semantics?.completeness === "limited") truncatedTable = true;
+    // Rows may be ordered by one column before the limit; each cell still cites its own source row.
+    const order = source.rows.map((_, index) => index);
+    const sortColumn = table.sort ? source.columns.find((column) => column.key === table.sort!.columnKey) : undefined;
+    if (table.sort && !sortColumn) { issues.push(`Table ${table.id} sorts by ${table.sort.columnKey}, which is not a column of ${source.resultId}.`); continue; }
+    if (table.sort && sortColumn) {
+      const direction = table.sort.direction === "asc" ? 1 : -1;
+      const amount = ["number", "currency", "percent"].includes(sortColumn.type);
+      const cell = (index: number) => source.rows[index]![sortColumn.key];
+      const missing = (value: unknown) => value === null || value === undefined || value === "";
+      order.sort((a, b) => {
+        const left = cell(a);
+        const right = cell(b);
+        // Blank cells sort last whichever way the table runs.
+        if (missing(left) || missing(right)) return missing(left) === missing(right) ? a - b : missing(left) ? 1 : -1;
+        const compared = amount
+          ? Number(String(left).replaceAll(",", "")) - Number(String(right).replaceAll(",", ""))
+          : String(left).localeCompare(String(right), "en-AU");
+        return compared === 0 || Number.isNaN(compared) ? a - b : compared * direction;
+      });
+    }
+    const picked = order.slice(0, table.limit);
+    const rows = picked.map((index) => source.rows[index]!);
+    if (rows.length < source.rows.length || source.semantics?.completeness === "limited") {
+      truncatedTable = true;
+      truncations.push({ shown: rows.length, total: source.semantics?.completeness === "complete" ? source.rows.length : null });
+    }
     shownRowCounts.push(rows.length);
     // A period heading is resolved from the governed cell that names it, so a
     // model-written header can shorten a field label but never rename a period.
     const periods = periodHeaders(typed, source.semantics, currentYear);
     const headers = typed.map((column, index) => {
       const written = periods.has(column.key) ? undefined : table.headers?.[index]?.trim();
-      const figures = written?.match(/\d[\d,.]*/gu) ?? [];
+      const figures = written?.replace(HEADER_DATE, " ").match(/\d[\d,.]*/gu) ?? [];
       if (figures.some((figure) => !column.label.includes(figure) && !/^(?:19|20)\d{2}$/u.test(figure))) {
         issues.push(`Header "${written}" states a figure its field does not carry. Headers name the column; figures belong in cells.`);
       }
       return written || periods.get(column.key) || column.label;
     });
     const numeric = (column: TraceTableColumn) => ["number", "currency", "percent"].includes(column.type);
+    // A DeriveResult percent_change column reads signed in a table, as a pivot's change does.
+    const calculations = source.provenance.calculations ?? [];
+    const signedColumns = new Set(calculations.filter((calculation) => calculation.operator === "percent_change").map((calculation) => calculation.column));
+    const calculatedColumns = new Set(calculations.map((calculation) => calculation.column));
+    // Row formats set precision only when rows carry different units; a single-unit pivot (one with a change column
+    // carries row formats anyway) shares each column's precision, so a column never mixes $7,137 with $685.00.
+    const shownFormats = source.rowFormats ? picked.map((index) => source.rowFormats![index] ?? null) : [];
+    const mixedRows = new Set(shownFormats.map((format) => format ? `${format.type}:${format.currency ?? ""}:${format.percentScale ?? ""}` : "")).size > 1;
+    // A unit every row shares is each value column's own (a pivot's period columns may be typed "number").
+    const sharedFormat = mixedRows ? null : shownFormats.find((format) => format) ?? null;
     const closesSection = (row: Readonly<Record<string, unknown>>) => typed[0]!.type === "string" && STATEMENT_TOTAL.test(String(row[typed[0]!.key] ?? "").trim());
     const statement = rows.filter(closesSection).length >= 2;
     const magnitudes = typed.map((column) => columnMagnitude(rows, column.key));
-    const precisions = typed.map((column) => columnDecimals(rows, column));
+    const precisions = typed.map((column) => columnDecimals(rows, sharedFormat && numeric(column) && column.key !== PIVOT_CHANGE_COLUMN_KEY ? { ...column, ...sharedFormat } : column));
     const grains = typed.map((column) => grainFor(source, column, table.limit));
     try {
       // One row of several measures reads sideways ("Sales revenue | Cost of
@@ -364,9 +470,10 @@ export function composeAnswer(
       // line per measure, under the period it covers. Same cells, same claims.
       if (rows.length === 1 && typed.length >= 3) {
         const row = rows[0]!;
+        const only = picked[0]!;
         const cells = typed.map((column, index) => {
-          const text = displayCell(row[column.key], source.rowFormats?.[0] && column.type !== "string" ? { ...column, ...source.rowFormats[0] } : column, { grain: grains[index]!, currentYear });
-          claims.push({ statement: `${column.label}: ${text}`, assertion: "value", refs: [{ resultId: source.resultId, rowIndex: 0, columnKey: column.key }] });
+          const text = displayCell(row[column.key], source.rowFormats?.[only] && column.type !== "string" ? { ...column, ...source.rowFormats[only] } : column, { grain: grains[index]!, currentYear });
+          claims.push({ statement: `${column.label}: ${text}`, assertion: "value", refs: [{ resultId: source.resultId, rowIndex: only, columnKey: column.key }] });
           return text;
         });
         const periodAt = typed.findIndex((column) => ["date", "datetime"].includes(column.type) || /(?:^|[._])(?:compare_date_range|compareDateRange)$/u.test(column.key));
@@ -377,7 +484,7 @@ export function composeAnswer(
           "| --- | ---: |",
           ...lines.map((line) => {
             const total = statement && STATEMENT_TOTAL.test(line.label.trim());
-            return `| ${total ? `**${escapeCell(line.label)}**` : escapeCell(line.label)} | ${total && line.cell !== "—" ? `**${line.cell}**` : line.cell} |`;
+            return `| ${total ? `**${escapeCell(line.label)}**` : escapeCell(line.label)} | ${total && line.cell !== EMPTY_CELL ? `**${line.cell}**` : line.cell} |`;
           }),
         ].join("\n"));
         continue;
@@ -385,21 +492,25 @@ export function composeAnswer(
       put(table.id, [
         `| ${headers.map(escapeCell).join(" | ")} |`,
         `| ${typed.map((column) => numeric(column) ? "---:" : "---").join(" | ")} |`,
-        ...rows.map((row, rowIndex) => {
+        ...rows.map((row, position) => {
+          const rowIndex = picked[position]!;
           // A metric-per-row pivot is read across, so its precision is set by the row.
           const rowFormat = source.rowFormats?.[rowIndex];
-          const across = rowFormat ? Math.max(0, ...typed.filter(numeric).map((column) => Math.abs(Number(row[column.key])) || 0)) : null;
+          const across = rowFormat && mixedRows ? Math.max(0, ...typed.filter((column) => numeric(column) && !pivotChange(source, column, rowIndex)).map((column) => Math.abs(Number(row[column.key])) || 0)) : null;
           // A statement's subtotal and total lines carry the accountant's emphasis;
           // the renderer rules them off from the detail above.
           const total = statement && closesSection(row);
           return `| ${typed.map((column, index) => {
-            const text = displayCell(row[column.key], rowFormat && column.type !== "string" ? { ...column, ...rowFormat } : column, {
+            const change = pivotChange(source, column, rowIndex);
+            const shown = change ? changeCell(row[column.key], change, true) : displayCell(row[column.key], rowFormat && column.type !== "string" ? { ...column, ...rowFormat } : column, {
               magnitude: across ?? magnitudes[index]!, grain: grains[index]!, currentYear,
               // Mixed-unit pivot rows keep each cell's own precision; a plain column shares one.
-              ...(rowFormat || precisions[index] === null ? {} : { decimals: precisions[index]!, fixed: true }),
+              ...((rowFormat && mixedRows) || precisions[index] === null ? {} : { decimals: precisions[index]!, fixed: true }),
             });
+            const text = !change && signedColumns.has(column.key) && /^\d/u.test(shown) && /[1-9]/u.test(shown) ? `+${shown}` : shown;
+            if (text === EMPTY_CELL && calculatedColumns.has(column.key)) blankCalculation = true;
             claims.push({ statement: `${column.label}: ${text}`, assertion: "value", refs: [{ resultId: source.resultId, rowIndex, columnKey: column.key }] });
-            return total && text !== "—" ? `**${text}**` : text;
+            return total && text !== EMPTY_CELL ? `**${text}**` : text;
           }).join(" | ")} |`;
         }),
       ].join("\n"));
@@ -463,20 +574,25 @@ export function composeAnswer(
   // A placeholder renders with its own sign, currency symbol and percent sign;
   // a model that also types one around it would show "$$9,126" and "26.8%%",
   // and one that writes the direction in words would show "down -19.9%".
-  const resolved = request.markdown.replace(/(-?)(\$?)\{\{([a-z][a-z_]{0,39})\}\}(%?)/gu, (_match, minus: string, dollar: string, id: string, percent: string, offset: number, whole: string) => {
+  // A points figure followed by the model's own unit ("{{m}} percentage points") keeps the model's words.
+  const resolved = request.markdown.replace(/(-?)(\$?)\{\{([a-z][a-z_]{0,39})\}\}(%?)(\s*(?:percentage points?|points?|pts|pp)\b)?/gu, (_match, minus: string, dollar: string, id: string, percent: string, unit: string | undefined, offset: number, whole: string) => {
     const slot = slots.get(id)!;
     const lead = whole.slice(Math.max(0, offset - 72), offset).replace(/\*\*/gu, "");
     const saidInWords = slot.startsWith("-") && (FALLING_WORDS.test(lead) || FALLING_BY.test(lead));
-    const value = saidInWords ? slot.slice(1) : slot;
+    const signed = saidInWords ? slot.slice(1) : slot;
+    const value = unit && signed.endsWith(" pts") ? signed.slice(0, -" pts".length) : signed;
     const symbol = /[$€£¥]|\b[A-Z]{3}\b/u.test(value);
-    return `${minus && value.startsWith("-") ? "" : minus}${dollar && symbol ? "" : dollar}${value}${percent && value.endsWith("%") ? "" : percent}`;
+    return `${minus && value.startsWith("-") ? "" : minus}${dollar && symbol ? "" : dollar}${value}${percent && value.endsWith("%") ? "" : percent}${unit ?? ""}`;
   });
   const extracted = extractOmniFollowUps(resolved);
   // A closing paragraph set wholly in italics is a caveat written as an aside;
   // it belongs with the other notes, in the footnote's type, not in the body.
   const aside = /\n\n[*_]([^*_\n][^\n]*[^*_\n])[*_]\s*$/u.exec(extracted.text);
-  const body = calmBold(aside ? extracted.text.slice(0, aside.index) : extracted.text);
-  const qualifications = sources.flatMap((source) => source.semantics?.qualifications ?? []);
+  const body = withoutEmDashes(calmBold(aside ? extracted.text.slice(0, aside.index) : extracted.text));
+  // The note on blank calculated cells is kept only when one is on show and the answer has not already explained its blanks.
+  const blanksExplained = request.limitations.some((note) => /\bblank\b/iu.test(note));
+  const qualifications = sources.flatMap((source) => source.semantics?.qualifications ?? [])
+    .filter((note) => note !== BLANK_CALCULATION_NOTE || (blankCalculation && !blanksExplained));
   const limited = sources.some((source) => source.semantics?.completeness !== "complete");
   const reused = sources.some((source) => source.priorTurn);
   const failures = Boolean(options.hadQueryFailures) && request.outcome === "answer";
@@ -484,17 +600,22 @@ export function composeAnswer(
   // A list cut short is worth saying once, unless a ranking's head is what was
   // asked for: "top 10", "best day", "biggest expenses" expect a partial list.
   const askedForTopN = /\b(?:top|best|worst|biggest|largest|smallest|highest|lowest|most|least|busiest|quietest|slowest|fastest)\b/iu.test(options.question);
+  // One cut table says exactly how much of it is shown.
+  const [only] = truncations.length === 1 ? truncations : [];
+  const truncationNote = !only ? "Tables show the first rows, not every row."
+    : only.total !== null ? `The table shows ${only.shown} of ${only.total} rows.`
+      : `The table shows the first ${only.shown} rows, not every row.`;
   const notes = [
     ...(aside ? [aside[1]!] : []),
     ...request.limitations,
     ...qualifications,
     ...(truncatedTable && !askedForTopN && !request.limitations.some((note) => /\b(?:top|first|largest|highest|biggest)\b|\bnot (?:a |the )?(?:complete|full)\b|\bcapped\b|\bslice\b|\blimited to\b/iu.test(note))
-      ? ["Tables list the top rows, not every row."] : []),
+      ? [truncationNote] : []),
     ...(reused ? ["Uses earlier results from this conversation; the figures have not been refreshed."] : []),
     ...(failures ? ["Some queries failed along the way; the figures shown come from the ones that succeeded."] : []),
   ];
   const note = footnote(body, notes);
-  const text = note ? `${body}\n\n${note}` : body;
+  const text = note ? `${body}\n\n${withoutEmDashes(note)}` : body;
   if (text.length > 120_000 || Buffer.byteLength(JSON.stringify({ text, claims })) > 1_200_000) return { ok: false, issues: ["The composed answer exceeds the artifact size limit. Select fewer rows or columns; the answer will not be silently truncated."] };
   const state: ComposedAnswer["state"] = request.outcome === "clarification" ? "Clarification"
     : request.outcome === "unavailable" ? "Unavailable"
@@ -514,7 +635,8 @@ Use ComposeAnswer to deliver the answer. Its accepted content is exactly what th
 Write the answer in markdown, replacing EVERY analytical figure with a named placeholder like {{sales}}. Define it in values using the resultId, zero-based rowIndex and exact columnKey returned by a tool. Do not type the value yourself.
 A placeholder renders complete: its own minus sign, currency symbol, thousands separators and percent sign. Write "{{sales}}" and "up {{change}}", never "\${{sales}}" or "{{change}}%". format auto shows whole dollars from $1,000 up, cents below that, and one decimal on a percentage; format compact rounds for reading ($19.4k, $1.2M) and is the right choice for most amounts inside a sentence, because the table beside it carries the exact figure. Leave decimals null unless a specific precision matters. A date cell renders as the period it names (a month bucket as "Aug 2026", a week as "6 Jul", a day as "Sat 12 Sep").
 Calendar dates are not figures: type a date or a day range directly, digits and all ("Sunday 13 September", "1–19 September"), whenever it falls inside the window your cited results cover or is today. That is how you name a day that has no row of its own, such as a day the store was closed. Never spell a date out in words ("the nineteenth") to avoid digits. Give the weekday only when you are sure of it; a mismatch is rejected. The article "one" and a window length that comes from a field you queried ("no sale in 90 days") are likewise fine to type; every other count or amount is a placeholder.
-For tables, put {{weekly_table}} in its own paragraph, alone on a line with a blank line before and after, and define it in tables with resultId, columnKeys, headers and limit. headers is one short, plain header per column key, in the same order ("Product", "Revenue", "Units", "Week"): the governed field labels are long and technical, so always supply them. A header names the column and never carries a figure; period columns of a pivot keep their own period names whatever you pass. Choose only the columnKeys that earn a place and set limit to the rows worth reading. Do not wrap the placeholder in a Markdown table or add your own header or separator row: the server supplies the complete table. Never hand-copy or transpose a numerical table. ComposePivotTable and DeriveResult prepare new shapes and arithmetic before composition. CalculateValues computes exact arithmetic between any two result cells, including period-on-period change across two rows of a comparison query.
+For tables, put {{weekly_table}} in its own paragraph, alone on a line with a blank line before and after, and define it in tables with resultId, columnKeys, headers and limit. headers is one short, plain header per column key, in the same order ("Product", "Revenue", "Units", "Week"): the governed field labels are long and technical, so always supply them. A header names the column and never carries a figure; period columns of a pivot keep their own period names whatever you pass. Choose only the columnKeys that earn a place and set limit to the rows worth reading; sort orders the rows by one column first ({columnKey: "change", direction: "asc"} puts the biggest falls first), and null keeps the result's order. Do not wrap the placeholder in a Markdown table or add your own header or separator row: the server supplies the complete table. Never hand-copy or transpose a numerical table. ComposePivotTable and DeriveResult prepare new shapes and arithmetic before composition: a table that compares periods is presented with its change, from ComposePivotTable with change true (metrics down) or a DeriveResult percent_change column beside the two periods (named entities). The server signs a pivot's change and a percent_change column in a table, and writes a rate's change in points; cited in a sentence, a change reads with the direction in your words ("up {{takings_change}}" renders "up 12.4%", "down {{margin_change}}" renders "down 3.1 pts"). CalculateValues computes exact arithmetic between any two result cells, including period-on-period change across two rows of a comparison query.
+Never type an em dash; use a comma, a colon or a full stop.
 Use citedResultIds for every result that supports the conclusion.
 limitations is the answer's single footnote, shown once in small type beneath it. Give it zero to two short items, each under twenty words, and only what would change how the owner reads a figure: a proxy, a partial period, a missing source, a known data gap. Never repeat there what the body already says, and never list routine basis (currency, timezone, "completed non-voided sales") that would not mislead anyone. The harness adds its own note when a table is cut short. The harness decides the answer state; you cannot promote an answer to Verified.
 outcome answer presents query evidence; explanation answers a definition question without figures; clarification asks the one blocking question; no_data cites the executed empty result; unavailable names the missing capability. Do not use explanation to avoid retrieving business figures.

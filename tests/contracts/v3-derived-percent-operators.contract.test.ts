@@ -21,6 +21,7 @@ const source = {
     { period: "1–18 Aug 2026", sales: 15668.34 },
     { period: "1–18 Aug 2025", sales: 32197.68 },
     { period: "empty", sales: 0 },
+    { period: "loss", sales: -2000 },
   ],
 };
 
@@ -46,6 +47,10 @@ test("percent_change and percent_of are 0-100 scale and null on a zero denominat
 
   const share = materializeDerivedTable(derivation("percent_of", 0, 1), [source], "Australia/Melbourne");
   assert.equal(Math.round((share.rows[0]!.value as number) * 100) / 100, 48.66);
+
+  // Against a negative base the sign still gives the direction: -$2,000 to $15,668 is a rise.
+  const fromLoss = materializeDerivedTable(derivation("percent_change", 0, 3), [source], "Australia/Melbourne");
+  assert.equal(Math.round((fromLoss.rows[0]!.value as number) * 100) / 100, 883.42);
 
   const zeroChange = materializeDerivedTable(derivation("percent_change", 0, 2), [source], "Australia/Melbourne");
   assert.equal(zeroChange.rows[0]!.value, null);

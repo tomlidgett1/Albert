@@ -879,7 +879,7 @@ export async function runGovernedAnalyticalTurn(
     const memberKeyPattern = /^[a-z_][a-z0-9_.]{0,159}$/u;
     const composePivotTableTool = tool({
       name: "ComposePivotTable",
-      description: "Build a pivoted comparison table from results already executed this turn: one row per metric, one column per label of a chosen result (\"weeks across the top\"). columnsFromResultId + labelKey pick the result and column whose values become the pivot columns (max 13 — one row per period, so query without extra dimensions). Each metrics entry adds one row: its resultId, the numeric valueKey, its own period labelKey when the column name differs (null to reuse labelKey), and the row label the reader sees. Metrics may come from different topics as long as every result has one row per matching period (same granularity and window). The renderer NEVER transposes tables itself — a request with periods as columns must go through this tool. The result is a governed derived table with its own resultId, usable as a dashboard table tile.",
+      description: "Build a pivoted comparison table from results already executed this turn: one row per metric, one column per label of a chosen result (\"weeks across the top\"). columnsFromResultId + labelKey pick the result and column whose values become the pivot columns (max 13 — one row per period, so query without extra dimensions). Each metrics entry adds one row: its resultId, the numeric valueKey, its own period labelKey when the column name differs (null to reuse labelKey), and the row label the reader sees. Metrics may come from different topics as long as every result has one row per matching period (same granularity and window). change true adds a closing Change column comparing the latest period with the one before it (a percent change on amounts and counts, percentage points on rates): set it whenever the table compares periods. A metric row is a measure (sales, transactions, margin), never an entity: to compare categories, products, staff or suppliers across periods, query each period once grouped by the entity and join the two results with DeriveResult (then a percent_change column), never one query per entity. The renderer NEVER transposes tables itself — a request with periods as columns must go through this tool. The result is a governed derived table with its own resultId, usable as a dashboard table tile.",
       parameters: z.object({
         caption: z.string().min(3).max(160),
         columnsFromResultId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
@@ -890,6 +890,7 @@ export async function runGovernedAnalyticalTurn(
           labelKey: z.string().regex(memberKeyPattern).nullable(),
           label: z.string().min(2).max(120),
         }).strict()).min(1).max(MAX_PIVOT_METRICS),
+        change: z.boolean().nullable(),
       }).strict(),
       strict: true,
       errorFunction: reportInvalidToolCall("Pivot"),
@@ -898,6 +899,7 @@ export async function runGovernedAnalyticalTurn(
         columnsFromResultId: string;
         labelKey: string;
         metrics: Array<{ resultId: string; valueKey: string; labelKey: string | null; label: string }>;
+        change: boolean | null;
       }) => {
         const sources = new Map<string, PivotSourceResult>(evidence.map((result) => [result.resultId, {
           resultId: result.resultId,
@@ -919,6 +921,7 @@ export async function runGovernedAnalyticalTurn(
             labelKey: metric.labelKey,
             label: sanitizeTraceText(metric.label, 120) || metric.valueKey,
           })),
+          change: input.change,
         }, sources, timezone);
         if (!composed.ok) {
           return JSON.stringify({ ok: false, error: composed.error, guidance: composed.guidance });
@@ -1002,7 +1005,7 @@ export async function runGovernedAnalyticalTurn(
     const resultIdSchema = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u);
     const deriveResultTool = tool({
       name: "DeriveResult",
-      description: "Governed arithmetic over results already executed this turn — the only way to combine or total results. operation join: match resultId (left) with secondResultId (right) on leftKey = rightKey labels; joinMode inner keeps matches, left keeps every left row (right columns blank when unmatched), anti keeps left rows with NO match (\"in stock but not sold\"); includeColumns picks right-hand columns (default: its numeric columns). operation aggregate: metrics [{valueKey, fn: sum|avg|min|max|count, label}] over resultId, one row per groupBy value (null = one row for the whole result) — use it for any total, average or count over a list. operation compute: expressions [{label, kind: ratio|difference|percent_of|sum, leftKey, rightKey}] add per-row columns (sales per hour, share of total, change). The output is a new result with its own resultId; cite its cells like any query result. Unused fields are null.",
+      description: "Governed arithmetic over results already executed this turn — the only way to combine or total results. operation join: match resultId (left) with secondResultId (right) on leftKey = rightKey labels; joinMode inner keeps matches, left keeps every left row (right columns blank when unmatched), anti keeps left rows with NO match (\"in stock but not sold\"); includeColumns picks right-hand columns (default: its numeric columns). The two results may cover different periods (this month's categories against last month's): each side's figures are then labelled with their own window. A right-hand column whose key the left already has comes back as matched_<key>. unmatchedAsZero true makes a left join's unmatched right-hand figures 0 instead of blank: only for totals and counts (sales, units, transactions), where no row means none; never for an average, a rate or a balance. A join may also take expressions, applied to the joined rows in the same call: a period comparison by entity is ONE call, join with joinMode left, the later period as resultId, and expressions [{label: \"Change\", kind: percent_change, leftKey: <measure>, rightKey: matched_<measure>}]. operation aggregate: metrics [{valueKey, fn: sum|avg|min|max|count, label}] over resultId, one row per groupBy value (null = one row for the whole result) — use it for any total, average or count over a list. operation compute: expressions [{label, kind: ratio|difference|percent_of|percent_change|sum, leftKey, rightKey}] add per-row columns (sales per hour, share of total, change; percent_change is (left − right) ÷ |right| × 100, left the later period). The output is a new result with its own resultId; cite its cells like any query result. Unused fields are null.",
       parameters: z.object({
         caption: z.string().min(3).max(160),
         operation: z.enum(["join", "aggregate", "compute"]),
@@ -1012,6 +1015,7 @@ export async function runGovernedAnalyticalTurn(
         leftKey: z.string().regex(memberKeyPattern).nullable(),
         rightKey: z.string().regex(memberKeyPattern).nullable(),
         joinMode: z.enum(["inner", "left", "anti"]).nullable(),
+        unmatchedAsZero: z.boolean().nullable(),
         includeColumns: z.array(z.string().regex(memberKeyPattern)).max(12).nullable(),
         groupBy: z.string().regex(memberKeyPattern).nullable(),
         metrics: z.array(z.object({
@@ -1021,7 +1025,7 @@ export async function runGovernedAnalyticalTurn(
         }).strict()).max(8).nullable(),
         expressions: z.array(z.object({
           label: z.string().min(1).max(120),
-          kind: z.enum(["ratio", "difference", "percent_of", "sum"]),
+          kind: z.enum(["ratio", "difference", "percent_of", "percent_change", "sum"]),
           leftKey: z.string().regex(memberKeyPattern),
           rightKey: z.string().regex(memberKeyPattern),
         }).strict()).max(6).nullable(),
@@ -1037,10 +1041,11 @@ export async function runGovernedAnalyticalTurn(
         leftKey: string | null;
         rightKey: string | null;
         joinMode: "inner" | "left" | "anti" | null;
+        unmatchedAsZero: boolean | null;
         includeColumns: string[] | null;
         groupBy: string | null;
         metrics: Array<{ valueKey: string; fn: "sum" | "avg" | "min" | "max" | "count"; label: string }> | null;
-        expressions: Array<{ label: string; kind: "ratio" | "difference" | "percent_of" | "sum"; leftKey: string; rightKey: string }> | null;
+        expressions: Array<{ label: string; kind: "ratio" | "difference" | "percent_of" | "percent_change" | "sum"; leftKey: string; rightKey: string }> | null;
       }) => {
         const sources = new Map<string, PivotSourceResult>(evidence.map((result) => [result.resultId, {
           resultId: result.resultId,

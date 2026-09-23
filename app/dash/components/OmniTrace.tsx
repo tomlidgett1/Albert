@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { CONNECTOR_LOGOS, CONNECTOR_NAMES } from "./connectors";
-import { containsAnswerTemplate } from "../../../packages/shared/src/agent-runtime";
+import { PIVOT_CHANGE_COLUMN_KEY, containsAnswerTemplate } from "../../../packages/shared/src/agent-runtime";
 import type {
   TraceChartEvent,
   TraceEvent,
@@ -138,13 +138,15 @@ function buildOmniModel(events: readonly TraceEvent[], dashboardMode = false): O
         break;
       }
       case "query": {
-        // ComposePivotTable reports itself as a derived result: its card is
-        // the pivot, open by default, not a collapsed evidence query.
+        // ComposePivotTable's card is the pivot, open by default. DeriveResult
+        // output (a join, a computed column, an aggregate) shares the
+        // derived_result view but is working evidence, so only the pivot
+        // tool's "Composed pivot" topic makes a pivot card.
         blocks.push({
           kind: "query",
           id: event.id,
           query: event,
-          ...(event.view === "derived_result" ? { pivot: true } : {}),
+          ...(event.view === "derived_result" && event.topic === "Composed pivot" ? { pivot: true } : {}),
         });
         break;
       }
@@ -452,7 +454,7 @@ function PivotCard({ block, onAddToDashboard }: {
   const { query, table } = block;
   const title = query.name ?? query.topic;
   const metricCount = table?.rows.length ?? query.rowCount;
-  const periodCount = table ? Math.max(0, table.columns.length - 1) : undefined;
+  const periodCount = table ? Math.max(0, table.columns.filter((column) => column.key !== PIVOT_CHANGE_COLUMN_KEY).length - 1) : undefined;
   const summary = [
     metricCount !== undefined ? `${metricCount} ${metricCount === 1 ? "metric" : "metrics"}` : null,
     periodCount !== undefined ? `${periodCount} ${periodCount === 1 ? "period" : "periods"}` : null,

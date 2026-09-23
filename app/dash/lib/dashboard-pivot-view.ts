@@ -1,5 +1,5 @@
 import type { DashboardTile } from "@/services/control-plane/src/dashboard-repository";
-import type { TraceRowFormat } from "@/packages/shared/src";
+import { PIVOT_CHANGE_COLUMN_KEY, type TraceRowFormat } from "@/packages/shared/src";
 import {
   defaultPivot,
   PIVOT_PERIOD,
@@ -60,7 +60,8 @@ export function composedPivotSource(
   }>,
   rowFormats?: readonly (TraceRowFormat | null)[] | null,
 ): PivotSource {
-  const periods = snapshot.columns.filter((column) => column.key !== "metric");
+  // The change column is the answer table's, not a period: the transposed view shows periods only.
+  const periods = snapshot.columns.filter((column) => column.key !== "metric" && column.key !== PIVOT_CHANGE_COLUMN_KEY);
   const metrics: PivotField[] = snapshot.rows.map((row, index) => {
     const rowFormat = rowFormats?.[index];
     const first = periods[0];

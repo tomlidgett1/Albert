@@ -337,3 +337,119 @@ test("aggregates, anti-joins, unmatched left rows and oversized sources stay unr
   assert.equal(oversized.result.derivation, null);
   assert.match(oversized.result.notes.join(" "), /more than 50 rows/u);
 });
+
+test("percent change runs from the right (earlier) column to the left and blanks a zero base", () => {
+  const categories: PivotSourceResult = {
+    resultId: "01CATS00000000000000000000",
+    topic: "Category sales",
+    columns: [
+      { key: "category", label: "Category", type: "string" },
+      { key: "this_month", label: "September", type: "currency", currency: "AUD" },
+      { key: "last_month", label: "August", type: "currency", currency: "AUD" },
+      { key: "units", label: "Units", type: "number" },
+    ],
+    rows: [
+      { category: "Bikes", this_month: "12000.00", last_month: 10000, units: 4 },
+      { category: "Parts", this_month: 450, last_month: 600, units: 30 },
+      { category: "Service", this_month: 800, last_month: 0, units: 9 },
+      // A loss that turned into a profit is a rise, whatever the base's sign.
+      { category: "Hire", this_month: 300, last_month: -200, units: 2 },
+    ],
+    provenance: provenance("Category sales"),
+    semantics: completeSemantics("category", 4),
+  };
+  const catSources = new Map([[categories.resultId, categories]]);
+  const outcome = deriveResult({
+    ...base,
+    operation: "compute",
+    resultId: categories.resultId,
+    expressions: [{ label: "Change", kind: "percent_change", leftKey: "this_month", rightKey: "last_month" }],
+  }, catSources);
+  assert.ok(outcome.ok, JSON.stringify(outcome));
+  assert.deepEqual(outcome.result.rows.map((row) => row.change), [20, -25, null, 250]);
+  assert.deepEqual(outcome.result.columns.find((column) => column.key === "change"), { key: "change", label: "Change", type: "percent", percentScale: "percent" });
+  assert.match(outcome.result.provenance.calculations?.[0]?.formula ?? "", /^\(this_month − last_month\) ÷ \|last_month\| × 100$/u);
+  // The sealed transform reproduces the same figures on refresh.
+  const { derivation } = outcome.result;
+  assert.ok(derivation, outcome.result.notes.join(" "));
+  const replayed = materializeDerivedTable(derivation, [{ resultId: categories.resultId, columns: categories.columns, rows: categories.rows }], "Australia/Melbourne");
+  assert.deepEqual(replayed.rows.map((row) => row.change), [20, -25, null, 250]);
+  // A change between an amount and a count is refused, like a difference.
+  const mixed = deriveResult({
+    ...base,
+    operation: "compute",
+    resultId: categories.resultId,
+    expressions: [{ label: "Nonsense", kind: "percent_change", leftKey: "this_month", rightKey: "units" }],
+  }, catSources);
+  assert.equal(mixed.ok, false);
+});
+
+test("a join sets two periods side by side, labelled by window, and adds the change in the same call", () => {
+  const month = (resultId: string, window: string, label: string, rows: { category_id: string; category: string; sales: number }[]): PivotSourceResult => ({
+    resultId,
+    topic: "Category sales",
+    columns: [
+      { key: "category_id", label: "Category ID", type: "string" },
+      { key: "category", label: "Category", type: "string" },
+      { key: "sales", label: "Sales", type: "currency", currency: "AUD" },
+    ],
+    rows,
+    provenance: { ...provenance("Category sales"), timeRange: { label, start: "unknown", end: "unknown", timezone: "Australia/Melbourne" } },
+    semantics: { ...completeSemantics("category_id", rows.length), window: `{"ranges":["${window}"]}` },
+  });
+  const sep = month("01SEPT00000000000000000000", "sep", "2026-09-01 to 2026-09-19", [
+    { category_id: "c1", category: "Services", sales: 7137 },
+    { category_id: "c2", category: "Kids bikes", sales: 660 },
+    { category_id: "c3", category: "Computers", sales: 685 },
+  ]);
+  const aug = month("01AUGU00000000000000000000", "aug", "2026-08-01 to 2026-08-19", [
+    { category_id: "c1", category: "Services", sales: 3475 },
+    { category_id: "c2", category: "Kids bikes", sales: 1320 },
+    { category_id: "c4", category: "Helmets", sales: 710 },
+  ]);
+  const periods = new Map([[sep.resultId, sep], [aug.resultId, aug]]);
+  const compared = deriveResult({
+    ...base,
+    caption: "Category sales, September against August",
+    operation: "join",
+    resultId: sep.resultId,
+    secondResultId: aug.resultId,
+    leftKey: "category_id",
+    rightKey: "category_id",
+    joinMode: "left",
+    includeColumns: ["sales"],
+    expressions: [{ label: "Change", kind: "percent_change", leftKey: "sales", rightKey: "matched_sales" }],
+  }, periods);
+  assert.ok(compared.ok, JSON.stringify(compared));
+  const { columns, rows, notes } = compared.result;
+  assert.deepEqual(columns.map((column) => column.key), ["category_id", "category", "sales", "matched_sales", "change"]);
+  // Each side's figures say which window they cover, so neither reads as the other.
+  assert.match(columns.find((column) => column.key === "sales")!.label, /^Sales \(1 Sept? 2026–19 Sept? 2026\)$/u);
+  assert.match(columns.find((column) => column.key === "matched_sales")!.label, /^Sales \(1 Aug 2026–19 Aug 2026\)$/u);
+  assert.ok(Math.abs(Number(rows[0]!.change) - 105.3813) < 0.001);
+  assert.deepEqual(rows.slice(1).map((row) => row.change === null ? null : Number(row.change)), [-50, null]);
+  assert.match(notes.join(" "), /Two periods side by side/u);
+  assert.equal(compared.result.provenance.calculations?.find((calculation) => calculation.column === "change")?.operator, "percent_change");
+
+  // "What dropped": the earlier period on the left keeps a category with no later sales, at zero when asked.
+  const dropped = deriveResult({
+    ...base,
+    caption: "What fell",
+    operation: "join",
+    resultId: aug.resultId,
+    secondResultId: sep.resultId,
+    leftKey: "category_id",
+    rightKey: "category_id",
+    joinMode: "left",
+    unmatchedAsZero: true,
+    includeColumns: ["sales"],
+    expressions: [{ label: "Drop", kind: "difference", leftKey: "matched_sales", rightKey: "sales" }],
+  }, periods);
+  assert.ok(dropped.ok, JSON.stringify(dropped));
+  assert.deepEqual(dropped.result.rows.map((row) => [row.category, Number(row.matched_sales), Number(row.drop)]), [["Services", 7137, 3662], ["Kids bikes", 660, -660], ["Helmets", 0, -710]]);
+  assert.match(dropped.result.notes.join(" "), /1 unmatched row reads 0/u);
+  // Without it the missing figure stays blank.
+  const blank = deriveResult({ ...base, caption: "What fell", operation: "join", resultId: aug.resultId, secondResultId: sep.resultId, leftKey: "category_id", rightKey: "category_id", joinMode: "left", includeColumns: ["sales"] }, periods);
+  assert.ok(blank.ok);
+  assert.equal(blank.result.rows[2]!.matched_sales, null);
+});

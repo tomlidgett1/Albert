@@ -4,15 +4,17 @@ import {
   materializeDerivedTable,
   type DerivedTableSource,
 } from "../../albert-v3/src/engine/derived-table.js";
-import type {
-  TraceCell,
-  TraceDerivedIndexedSourceCell,
-  TraceProvenance,
-  TraceRowFormat,
-  TraceTableColumn,
-  TraceTableDerivationV1,
-  TraceTableEvent,
-  ResultSemantics,
+import {
+  PIVOT_CHANGE_COLUMN_KEY,
+  type TraceCell,
+  type TraceDerivedIndexedSourceCell,
+  type TraceDerivedMatchedSourceCell,
+  type TraceProvenance,
+  type TraceRowFormat,
+  type TraceTableColumn,
+  type TraceTableDerivationV1,
+  type TraceTableEvent,
+  type ResultSemantics,
 } from "../../shared/src/index.js";
 
 /**
@@ -41,6 +43,12 @@ export type PivotComposeInput = Readonly<{
   columnsFromResultId: string;
   labelKey: string;
   metrics: readonly PivotMetricSpec[];
+  /**
+   * Adds a closing "Change" column: the latest period against the one before
+   * it. Amount and count rows show a percent change; rate rows (a margin, a
+   * share) show the difference in percentage points.
+   */
+  change?: boolean | null;
 }>;
 
 export type PivotSourceResult = Readonly<{
@@ -70,6 +78,19 @@ export type ComposedPivot = Readonly<{
 export type ComposePivotOutcome =
   | Readonly<{ ok: true; pivot: ComposedPivot }>
   | Readonly<{ ok: false; error: string; guidance: string }>;
+
+/** A metric row's label is plain text: bold or code marks would print literally in a table cell. */
+function plainLabel(label: string): string {
+  return label.replace(/[*_`#]+/gu, "").replace(/\s+/gu, " ").trim();
+}
+
+/** The first calendar date a period label names ("2026-08-10T00:00", "2026-09-01 to 2026-09-19"). */
+function labelStart(label: string): number | null {
+  const match = /(\d{4})-(\d{2})-(\d{2})/u.exec(label);
+  if (!match) return null;
+  const time = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isFinite(time) ? time : null;
+}
 
 function pivotColumnKey(label: string, taken: Set<string>): string {
   let slug = label
@@ -183,7 +204,7 @@ export function composePivotTable(
   ))
     ? metricColumns[0]!
     : null;
-  const takenKeys = new Set(["metric"]);
+  const takenKeys = new Set(["metric", PIVOT_CHANGE_COLUMN_KEY]);
   const periodColumns = labels.map((label) => ({
     key: pivotColumnKey(label.text, takenKeys),
     label: label.text.slice(0, 160),
@@ -197,6 +218,23 @@ export function composePivotTable(
       columnKey: input.labelKey,
     } satisfies TraceDerivedIndexedSourceCell,
   }));
+
+  // The change compares the latest period with the one before it: by the
+  // dates the labels name when every label names one, else by column order.
+  const starts = labels.map((label) => labelStart(label.text));
+  const byDate = starts.every((start) => start !== null);
+  const chronological = periodColumns.map((_, index) => index).sort((a, b) => (byDate ? starts[a]! - starts[b]! : a - b));
+  const latest = chronological.at(-1);
+  const previous = chronological.at(-2);
+  const withChange = Boolean(input.change) && latest !== undefined && previous !== undefined;
+  if (input.change && !withChange) notes.push("A change column needs at least two periods, so none was added.");
+  const matchedCell = (metric: PivotMetricSpec, column: (typeof periodColumns)[number]): TraceDerivedMatchedSourceCell => ({
+    kind: "matched_source",
+    sourceResultId: metric.resultId,
+    columnKey: metric.valueKey,
+    matchColumnKey: metric.labelKey ?? input.labelKey,
+    matchValue: column.labelSource,
+  });
 
   const orderedSourceIds: string[] = [];
   const includeSource = (resultId: string) => {
@@ -213,20 +251,22 @@ export function composePivotTable(
     columns: [
       { key: "metric", label: "Metric", type: "string" },
       ...periodColumns,
+      ...(withChange ? [{ key: PIVOT_CHANGE_COLUMN_KEY, label: "Change", type: "percent" as const, percentScale: "percent" as const }] : []),
     ],
-    rows: input.metrics.map((metric) => ({
+    rows: input.metrics.map((metric, index) => ({
       cells: [
-        { columnKey: "metric", expression: { kind: "literal", value: metric.label.slice(0, 160) } },
-        ...periodColumns.map((column) => ({
-          columnKey: column.key,
+        { columnKey: "metric", expression: { kind: "literal", value: (plainLabel(metric.label) || metric.valueKey).slice(0, 160) } },
+        ...periodColumns.map((column) => ({ columnKey: column.key, expression: matchedCell(metric, column) })),
+        ...(withChange ? [{
+          columnKey: PIVOT_CHANGE_COLUMN_KEY,
           expression: {
-            kind: "matched_source" as const,
-            sourceResultId: metric.resultId,
-            columnKey: metric.valueKey,
-            matchColumnKey: metric.labelKey ?? input.labelKey,
-            matchValue: column.labelSource,
+            kind: "calculation" as const,
+            // A rate moves in points; an amount or a count moves by a percentage.
+            operator: metricColumns[index]!.type === "percent" ? "subtract" as const : "percent_change" as const,
+            left: matchedCell(metric, periodColumns[latest!]!),
+            right: matchedCell(metric, periodColumns[previous!]!),
           },
-        })),
+        }] : []),
       ],
     })),
   };
@@ -249,7 +289,9 @@ export function composePivotTable(
     };
   }
 
-  const rowFormats = uniform
+  // A change column's unit depends on its row (points on a rate), so every
+  // renderer needs the row formats whenever there is one, even in one unit.
+  const rowFormats = uniform && !withChange
     ? null
     : input.metrics.map((metric, index) => {
       const column = metricColumns[index]!;
@@ -262,6 +304,11 @@ export function composePivotTable(
         : null;
     });
   if (!uniform) notes.push("Rows carry mixed units; each row keeps its own measure's format.");
+  if (withChange) {
+    // Named by the headings the table shows, not the raw bucket values.
+    const heading = (index: number) => materialized.columns.find((column) => column.key === periodColumns[index]!.key)?.label ?? labels[index]!.text;
+    notes.push(`Change compares ${heading(latest!)} with ${heading(previous!)}: a percent change on amounts and counts, percentage points on rates.`);
+  }
 
   const provenanceSources: TraceProvenance["sources"][number][] = [];
   const seenProvenance = new Set<string>();

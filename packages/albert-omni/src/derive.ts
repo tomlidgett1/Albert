@@ -3,6 +3,7 @@ import Decimal from "decimal.js";
 import { materializeDerivedTable } from "../../albert-v3/src/engine/derived-table.js";
 import type {
   TraceCell,
+  TraceDerivedCalculationOperator,
   TraceDerivedCellExpression,
   TraceDerivedSourceCell,
   TraceProvenance,
@@ -13,6 +14,7 @@ import type {
 import type { PivotSourceResult } from "./pivot.js";
 import { derivedResultSemantics } from "./evidence.js";
 import { decimalCell } from "./calculate.js";
+import { formatReportingPeriodLabel } from "../../shared/src/reporting-dates.js";
 const Exact = Decimal.clone({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
 
 /**
@@ -38,7 +40,13 @@ export const MAX_REPLAY_ROWS = 50;
 
 export type DeriveJoinMode = "inner" | "left" | "anti";
 export type DeriveAggregateFn = "sum" | "avg" | "min" | "max" | "count";
-export type DeriveExpressionKind = "ratio" | "difference" | "percent_of" | "sum";
+export type DeriveExpressionKind = "ratio" | "difference" | "percent_of" | "percent_change" | "sum";
+
+/** Each compute kind as a derived-table operator: the sealed transform and the provenance name the same arithmetic. */
+const OPERATORS = { ratio: "divide", percent_of: "percent_of", percent_change: "percent_change", difference: "subtract", sum: "add" } as const satisfies Record<DeriveExpressionKind, TraceDerivedCalculationOperator>;
+
+/** A result with a blank calculated cell says why, in the owner's words. */
+export const BLANK_CALCULATION_NOTE = "A blank calculated figure had a missing or zero value to work from.";
 
 export type DeriveInput = Readonly<{
   caption: string;
@@ -54,6 +62,13 @@ export type DeriveInput = Readonly<{
   expressions: readonly Readonly<{ label: string; kind: DeriveExpressionKind; leftKey: string; rightKey: string }>[] | null;
   /** A subset total is permitted only when explicitly requested and labelled. */
   aggregateScope?: "population" | "returned_rows";
+  /**
+   * A left join's unmatched right-hand figures read 0 instead of blank: right
+   * for totals and counts over a complete result, where no row means none
+   * (a product with no September sales sold nothing), never for an average,
+   * a rate or a balance.
+   */
+  unmatchedAsZero?: boolean | null;
 }>;
 
 export type DerivedResult = Readonly<{
@@ -135,7 +150,7 @@ function mergedProvenance(
   input: DeriveInput,
   primary: PivotSourceResult,
   others: readonly PivotSourceResult[],
-  calculations: readonly Readonly<{ column: string; formula: string }>[],
+  calculations: NonNullable<TraceProvenance["calculations"]>,
   definitions: TraceProvenance["definitions"],
 ): TraceProvenance {
   const sources: TraceProvenance["sources"][number][] = [];
@@ -250,9 +265,14 @@ function deriveJoin(input: DeriveInput, sources: ReadonlyMap<string, PivotSource
   if (!leftIdentity || !rightIdentity || leftIdentity.kind !== rightIdentity.kind || leftIdentity.domain !== rightIdentity.domain) {
     return failure("Join keys do not have a shared, governed identity.", "Use source IDs from the same identity domain or matching time buckets. Display names and independent systems' IDs cannot establish identity.");
   }
-  if (left.semantics?.window !== right.semantics?.window) {
-    return failure("Join inputs cover different periods or timezones.", "Query both sources over the same explicit window and timezone before aligning them.");
+  // Two periods may be set side by side (this month's categories against last
+  // month's): each side is still one row per governed key, and each side's
+  // figures are labelled with their own window so neither reads as the other.
+  const acrossPeriods = left.semantics?.window !== right.semantics?.window;
+  if (acrossPeriods && left.provenance.timeRange.timezone !== right.provenance.timeRange.timezone) {
+    return failure("Join inputs cover different timezones.", "Query both sources in the same timezone before aligning them.");
   }
+  const windowOf = (source: PivotSourceResult) => formatReportingPeriodLabel(source.provenance.timeRange.label);
   if ((mode === "anti" || mode === "left") && right.semantics?.completeness !== "complete") {
     return failure("The second result is incomplete; absence of a match cannot be established.", "Query the full matching population with a narrower filter or a governed aggregate. A row-limited result cannot prove that something was never sold or has no matching activity.");
   }
@@ -285,12 +305,15 @@ function deriveJoin(input: DeriveInput, sources: ReadonlyMap<string, PivotSource
     return failure("includeColumns names a column the second result does not have.", `Columns of ${right.resultId}: ${right.columns.map((column) => column.key).join(", ")}.`);
   }
   const taken = new Set(left.columns.map((column) => column.key));
-  const outputColumns: TraceTableColumn[] = [...left.columns];
+  const outputColumns: TraceTableColumn[] = left.columns.map((column) => (
+    acrossPeriods && NUMERIC_COLUMN_TYPES.has(column.type) ? { ...column, label: `${column.label} (${windowOf(left)})` } : column
+  ));
   const rightOutput: { source: TraceTableColumn; key: string }[] = [];
   for (const column of bringColumns as TraceTableColumn[]) {
     const key = taken.has(column.key) ? columnKey(`matched_${column.key}`, taken) : (taken.add(column.key), column.key);
     rightOutput.push({ source: column, key });
-    outputColumns.push({ ...column, key, label: taken.has(column.key) && key !== column.key ? `${column.label} (matched)` : column.label });
+    const label = acrossPeriods ? `${column.label} (${windowOf(right)})` : taken.has(column.key) && key !== column.key ? `${column.label} (matched)` : column.label;
+    outputColumns.push({ ...column, key, label });
   }
 
   const rows: Record<string, TraceCell>[] = [];
@@ -306,12 +329,15 @@ function deriveJoin(input: DeriveInput, sources: ReadonlyMap<string, PivotSource
     }
     if (mode === "inner" && !match) return;
     const out: Record<string, TraceCell> = { ...row };
-    for (const { source, key: outKey } of rightOutput) out[outKey] = match ? (match[source.key] ?? null) : null;
+    const unmatched = mode === "left" && input.unmatchedAsZero ? 0 : null;
+    for (const { source, key: outKey } of rightOutput) out[outKey] = match ? (match[source.key] ?? null) : NUMERIC_COLUMN_TYPES.has(source.type) ? unmatched : null;
     rows.push(out);
     outputLeftRows.push({ leftRowIndex, matched: Boolean(match) });
   });
   const notes: string[] = [
     `Matched on exact ${leftColumn.label} = ${rightColumn.label} keys; ${matched} of ${left.rows.length} left rows matched.`,
+    ...(acrossPeriods ? [`Two periods side by side: this result's figures are ${windowOf(left)}, the second result's ${windowOf(right)}. Head each column with its own period.`] : []),
+    ...(mode === "left" && input.unmatchedAsZero && matched < left.rows.length ? [`${left.rows.length - matched} unmatched ${left.rows.length - matched === 1 ? "row reads" : "rows read"} 0 for the second result's figures.`] : []),
   ];
   if (mode === "anti") notes.push(`${rows.length} left rows have no match in the second result.`);
   const recipe = `${mode} join of ${input.resultId} on ${leftColumn.key} with ${input.secondResultId} on ${rightColumn.key}`;
@@ -467,14 +493,14 @@ function deriveCompute(input: DeriveInput, sources: ReadonlyMap<string, PivotSou
     if (isOutcome(left)) return left;
     const right = requireColumn(source, expression.rightKey, `"${expression.label}" rightKey`, true);
     if (isOutcome(right)) return right;
-    if ((expression.kind === "difference" || expression.kind === "sum") && (left.type !== right.type || left.currency !== right.currency)) {
+    if ((expression.kind === "difference" || expression.kind === "sum" || expression.kind === "percent_change") && (left.type !== right.type || left.currency !== right.currency)) {
       return failure("Addition and subtraction require matching units and currencies.", "Choose two compatible columns. Ratios may combine different units, but currencies must be converted by a governed measure.");
     }
     if (left.currency && right.currency && left.currency !== right.currency) {
       return failure("Arithmetic cannot combine different currencies.", "Use a modeled currency-converted measure first.");
     }
     const key = columnKey(expression.label, taken);
-    const type: TraceTableColumn["type"] = expression.kind === "percent_of" ? "percent" : expression.kind === "ratio" ? "number" : left.type;
+    const type: TraceTableColumn["type"] = expression.kind === "percent_of" || expression.kind === "percent_change" ? "percent" : expression.kind === "ratio" ? "number" : left.type;
     columns.push({ key, label: expression.label, type, ...(type === left.type && left.currency ? { currency: left.currency } : {}), ...(type === "percent" ? { percentScale: "percent" as const } : {}) });
     plans.push({ key, kind: expression.kind, left, right });
   }
@@ -488,6 +514,8 @@ function deriveCompute(input: DeriveInput, sources: ReadonlyMap<string, PivotSou
         switch (plan.kind) {
           case "ratio": value = right.isZero() ? null : decimalCell(left.div(right)); break;
           case "percent_of": value = right.isZero() ? null : decimalCell(left.div(right).mul(100)); break;
+          // Change from right (the earlier period) to left, on the 0-100 scale, against the base's size as the engine does.
+          case "percent_change": value = right.isZero() ? null : decimalCell(left.minus(right).div(right.abs()).mul(100)); break;
           case "difference": value = decimalCell(left.minus(right)); break;
           default: value = decimalCell(left.plus(right));
         }
@@ -500,9 +528,11 @@ function deriveCompute(input: DeriveInput, sources: ReadonlyMap<string, PivotSou
     ? `${plan.left.key} ÷ ${plan.right.key}`
     : plan.kind === "percent_of"
       ? `${plan.left.key} ÷ ${plan.right.key} × 100`
-      : plan.kind === "difference" ? `${plan.left.key} − ${plan.right.key}` : `${plan.left.key} + ${plan.right.key}`;
+      : plan.kind === "percent_change"
+        ? `(${plan.left.key} − ${plan.right.key}) ÷ |${plan.right.key}| × 100`
+        : plan.kind === "difference" ? `${plan.left.key} − ${plan.right.key}` : `${plan.left.key} + ${plan.right.key}`;
   const recipe = plans.map((plan) => `${plan.key} = ${formula(plan)}`).join("; ");
-  const provenance = mergedProvenance(input, source, [], plans.map((plan) => ({ column: plan.key, formula: formula(plan) })), [
+  const provenance = mergedProvenance(input, source, [], plans.map((plan) => ({ column: plan.key, formula: formula(plan), operator: OPERATORS[plan.kind] })), [
     ...source.provenance.definitions,
     ...plans.map((plan) => ({
       metric: `derive.${plan.key}`,
@@ -516,7 +546,6 @@ function deriveCompute(input: DeriveInput, sources: ReadonlyMap<string, PivotSou
 
   // The sealed transform: each row carries the source cells and one
   // calculation per expression over its two operands.
-  const OPERATORS = { ratio: "divide", percent_of: "percent_of", difference: "subtract", sum: "add" } as const;
   let derivation: TraceTableDerivationV1 | null = null;
   const cellsByRow = source.rows.slice(0, MAX_REPLAY_ROWS).map((_row, rowIndex) => {
     const cells: { columnKey: string; expression: TraceDerivedCellExpression }[] = [];
@@ -550,9 +579,38 @@ function deriveCompute(input: DeriveInput, sources: ReadonlyMap<string, PivotSou
   const retained = rows.slice(0, MAX_DERIVED_ROWS);
   const semantics = derivedResultSemantics([source], retained.length, recipe);
   if (retained.some((row) => plans.some((plan) => row[plan.key] === null))) {
-    return { ok: true, result: { columns, rows: retained, provenance, notes, recipe, derivation, semantics: { ...semantics, qualifications: [...(semantics.qualifications ?? []), "Some calculated cells are undefined because an operand is missing or a divisor is zero."] } } };
+    return { ok: true, result: { columns, rows: retained, provenance, notes, recipe, derivation, semantics: { ...semantics, qualifications: [...(semantics.qualifications ?? []), BLANK_CALCULATION_NOTE] } } };
   }
   return { ok: true, result: { columns, rows: retained, provenance, notes, recipe, derivation, semantics } };
+}
+
+/**
+ * A join's expressions add their per-row columns to the joined rows in the
+ * same call, so the usual period comparison (a join and a change) is one step.
+ * The compute folds through the sealed join to the governed leaves; a join
+ * that cannot refresh leaves a result that cannot either.
+ */
+function computeOverJoin(input: DeriveInput, joined: DerivedResult, sources: ReadonlyMap<string, PivotSourceResult>): DeriveOutcome {
+  const intermediate: PivotSourceResult = {
+    resultId: `joined:${input.resultId}:${input.secondResultId}`,
+    topic: input.caption,
+    columns: joined.columns,
+    rows: joined.rows,
+    provenance: joined.provenance,
+    semantics: joined.semantics,
+    ...(joined.derivation ? { derivation: joined.derivation } : {}),
+  };
+  const computed = deriveCompute({ ...input, operation: "compute", resultId: intermediate.resultId, secondResultId: null }, new Map([...sources, [intermediate.resultId, intermediate]]));
+  if (!computed.ok) return computed;
+  return {
+    ok: true,
+    result: {
+      ...computed.result,
+      derivation: joined.derivation ? computed.result.derivation : null,
+      notes: [...joined.notes, ...computed.result.notes.filter((note) => !joined.notes.includes(note))],
+      recipe: `${joined.recipe}; then ${computed.result.recipe}`,
+    },
+  };
 }
 
 export function deriveResult(
@@ -563,7 +621,10 @@ export function deriveResult(
     return failure(`Unknown resultId ${input.resultId}.`, `Derive only over results executed this turn. Available: ${[...sources.keys()].join(", ") || "none yet"}.`);
   }
   switch (input.operation) {
-    case "join": return deriveJoin(input, sources);
+    case "join": {
+      const joined = deriveJoin(input, sources);
+      return joined.ok && input.expressions?.length ? computeOverJoin(input, joined.result, sources) : joined;
+    }
     case "aggregate": return deriveAggregate(input, sources);
     default: return deriveCompute(input, sources);
   }

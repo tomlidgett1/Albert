@@ -1,4 +1,4 @@
-import type { TraceCell, TraceRowFormat, TraceTableColumn } from "@/packages/shared/src";
+import { PIVOT_CHANGE_COLUMN_KEY, type TraceCell, type TraceRowFormat, type TraceTableColumn } from "@/packages/shared/src";
 
 const exactDecimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/u;
 const numericColumnTypes = new Set<TraceTableColumn["type"]>(["number", "currency", "percent"]);
@@ -86,7 +86,24 @@ export function isExplainableTraceCell(value: TraceCell, column: TraceTableColum
   return numericColumnTypes.has(column.type) && traceCellNumber(value) !== null;
 }
 
+/**
+ * A composed pivot's change keeps its own unit whatever its row's format: a
+ * signed percent change on an amount or a count, percentage points on a rate
+ * ("+12.4%", "-3.1 pts"), as the answer composer writes it.
+ */
+function formatPivotChange(value: TraceCell, rowFormat: TraceRowFormat): string {
+  const numericValue = traceCellNumber(value);
+  if (numericValue === null) return value === null ? "—" : String(value);
+  const rate = rowFormat.type === "percent";
+  const shown = rate && rowFormat.percentScale === "ratio" ? numericValue * 100 : numericValue;
+  const places = Math.abs(shown) >= 100 ? 0 : 1;
+  const rounded = Number(shown.toFixed(places));
+  const text = new Intl.NumberFormat("en-AU", { minimumFractionDigits: places, maximumFractionDigits: places }).format(Math.abs(rounded));
+  return `${rounded > 0 ? "+" : rounded < 0 ? "-" : ""}${text}${rate ? " pts" : "%"}`;
+}
+
 export function formatTraceCell(value: TraceCell, column: TraceTableColumn, rowFormat?: TraceRowFormat | null): string {
+  if (rowFormat && column.key === PIVOT_CHANGE_COLUMN_KEY && column.type === "percent") return formatPivotChange(value, rowFormat);
   // A pivoted table stacks measures with different units in the same column,
   // so the row's own format outranks the column type for its numeric cells.
   if (rowFormat && numericColumnTypes.has(column.type)) {

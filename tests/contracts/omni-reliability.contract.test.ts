@@ -230,6 +230,10 @@ test("percentage points below one render consistently in chat and dashboard tabl
   assert.equal(formatTraceCell(0.5, column), "+0.5%");
   assert.equal(formatDashboardCell(0.5, column), "+0.5%");
   assert.equal(formatTraceCell(0.5, { ...column, percentScale: "ratio" }), "+50%");
+  // A composed pivot's change keeps its own unit whatever its row's format says.
+  assert.equal(formatTraceCell(32.58, column, { type: "currency", currency: "AUD" }), "+32.6%");
+  assert.equal(formatTraceCell(-3.5, column, { type: "percent", percentScale: "percent" }), "-3.5 pts");
+  assert.equal(formatTraceCell(-0.035, column, { type: "percent", percentScale: "ratio" }), "-3.5 pts");
 });
 
 test("composed single-column tables and escaped source labels render as literal data", () => {

@@ -106,7 +106,8 @@ function expressionValue(
     case "multiply": return left * right;
     case "divide": return right === 0 ? null : left / right;
     // 0-100 scale, matching Cube percent measures and the percent column type.
-    case "percent_change": return right === 0 ? null : ((left - right) / right) * 100;
+    // Measured against the base's size, so a loss narrowing to a profit reads as a rise.
+    case "percent_change": return right === 0 ? null : ((left - right) / Math.abs(right)) * 100;
     case "percent_of": return right === 0 ? null : (left / right) * 100;
   }
 }

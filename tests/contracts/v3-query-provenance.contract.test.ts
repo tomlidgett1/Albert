@@ -92,7 +92,7 @@ test("composed-table provenance explains calculated columns in words", () => {
     ] }],
   }, sources);
   assert.deepEqual(calculations, [
-    { column: "Change %", formula: "(Sales (1–18 Aug 2026) − Sales (1–18 Aug 2025)) ÷ Sales (1–18 Aug 2025) × 100" },
+    { column: "Change %", formula: "(Sales (1–18 Aug 2026) − Sales (1–18 Aug 2025)) ÷ |Sales (1–18 Aug 2025)| × 100" },
     { column: "Change $", formula: "Sales (1–18 Aug 2026) − Sales (1–18 Aug 2025)" },
   ]);
 });
