@@ -30,6 +30,7 @@ import {
   type TraceCell,
   type TraceEvent,
   type TraceTableDerivationV1,
+  type ResultSemantics,
 } from "../../shared/src/index.js";
 import { buildLiveAgentModelSettings, buildOpenAIAgentRunConfig } from "../../agent/src/runtime.js";
 import { createAlbertModelProvider } from "../../agent/src/responses-provider.js";
@@ -140,6 +141,45 @@ const MAX_MODEL_SEARCHES = 16;
 const MAX_TRACE_ROWS = 500;
 const MAX_RESULT_ROW_BYTES = 1_000_000;
 const MAX_MODEL_RESULT_ROWS = 200;
+
+const NUMERIC_MODEL_COLUMN_TYPES = new Set(["number", "currency", "percent"]);
+const DATE_MODEL_COLUMN_TYPES = new Set(["date", "datetime", "time"]);
+
+/**
+ * A result as the model reads it: the columns once, then one array per row in
+ * column order. Keyed objects repeated every column key on every row (over
+ * half of all result characters), numeric strings carried Cube's trailing
+ * zeros ("6544.7300000000000000") and midnight timestamps their clock, and
+ * every step re-sends every earlier result. The evidence and the trace keep
+ * the full rows; only the model's copy is compact.
+ */
+function modelTable(
+  columns: readonly Readonly<{ key: string; label: string; type: string }>[],
+  rows: readonly Readonly<Record<string, unknown>>[],
+  limit: number = MAX_MODEL_RESULT_ROWS,
+) {
+  const cell = (value: unknown, type: string): unknown => {
+    if (typeof value !== "string") return value ?? null;
+    if (NUMERIC_MODEL_COLUMN_TYPES.has(type) && /^-?\d+\.\d+$/u.test(value)) return value.replace(/\.?0+$/u, "");
+    if (DATE_MODEL_COLUMN_TYPES.has(type) && /^\d{4}-\d{2}-\d{2}T00:00:00(?:\.0+)?Z?$/u.test(value)) return value.slice(0, 10);
+    return value;
+  };
+  return {
+    columns: columns.map((column) => ({ key: column.key, label: column.label, type: column.type })),
+    rowFormat: "Each row is an array in column order; its rowIndex is its zero-based position.",
+    rows: rows.slice(0, limit).map((row) => columns.map((column) => cell(row[column.key], column.type))),
+  };
+}
+
+/** What the model needs from result semantics; the digests and serialized windows stay in the evidence. */
+function modelSemantics(semantics: ResultSemantics | undefined) {
+  if (!semantics) return { completeness: "unknown" };
+  return {
+    completeness: semantics.completeness,
+    rowLimit: semantics.rowLimit,
+    ...(Object.keys(semantics.keys ?? {}).length ? { keys: semantics.keys } : {}),
+  };
+}
 const MAX_TRACE_DOCUMENT_CHARS = 60_000;
 
 /** Multi-line trace copy (YAML documents): control characters out, size bounded, newlines kept. */
@@ -747,7 +787,7 @@ export async function runGovernedAnalyticalTurn(
       const saved = evidence.find((result) => !result.priorTurn && result.semantics?.queryDigest === cubeQueryDigest(scopedQuery.query));
       if (saved) {
         await emit({ type: "progress", status: "complete", stage: "query", label: sanitizeTraceText(`Reusing checked result: ${queryName}`, 200) });
-        return JSON.stringify({ ok: true, resultId: saved.resultId, name: queryName, topic: saved.topic, rowCount: saved.rowCount, columns: saved.columns, rows: saved.rows.slice(0, MAX_MODEL_RESULT_ROWS), semantics: saved.semantics, note: "This exact query is already in the saved evidence; no new data request was made." });
+        return JSON.stringify({ ok: true, resultId: saved.resultId, name: queryName, topic: saved.topic, rowCount: saved.rowCount, ...modelTable(saved.columns, saved.rows), semantics: modelSemantics(saved.semantics), note: "This exact query is already in the saved evidence; no new data request was made." });
       }
       const loaded = await cube.loadQuery(withTimezone, {
         signal: explorationSignal,
@@ -890,12 +930,11 @@ export async function runGovernedAnalyticalTurn(
         topic: topicLabel,
         rowCount: loaded.result.rows.length,
         executionMs: loaded.result.executionMs,
-        columns: columns.map((column) => ({ key: column.key, label: column.label, type: column.type })),
-        rows: rows.slice(0, MAX_MODEL_RESULT_ROWS),
-        semantics,
+        ...modelTable(columns, rows),
+        semantics: modelSemantics(semantics),
         ...(rowLimitReached ? {
           rowLimitReached: true,
-          rowLimitNote: `This result has incomplete coverage (query row limit ${rowLimit}; ${rows.length} rows retained). Additional rows may exist, so never describe the retained rows as the full population or sum them as a population total. For a count or total, query an aggregated measure without entity dimensions and with the same filters; to test absence, query the full matching population.`,
+          rowLimitNote: `Top-${rowLimit} slice: more rows may exist. Never call these rows the whole population or add them up; take a count or total from an aggregate query with the same filters.`,
         } : {}),
         ...(truncatedForModel ? {
           truncated: true,
@@ -936,7 +975,7 @@ export async function runGovernedAnalyticalTurn(
       execute: async (input: { resultId: string }) => {
         const source = evidence.find((result) => result.resultId === input.resultId);
         if (!source) return JSON.stringify({ ok: false, error: "Unknown resultId for this turn." });
-        return JSON.stringify({ ok: true, resultId: source.resultId, rowCount: source.rowCount, columns: source.columns, rows: source.rows, semantics: source.semantics ?? { completeness: "unknown" } });
+        return JSON.stringify({ ok: true, resultId: source.resultId, rowCount: source.rowCount, ...modelTable(source.columns, source.rows, source.rows.length), semantics: modelSemantics(source.semantics) });
       },
     });
 
@@ -1200,9 +1239,8 @@ export async function runGovernedAnalyticalTurn(
           resultId,
           name: caption,
           rowCount: result.rows.length,
-          columns: result.columns.map((column) => ({ key: column.key, label: column.label, type: column.type })),
-          rows: result.rows.slice(0, MAX_MODEL_RESULT_ROWS),
-          semantics: result.semantics,
+          ...modelTable(result.columns, result.rows),
+          semantics: modelSemantics(result.semantics),
           notes: result.notes,
           dashboardTile: result.derivation
             ? "This result can be a dashboard tile; it refreshes from its governed sources."

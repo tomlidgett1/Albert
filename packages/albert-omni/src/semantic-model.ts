@@ -154,6 +154,11 @@ function memberMatches(member: CubeCatalogueMember, terms: readonly string[]): b
   return terms.every((term) => haystack.includes(term));
 }
 
+function memberNameMatches(member: CubeCatalogueMember, terms: readonly string[]): boolean {
+  const haystack = [member.name, member.title, member.shortTitle].join(" ").toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
 function searchTerms(pattern: string): readonly string[] {
   return pattern
     .toLowerCase()
@@ -222,6 +227,13 @@ export function searchModelFields(
   const scope = topicName ? resolveTopic(catalogue, topicName) : undefined;
   if (topicName && !scope) return lookupTopicModel(catalogue, topicName);
   const views = scope ? [scope] : catalogue.views;
+  // Names first: "gross_takings|completed_at" should return those fields, not
+  // every field whose description mentions takings (39 fields, 14.5k chars,
+  // re-sent on every later step). Descriptions are searched only for an
+  // alternative that names no field.
+  const matchers = alternatives.map((terms) => (
+    views.some((view) => visibleMembers(view).some((member) => memberNameMatches(member, terms))) ? memberNameMatches : memberMatches
+  ));
   const sections: string[] = [];
   const viewNames: string[] = [];
   let fieldCount = 0;
@@ -229,7 +241,7 @@ export function searchModelFields(
   for (const view of views) {
     const matches = alternatives.length === 0
       ? []
-      : visibleMembers(view).filter((member) => alternatives.some((terms) => memberMatches(member, terms)));
+      : visibleMembers(view).filter((member) => alternatives.some((terms, index) => matchers[index]!(member, terms)));
     if (matches.length === 0) continue;
     sections.push(renderViewYaml(view, matches));
     viewNames.push(view.name);

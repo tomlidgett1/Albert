@@ -111,3 +111,18 @@ test("an unknown requested topic never silently searches other topics", () => {
   assert.deepEqual(result.viewNames, []);
   assert.match(result.document, /No topic named/u);
 });
+
+test("field search matches field names before descriptions, and falls back to descriptions only when no field is named", () => {
+  // "days" names unsold_180_days; stock_age_band only mentions days in its
+  // description ("Age band based on days since stock last came in") and
+  // used to come along, as did every field whose text mentioned a term.
+  const named = searchModelFields(catalogue, "stock value");
+  assert.equal(named.fieldCount, 1);
+  const byName = searchModelFields(catalogue, "days");
+  assert.equal(byName.fieldCount, 1);
+  assert.doesNotMatch(byName.document, /name: '?inventory_analytics\.stock_age_band/u);
+  // "receipt" names no field, so the descriptions and guidance are searched.
+  const byDescription = searchModelFields(catalogue, "receipt");
+  assert.equal(byDescription.fieldCount, 1);
+  assert.match(byDescription.document, /name: '?inventory_analytics\.stock_age_band/u);
+});

@@ -109,6 +109,32 @@ test("a turn out of exploration time composes from the evidence it gathered inst
   });
 });
 
+test("the model receives each result compactly: columns once, rows as arrays, lean semantics", async (context) => {
+  // Every model step re-sends every earlier result. Keyed rows repeated each
+  // column key on every row, and the semantics block carried digests and
+  // serialized windows the model never uses.
+  let payload: Record<string, unknown> | undefined;
+  context.mock.method(Runner.prototype, "run", async (agent: Agent) => {
+    await invoke(agent, "SearchSemanticModel", { topicName: "sales_analytics", searchPattern: null });
+    payload = JSON.parse(String(await invoke(agent, "GenerateSemanticQuery", { name: "August sales", topic: "sales_analytics", query: { measures: ["sales_analytics.gross_takings"], dimensions: null, segments: null, timeDimensions: [{ dimension: "sales_analytics.completed_at", granularity: null, dateRange: "2026-08-01 to 2026-08-31", compareDateRange: null }], filters: null, order: null, limit: null } })));
+    const composed = JSON.parse(String(await invoke(agent, "ComposeAnswer", { outcome: "answer", markdown: "Gross takings were {{sales}}.", values: [{ id: "sales", resultId: payload!.resultId, rowIndex: 0, columnKey: "sales_analytics_gross_takings", format: "auto", decimals: null }], tables: [], citedResultIds: [payload!.resultId], limitations: [], followUps: [] })));
+    assert.equal(composed.ok, true);
+    return { async *[Symbol.asyncIterator]() {}, completed: Promise.resolve(), rawResponses: [], history: [], finalOutput: "" };
+  });
+  await fixture(async (turn, url) => {
+    const events: OmniTraceEventInput[] = [];
+    await runOmniSemanticTurn({ turn, cubeApiUrl: url, openai: { apiKey: "synthetic-fixture", baseUrl: "https://provider.example.test" }, emit: (event) => { events.push(event); } });
+    const columns = payload!.columns as { key: string }[];
+    const rows = payload!.rows as unknown[][];
+    assert.ok(Array.isArray(rows[0]), "a row is an array in column order");
+    assert.equal(rows[0]!.length, columns.length);
+    assert.match(String(payload!.rowFormat), /zero-based position/u);
+    assert.deepEqual(Object.keys(payload!.semantics as object).sort(), ["completeness", "rowLimit"]);
+    // The trace and the answer still carry the full governed rows.
+    assert.equal(events.find((event) => event.type === "answer")?.text, "Gross takings were $600.00.");
+  });
+});
+
 test("a task that only says to write the answer is settled by the answer, and an open check adds no sentence", async (context) => {
   // The model cannot tick "Compose the answer" before composing and rarely
   // comes back to tick it after; that alone used to cost a Verified answer its
