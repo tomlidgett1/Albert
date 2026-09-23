@@ -194,3 +194,22 @@ bookkeeper's reconciliation cadence explain the rest of the lag. Omni answered
 honestly ("no sales records for Tuesday 22 September ... that doesn't mean you
 took nothing") but cannot tell a stalled sync from a quiet day, because its
 freshness line carries the latest date with rows and not the sync status.
+
+## Verification
+
+Deployed 2026-09-23 as c55e2e5. Yellow Jersey's renderer went first
+(778943d8; it only formats a change column when one arrives), then Albert's
+web (`dpl_GPHww5mx9qy6mrqnPdxb4T1yMod7`), then the Fly runtime as
+`comparison-tables-20260923` (machine version 52), clear of the 07:39 UTC
+bridge turn. Web `/api/health` and the runtime's start log both report
+c55e2e5; the runtime's two health checks pass.
+
+ADR 0143's `style` corpus on the final harness scores 96.5 of 100 (44 prose
+words per answer, none over budget), so the new table rules did not bring the
+verbosity back.
+
+In production, Yellow Jersey's Analytics tab (GPT 6 Sol, High, Fast) answered
+"How did sales go last week compared with the week before?" in 39 seconds:
+the headline, a three-row table headed `Week of 7 Sep | Week of 14 Sep |
+Change` with signed changes, and one line on what drove it. The research
+section stayed collapsed while it worked. The test conversation was deleted.
