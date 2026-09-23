@@ -189,10 +189,16 @@ function displayCell(value: unknown, column: TraceTableColumn, style: CellStyle 
     : column.type === "currency" ? (magnitude >= WHOLE_CURRENCY_FROM || (format === "compact" && magnitude >= 100) ? 0 : 2)
       : column.type === "percent" ? (magnitude >= 100 ? 0 : magnitude < 1 && shown !== 0 ? 2 : 1)
         : Number.isInteger(numeric) ? 0 : magnitude >= 100 ? 1 : 2);
+  // A rate or count that is not zero never reads as zero: beside large cells
+  // "0.004" keeps its first significant digit rather than the column's "0.0".
+  // Money keeps its column's precision, because cents are noise beside thousands.
+  const tiny = column.type !== "currency" && shown !== 0 && Math.abs(shown) < 0.5 * 10 ** -places;
   const formatter = new Intl.NumberFormat("en-AU", {
-    maximumFractionDigits: places,
+    maximumFractionDigits: tiny ? Math.min(4, Math.ceil(-Math.log10(Math.abs(shown)))) : places,
     // Money keeps both cents whenever it is written out; only an abbreviated figure ("$3.7k") drops zeros.
-    minimumFractionDigits: style.fixed || (column.type === "currency" && !(format === "compact" && Math.abs(shown) >= 1_000)) ? places : 0,
+    minimumFractionDigits: tiny ? 0 : style.fixed || (column.type === "currency" && !(format === "compact" && Math.abs(shown) >= 1_000)) ? places : 0,
+    // A figure that rounds to zero carries no sign: "-0.0%" and "-$0" read as a fall.
+    signDisplay: "negative",
     ...(format === "compact" ? { notation: "compact" as const } : {}),
     ...(column.type === "currency" ? { style: "currency" as const, currency: column.currency ?? "AUD" } : {}),
   });
@@ -340,6 +346,43 @@ const STATEMENT_TOTAL = /^(?:gross profit|net (?:profit|loss|income|assets|posit
 const FALLING_WORDS = /\b(?:down|fell|fallen|falling|dropped|drop|declined?|decreased?|lower|shrank|lost|loss|shortfall|reduction)(?:\s+(?:by|of))?\s+(?:about\s+|around\s+|roughly\s+|just\s+|nearly\s+)?$/iu;
 /** "below last year's pace by ": a figure introduced by "by" is a change, so a falling word earlier in the clause settles its direction. */
 const FALLING_BY = /\b(?:down|fell|fallen|falling|dropped|declined|decreased|lower|below|behind|under|short|trailing|trails?|shrank|weaker|softer)\b[^.;:!?\n]{0,48}\bby\s+(?:about\s+|around\s+|roughly\s+|just\s+|nearly\s+)?$/iu;
+/** Prose that says a figure rose, directly before it: "up ", "a rise of ", "grew by ". */
+const RISING_WORDS = /\b(?:up|rose|risen|rising|rise|grew|grown|growing|gained|gain|increased?|higher|climbed|jumped|lifted)(?:\s+(?:by|of))?\s+(?:about\s+|around\s+|roughly\s+|just\s+|nearly\s+)?$/iu;
+/** A placeholder with the marks typed around it: a minus or "$" before it, a "%" or a points unit after it. */
+const PLACED_FIGURE = /(-?)(\$?)\{\{([a-z][a-z_]{0,39})\}\}(%?)(\s*(?:percentage points?|points?|pts|pp)\b)?/gu;
+const CURRENCY_MARK = /[$€£¥]|\b[A-Z]{3}\b/u;
+
+/** The words just before a placed figure, emphasis aside ("**down {{c}}**"). */
+function leadBefore(markdown: string, offset: number): string {
+  return markdown.slice(Math.max(0, offset - 72), offset).replace(/\*\*/gu, "");
+}
+
+/**
+ * Whether a cell's sign is its direction: a pivot's change, a difference or
+ * percent change worked out by DeriveResult or CalculateValues, or a field
+ * named as a change. Only such a figure is contradicted by the direction word
+ * before it; "lost {{customers}}" states a count, not a fall, and a column
+ * named for one way ("Drop") carries a size whose label says which way.
+ */
+function directional(source: AnswerEvidence, column: TraceTableColumn, rowIndex: number): boolean {
+  if (pivotChange(source, column, rowIndex)) return true;
+  if (/\b(?:drops?|declines?|falls?|loss(?:es)?|decreases?|reductions?|shortfalls?|rises?|increases?|gains?|uplifts?)\b/iu.test(column.label)) return false;
+  const recipe = source.provenance.calculations?.find((calculation) => calculation.column === column.key);
+  if (recipe) return recipe.operator === "subtract" || recipe.operator === "percent_change" || /^(?:difference|percent_change)\(/u.test(recipe.formula);
+  return /\b(?:change|delta|difference|growth|variance|movement)\b/iu.test(`${column.key.replace(/[._]/gu, " ")} ${column.label}`);
+}
+
+/** A financial year written "2025-26": its second half is the year after, not a figure. */
+const FINANCIAL_YEAR = /(?<![\p{L}\d])(?:FY\s?)?((?:19|20)\d{2})\s*[-–/]\s*(\d{2})(?![\p{L}\d])/giu;
+const yearAfter = (year: string, next: string): boolean => Number(next) === (Number(year) + 1) % 100;
+const COUNT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"];
+const RANK_SIZE = `(\\d{1,3}|${COUNT_WORDS.slice(2).join("|")})`;
+/** The size of a ranking's head: "the top three", "your 5 biggest". */
+const RANKED_HEAD = new RegExp(`\\b(?:top|bottom)\\s+${RANK_SIZE}(?![\\p{L}\\d-]|\\s*%)|(?<![\\p{L}\\d$£€¥.,-])${RANK_SIZE}\\s+(?:biggest|largest|highest|lowest|smallest|best|worst|busiest|quietest|slowest|fastest|most|least)\\b`, "giu");
+const rankSize = (size: string): number => /^\d+$/u.test(size) ? Number(size) : COUNT_WORDS.indexOf(size.toLowerCase());
+/** A window or a year a follow-up asks about ("over the last 12 months", "August 2025"). */
+const WINDOW_LENGTH = /(?<![\p{L}\d$£€¥.,])\d{1,4}(?:\s*-\s*|\s+)(?:day|week|month|quarter|year)s?\b/giu;
+const ANY_YEAR = /(?<![\p{L}\d$£€¥.,-])(?:19|20)\d{2}(?![\p{L}\d])/gu;
 
 /** Resolves every analytical figure from governed cells; the model supplies prose and references. */
 /** The words around a rejected figure, so the model repairs every one in one pass instead of hunting for where "two" was. */
@@ -389,8 +432,13 @@ export function composeAnswer(
   let blankCalculation = false;
   /** Each table cut short: rows shown, and the full count when the result is complete. */
   const truncations: { shown: number; total: number | null }[] = [];
-  /** How many rows each presented table shows: a count the server itself rendered ("the eight bikes above"). */
+  /** Row counts a presented table proves, which prose may repeat ("the eight bikes above"). */
   const shownRowCounts: number[] = [];
+  /** Each placed figure as it renders, and whether its sign is its direction. */
+  const placedFigures = new Map<string, Readonly<{ text: string; directional: boolean }>>();
+  // A ranking's head is what was asked for ("top 10", "best day", "biggest
+  // expenses"): a partial list is expected, and its size is the owner's choice.
+  const askedForTopN = /\b(?:top|best|worst|biggest|largest|smallest|highest|lowest|most|least|busiest|quietest|slowest|fastest)\b/iu.test(options.question);
   const put = (id: string, value: string) => {
     if (slots.has(id)) issues.push(`Duplicate placeholder ${id}.`);
     slots.set(id, value);
@@ -411,10 +459,12 @@ export function composeAnswer(
     try {
       // A pivot's change is a percent or points whatever its row's format: never "$32.58".
       const change = pivotChange(source, column, value.rowIndex);
-      const text = change ? changeCell(row[column.key], change, false) : displayCell(row[column.key], source.rowFormats?.[value.rowIndex] ? { ...column, ...source.rowFormats[value.rowIndex] } : column, {
+      const shownAs = source.rowFormats?.[value.rowIndex] ? { ...column, ...source.rowFormats[value.rowIndex] } : column;
+      const text = change ? changeCell(row[column.key], change, false) : displayCell(row[column.key], shownAs, {
         format: value.format, decimals: value.decimals, grain: grainFor(source, column), currentYear,
       });
       put(value.id, text);
+      if (change || ["number", "currency", "percent"].includes(shownAs.type)) placedFigures.set(value.id, { text, directional: directional(source, column, value.rowIndex) });
       claims.push({ statement: `${column.label}: ${text} (${source.provenance.timeRange.label})`, assertion: "value", refs: [{ resultId: source.resultId, rowIndex: value.rowIndex, columnKey: column.key }] });
     } catch (error) { issues.push(error instanceof Error ? error.message : "Invalid value."); }
   }
@@ -462,7 +512,10 @@ export function composeAnswer(
       truncatedTable = true;
       truncations.push({ shown: rows.length, total: source.semantics?.completeness === "complete" ? source.rows.length : null });
     }
-    shownRowCounts.push(rows.length);
+    // The rows on show count something only when they are the whole of a
+    // complete result, or the head of a ranking the owner asked for: twelve
+    // rows of thirty overdue jobs do not make "12 work orders are overdue".
+    if (askedForTopN || (rows.length === source.rows.length && source.semantics?.completeness === "complete")) shownRowCounts.push(rows.length);
     // A period heading is resolved from the governed cell that names it, so a
     // model-written header can shorten a field label but never rename a period.
     const periods = periodHeaders(typed, source.semantics, currentYear);
@@ -472,7 +525,8 @@ export function composeAnswer(
     ]);
     const headers = typed.map((column, index) => {
       const written = periods.has(column.key) ? undefined : table.headers?.[index]?.trim();
-      const figures = written?.replace(HEADER_DATE, " ").replace(/\b(?:12|24)[ -]?h(?:ou)?r?\b/giu, " ").match(/\d[\d,.]*/gu) ?? [];
+      const figures = written?.replace(HEADER_DATE, " ").replace(/\b(?:12|24)[ -]?h(?:ou)?r?\b/giu, " ")
+        .replace(FINANCIAL_YEAR, (match, year: string, next: string) => yearAfter(year, next) ? " " : match).match(/\d[\d,.]*/gu) ?? [];
       // A header may repeat the owner's own words ("Price 12 months ago") or
       // the window the result covers ("Units (12 weeks)"); any other number in
       // a header is a figure the cells should carry.
@@ -555,6 +609,30 @@ export function composeAnswer(
   const placeholders = [...request.markdown.matchAll(/\{\{([a-z][a-z_]{0,39})\}\}/gu)].map((match) => match[1]!);
   for (const id of placeholders) if (!slots.has(id)) issues.push(`Unknown placeholder {{${id}}}.`);
   for (const id of slots.keys()) if (!placeholders.includes(id)) issues.push(`Table {{${id}}} was defined but not placed: put {{${id}}} alone on its own line where the table belongs, or remove it from tables.`);
+  // What is typed around a figure must agree with it. A mark the figure
+  // renders itself is absorbed when the answer is resolved; one it does not
+  // carry, or a direction word its sign contradicts, would misstate it to the
+  // owner ("Sales fell 8.2%" on a rise, "$120" for 120 units).
+  for (const match of request.markdown.matchAll(PLACED_FIGURE)) {
+    const [, minus, dollar, id, percent] = match;
+    const figure = placedFigures.get(id!);
+    if (!figure) continue;
+    const placeholder = `{{${id}}}`;
+    const lead = leadBefore(request.markdown, match.index);
+    const negative = figure.text.startsWith("-");
+    if (figure.directional && !negative && /[1-9]/u.test(figure.text) && FALLING_WORDS.test(lead)) {
+      issues.push(`${placeholder} is a rise (it renders "${figure.text}"), but the word before it says it fell. Say it rose ("up ${placeholder}"), or bind the figure that fell.`);
+    }
+    if (figure.directional && negative && RISING_WORDS.test(lead)) {
+      issues.push(`${placeholder} is a fall (it renders "${figure.text}"), but the word before it says it rose. Say it fell ("down ${placeholder}" drops the minus), or bind the figure that rose.`);
+    }
+    // A hyphen that joins words or a range ("year-{{c}}", "{{low}}-{{high}}") is not a minus sign.
+    if (minus && !negative && !/[\p{L}\p{N}\}%)]$/u.test(request.markdown.slice(0, match.index))) {
+      issues.push(`The minus typed before ${placeholder} would show "-${figure.text}", but the figure is not negative. Remove it: a placeholder renders its own sign.`);
+    }
+    if (dollar && !CURRENCY_MARK.test(figure.text)) issues.push(`The "$" typed before ${placeholder} would show "$${figure.text}", but the figure is not money. Remove it, or bind a currency field.`);
+    if (percent && !figure.text.endsWith("%")) issues.push(`The "%" typed after ${placeholder} would show "${figure.text}%", but the figure is not a percentage. Remove it, or bind a percentage field.`);
+  }
 
   // Values from result cells must travel through a reference, never borrow
   // support from an unrelated equal number somewhere in the evidence pool.
@@ -590,8 +668,6 @@ export function composeAnswer(
       }),
     ]),
   ];
-  const scoped = stripScopedCalendarDates(plain, spans);
-  issues.push(...scoped.issues);
   // Two more things that read as numbers but are not findings. A window length
   // taken from the governed fields a cited result used ("no sale in 90 days"
   // from unsold_90_days) is scope. And "one" is an article far more often than
@@ -605,19 +681,36 @@ export function composeAnswer(
     (source as Readonly<{ queryYaml?: unknown }>).queryYaml,
   ]).flatMap((name) => typeof name === "string" ? name.match(/\d+/gu) ?? [] : []));
   const labelText = labels.join("\n").toLowerCase();
-  const prose = scoped.text
-    .replace(/(?<![\p{L}\d$£€¥.,-])(\d{1,4})(?:\s*-\s*|\s+)(?:day|week|month|year)s?\b/giu, (match, length: string) => fieldNumbers.has(length) ? " the window " : match)
-    // "one soft spot", "one-off": never "twenty-one" or "one hundred".
-    .replace(/(?<![\p{L}-])one(?![\p{L}]|-(?:hundred|thousand|million|billion|and)\b|\s+(?:hundred|thousand|million|billion)\b)/giu, " ")
-    // A model or part code ("XG-1270", "M7100", "10-33t") is part of a name when
-    // a cited label carries it, even where the answer shortens the rest of the
-    // name: "the SRAM Force XG-1270 cassette" is not the figure 1,270. A bare
-    // number is never excused this way.
-    .replace(/(?<![\p{L}\d])(?=[\p{L}\d./-]*\p{L})(?=[\p{L}\d./-]*\d)[\p{L}\d]+(?:[./-][\p{L}\d]+)*(?![\p{L}\d])/gu, (code) => labelText.includes(code.toLowerCase()) ? " code " : code);
-  const unsupported = findUngroundedNumbersWithEvidence(prose, [...allowed, ...shownRowCounts], labels);
-  if (unsupported.length) {
+  const shownMost = Math.max(0, ...shownRowCounts);
+  /**
+   * The figures a stretch of text states that nothing in scope supports, and
+   * any day it misnames. A follow-up is the owner's next question: the year,
+   * window or ranking size it asks about is a request, not a finding.
+   */
+  const unbound = (text: string, followUp = false): Readonly<{ figures: readonly string[]; issues: readonly string[] }> => {
+    const scoped = stripScopedCalendarDates(text, spans);
+    const prose = scoped.text
+      .replace(/(?<![\p{L}\d$£€¥.,-])(\d{1,4})(?:\s*-\s*|\s+)(?:day|week|month|year)s?\b/giu, (match, length: string) => fieldNumbers.has(length) ? " the window " : match)
+      // "one soft spot", "one-off": never "twenty-one" or "one hundred".
+      .replace(/(?<![\p{L}-])one(?![\p{L}]|-(?:hundred|thousand|million|billion|and)\b|\s+(?:hundred|thousand|million|billion)\b)/giu, " ")
+      // "FY 2025-26" names one financial year; its "26" is the year after, not a figure.
+      .replace(FINANCIAL_YEAR, (match, year: string, next: string) => yearAfter(year, next) && (followUp || allowed.includes(Number(year))) ? " the year " : match)
+      // "The top three jobs" of a ranking the owner asked for points into the
+      // table beside it, and counts nothing the table does not show.
+      .replace(RANKED_HEAD, (match, top: string | undefined, most: string | undefined) => followUp || (askedForTopN && rankSize(top ?? most!) <= shownMost) ? " the top " : match)
+      // A model or part code ("XG-1270", "M7100", "10-33t") is part of a name when
+      // a cited label carries it, even where the answer shortens the rest of the
+      // name: "the SRAM Force XG-1270 cassette" is not the figure 1,270. A bare
+      // number is never excused this way.
+      .replace(/(?<![\p{L}\d])(?=[\p{L}\d./-]*\p{L})(?=[\p{L}\d./-]*\d)[\p{L}\d]+(?:[./-][\p{L}\d]+)*(?![\p{L}\d])/gu, (code) => labelText.includes(code.toLowerCase()) ? " code " : code);
+    const asked = followUp ? prose.replace(WINDOW_LENGTH, " the window ").replace(ANY_YEAR, " the year ") : prose;
+    return { figures: findUngroundedNumbersWithEvidence(asked, [...allowed, ...shownRowCounts], labels), issues: scoped.issues };
+  };
+  const checked = unbound(plain);
+  issues.push(...checked.issues);
+  if (checked.figures.length) {
     const written = [request.markdown, ...request.limitations].join("\n");
-    issues.push(`Unbound figures: ${unsupported.slice(0, 12).map((token) => figureInContext(written, token)).join("; ")}. Bind each with a {{value_name}} or {{table_name}} reference (calculate a new figure with DeriveResult first), or rewrite that sentence without it. Never swap in another count, number word or approximation ("almost half", "zero", "three"): each is checked the same way.`);
+    issues.push(`Unbound figures: ${checked.figures.slice(0, 12).map((token) => figureInContext(written, token)).join("; ")}. Bind each with a {{value_name}} or {{table_name}} reference (work out a new figure first: CalculateValues between two cells, DeriveResult across rows or results), or rewrite that sentence without it. Never swap in another count, number word or approximation ("almost half", "zero", "three"): each is checked the same way.`);
   }
   if (/\{\{|\}\}/u.test(plain)) issues.push("Malformed answer placeholder.");
   if (request.outcome === "answer" && (!sources.length || claims.length === 0)) issues.push("An analytical answer requires cited evidence and at least one value or table reference.");
@@ -629,14 +722,14 @@ export function composeAnswer(
   // a model that also types one around it would show "$$9,126" and "26.8%%",
   // and one that writes the direction in words would show "down -19.9%".
   // A points figure followed by the model's own unit ("{{m}} percentage points") keeps the model's words.
-  const resolved = request.markdown.replace(/(-?)(\$?)\{\{([a-z][a-z_]{0,39})\}\}(%?)(\s*(?:percentage points?|points?|pts|pp)\b)?/gu, (_match, minus: string, dollar: string, id: string, percent: string, unit: string | undefined, offset: number, whole: string) => {
+  const resolved = request.markdown.replace(PLACED_FIGURE, (_match, minus: string, dollar: string, id: string, percent: string, unit: string | undefined, offset: number, whole: string) => {
     const slot = slots.get(id)!;
-    const lead = whole.slice(Math.max(0, offset - 72), offset).replace(/\*\*/gu, "");
+    const lead = leadBefore(whole, offset);
     const saidInWords = slot.startsWith("-") && (FALLING_WORDS.test(lead) || FALLING_BY.test(lead));
     const signed = saidInWords ? slot.slice(1) : slot;
     const value = unit && signed.endsWith(" pts") ? signed.slice(0, -" pts".length) : signed;
-    const symbol = /[$€£¥]|\b[A-Z]{3}\b/u.test(value);
-    return `${minus && value.startsWith("-") ? "" : minus}${dollar && symbol ? "" : dollar}${value}${percent && value.endsWith("%") ? "" : percent}${unit ?? ""}`;
+    // A minus typed before a negative figure is its own sign said twice, even where the words say it too ("down -{{c}}").
+    return `${minus && slot.startsWith("-") ? "" : minus}${dollar && CURRENCY_MARK.test(value) ? "" : dollar}${value}${percent && value.endsWith("%") ? "" : percent}${unit ?? ""}`;
   });
   const extracted = extractOmniFollowUps(resolved);
   // A closing paragraph set wholly in italics is a caveat written as an aside;
@@ -651,9 +744,7 @@ export function composeAnswer(
   const reused = sources.some((source) => source.priorTurn);
   const failures = Boolean(options.hadQueryFailures) && request.outcome === "answer";
   const qualified = request.limitations.length > 0 || qualifications.length > 0 || limited || reused || failures;
-  // A list cut short is worth saying once, unless a ranking's head is what was
-  // asked for: "top 10", "best day", "biggest expenses" expect a partial list.
-  const askedForTopN = /\b(?:top|best|worst|biggest|largest|smallest|highest|lowest|most|least|busiest|quietest|slowest|fastest)\b/iu.test(options.question);
+  // A list cut short is worth saying once, unless a ranking's head is what was asked for.
   // One cut table says exactly how much of it is shown.
   const [only] = truncations.length === 1 ? truncations : [];
   const truncationNote = !only ? "Tables show the first rows, not every row."
@@ -676,10 +767,19 @@ export function composeAnswer(
       : request.outcome === "explanation" ? "Exploratory"
         : qualified ? "Qualified"
           : request.outcome === "no_data" ? "No data" : "Verified";
+  // A suggested question is held to the body's figures too ("Why did Bikes
+  // drop 23%?" asserts a fall), but it is not worth a model round trip: one
+  // that states a figure nothing supports, or leaves a placeholder raw, is
+  // dropped. Links in the body were already checked as prose.
+  const suggested = request.followUps.filter((question) => {
+    if (/\{\{|\}\}/u.test(question)) return false;
+    const asked = unbound(question, true);
+    return !asked.figures.length && !asked.issues.length;
+  });
   return { ok: true, answer: {
     text: sanitizeAnswerText(text, 120_000), state, claims,
     presentedResultIds: [...selected],
-    followUps: options.imessage ? [] : [...new Set([...request.followUps, ...extracted.followUps])].slice(0, 3).map((text) => sanitizeTraceText(text, 160)),
+    followUps: options.imessage ? [] : [...new Set([...suggested, ...extracted.followUps])].slice(0, 3).map((text) => sanitizeTraceText(text, 160)),
   } };
 }
 
@@ -687,11 +787,12 @@ export const COMPOSE_ANSWER_INSTRUCTIONS = `# Composing the final answer
 
 Use ComposeAnswer to deliver the answer. Its accepted content is exactly what the owner receives.
 Write the answer in markdown, replacing EVERY analytical figure with a named placeholder like {{sales}}. Define it in values using the resultId, zero-based rowIndex and exact columnKey returned by a tool. Do not type the value yourself.
-A placeholder renders complete: its own minus sign, currency symbol, thousands separators and percent sign. Write "{{sales}}" and "up {{change}}", never "\${{sales}}" or "{{change}}%". format auto shows whole dollars from $1,000 up, cents below that, and one decimal on a percentage; format compact rounds for reading ($19.4k, $1.2M) and is the right choice for most amounts inside a sentence, because the table beside it carries the exact figure. Leave decimals null unless a specific precision matters. A date cell renders as the period it names (a month bucket as "Aug 2026", a week as "6 Jul", a day as "Sat 12 Sep").
-Calendar dates are not figures: type a date or a day range directly, digits and all ("Sunday 13 September", "1–19 September"), whenever it falls inside the window your cited results cover or is today. That is how you name a day that has no row of its own, such as a day the store was closed. Never spell a date out in words ("the nineteenth") to avoid digits. Give the weekday only when you are sure of it; a mismatch is rejected. The article "one" and a window length that comes from a field you queried ("no sale in 90 days") are likewise fine to type; every other count or amount is a placeholder.
-For tables, put {{weekly_table}} in its own paragraph, alone on a line with a blank line before and after, and define it in tables with resultId, columnKeys, headers and limit. headers is one short, plain header per column key, in the same order ("Product", "Revenue", "Units", "Week"): the governed field labels are long and technical, so always supply them. A header names the column and never carries a figure; period columns of a pivot keep their own period names whatever you pass. Choose only the columnKeys that earn a place and set limit to the rows worth reading; sort orders the rows by one column first ({columnKey: "change", direction: "asc"} puts the biggest falls first), and null keeps the result's order. Do not wrap the placeholder in a Markdown table or add your own header or separator row: the server supplies the complete table. Never hand-copy or transpose a numerical table. ComposePivotTable and DeriveResult prepare new shapes and arithmetic before composition: a table that compares periods is presented with its change, from ComposePivotTable with change true (metrics down) or a DeriveResult percent_change column beside the two periods (named entities). The server signs a pivot's change and a percent_change column in a table, and writes a rate's change in points; cited in a sentence, a change reads with the direction in your words ("up {{takings_change}}" renders "up 12.4%", "down {{margin_change}}" renders "down 3.1 pts"). CalculateValues computes exact arithmetic between any two result cells, including period-on-period change across two rows of a comparison query.
+A placeholder renders complete: its own minus sign, currency symbol, thousands separators and percent sign. Write "{{sales}}" and "up {{change}}", never "\${{sales}}" or "{{change}}%". A mark or a direction word the figure contradicts is refused: "\${{units}}" on a count, "{{ratio}}%" on a plain number, "-{{change}}" or "fell {{change}}" on a rise, "up {{change}}" on a fall. format auto shows whole dollars from $1,000 up, cents below that, and one decimal on a percentage; format compact rounds for reading ($19.4k, $1.2M) and is the right choice for most amounts inside a sentence, because the table beside it carries the exact figure. Leave decimals null unless a specific precision matters. A date cell renders as the period it names (a month bucket as "Aug 2026", a week as "6 Jul", a day as "Sat 12 Sep").
+Calendar dates are not figures: type a date or a day range directly, digits and all ("Sunday 13 September", "1–19 September"), whenever it falls inside the window your cited results cover or is today. That is how you name a day that has no row of its own, such as a day the store was closed. Never spell a date out in words ("the nineteenth") to avoid digits. Give the weekday only when you are sure of it; a mismatch is rejected. The article "one", a window length that comes from a field you queried ("no sale in 90 days"), and the row count of a table that shows its whole result or the head of a ranking the owner asked for ("these eight bikes", "the top three") are likewise fine to type; every other count or amount is a placeholder.
+For tables, put {{weekly_table}} in its own paragraph, alone on a line with a blank line before and after, and define it in tables with resultId, columnKeys, headers and limit. headers is one short, plain header per column key, in the same order ("Product", "Revenue", "Units", "Week"): the governed field labels are long and technical, so always supply them. A header names the column and never carries a figure; period columns of a pivot keep their own period names whatever you pass. Choose only the columnKeys that earn a place and set limit to the rows worth reading; sort orders the rows by one column first ({columnKey: "change", direction: "asc"} puts the biggest falls first), and null keeps the result's order. Do not wrap the placeholder in a Markdown table or add your own header or separator row: the server supplies the complete table. Never hand-copy or transpose a numerical table. ComposePivotTable and DeriveResult prepare new shapes before composition: a table that compares periods is presented with its change, from ComposePivotTable with change true (metrics down) or a DeriveResult percent_change column beside the two periods (named entities). The server signs a pivot's change and a percent_change column in a table, and writes a rate's change in points; cited in a sentence, a change reads with the direction in your words ("up {{takings_change}}" renders "up 12.4%", "down {{margin_change}}" renders "down 3.1 pts"). Arithmetic is never typed: CalculateValues does exact arithmetic between two result cells, including period-on-period change across two rows of a comparison query, and DeriveResult does anything across rows or results.
 Never type an em dash; use a comma, a colon or a full stop.
 Use citedResultIds for every result that supports the conclusion.
-limitations is the answer's single footnote, shown once in small type beneath it. Give it zero to two short items, each under twenty words, and only what would change how the owner reads a figure: a proxy, a partial period, a missing source, a known data gap. Never repeat there what the body already says, and never list routine basis (currency, timezone, "completed non-voided sales") that would not mislead anyone. The harness adds its own note when a table is cut short. The harness decides the answer state; you cannot promote an answer to Verified.
+limitations is the answer's single footnote, shown once in small type beneath it. Give it zero to two short items, each under twenty words, and only what would change how the owner reads a figure: a proxy, a partial period, a missing source, a known data gap. Never repeat there what the body already says, and never list routine basis (currency, timezone, "completed non-voided sales") that would not mislead anyone. The harness adds its own note when a table is cut short. limitations cannot bind a figure, so never type a count or amount there. The harness decides the answer state; you cannot promote an answer to Verified.
 outcome answer presents query evidence; explanation answers a definition question without figures; clarification asks the one blocking question; no_data cites the executed empty result; unavailable names the missing capability. Do not use explanation to avoid retrieving business figures.
+followUps are questions, not findings: the period, window or ranking size one asks about is fine, but one that states any other figure ("Why did Bikes drop 23%?") is dropped.
 If composition reports issues, repair the references or run the necessary query or derivation, then compose again. After acceptance, finish with a brief hand-over; do not rewrite the accepted answer.`;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ulid } from "ulid";
 import { ANSWER_NOTE_PREFIX, COMPOSE_ANSWER_INSTRUCTIONS, composeAnswer, type AnswerEvidence, type ComposeAnswerInput } from "../../packages/albert-omni/src/answer.js";
-import { renderOmniInstructions } from "../../packages/albert-omni/src/prompts.js";
+import { OMNI_ANALYTICAL_RULES, renderOmniInstructions } from "../../packages/albert-omni/src/prompts.js";
 import { stripScopedCalendarDates } from "../../packages/shared/src/reporting-dates.js";
 import { renderAssistantMarkdown } from "../../app/dash/lib/render-assistant-markdown.js";
 import type { ResultSemantics, TraceTableColumn } from "../../packages/shared/src/index.js";
@@ -176,10 +176,47 @@ test("direction said in words is not said again by a minus sign", () => {
     "Sales are **down 19.9%** on last year, and profit came in at -$512.40.");
   assert.equal(text(compose(source, { markdown: "September is below last year’s pace by {{c}} year on year.", values: [values[0]!] })),
     "September is below last year’s pace by 19.9% year on year.");
-  // A rise that is really a fall keeps its minus: the sign is the only thing telling the truth.
-  assert.equal(text(compose(source, { markdown: "Sales rose by {{c}}.", values: [values[0]!] })), "Sales rose by -19.9%.");
+  // A rise that is really a fall is refused: "rose by -19.9%" left the owner to pick between the word and the sign.
+  const rose = compose(source, { markdown: "Sales rose by {{c}}.", values: [values[0]!] });
+  assert.match(rose.ok ? "" : rose.issues.join(" "), /\{\{c\}\} is a fall \(it renders "-19\.9%"\), but the word before it says it rose\. Say it fell/u);
   // "fell from" introduces a level, and a level can genuinely be negative.
   assert.equal(text(compose(source, { markdown: "A drop of {{c}}: profit fell from {{p}}.", values })), "A drop of 19.9%: profit fell from -$512.40.");
+  // The direction in words and a minus typed as well are still one sign, never "down -19.9%".
+  assert.equal(text(compose(source, { markdown: "Sales are down -{{c}}.", values: [values[0]!] })), "Sales are down 19.9%.");
+});
+
+test("a mark or a direction word the figure contradicts is refused, with the fix", () => {
+  // Each of these shipped as Verified (audit, September 2026): the cell was
+  // rendered faithfully and the words typed around it said something else.
+  const source = evidence([
+    { key: "change", label: "Change", type: "percent", percentScale: "percent" },
+    { key: "fall", label: "Sales change", type: "percent", percentScale: "percent" },
+    { key: "ratio", label: "Conversion", type: "number" },
+    { key: "units", label: "Units sold", type: "number" },
+  ], [{ change: 8.2, fall: -4.1, ratio: 0.35, units: 120 }]);
+  const refused = (target: AnswerEvidence, markdown: string, id: string, columnKey: string) => {
+    const result = compose(target, { markdown, values: [value(target, id, columnKey)] });
+    return result.ok ? "" : result.issues.join(" ");
+  };
+  assert.match(refused(source, "Sales fell {{c}} on last week.", "c", "change"), /\{\{c\}\} is a rise \(it renders "8\.2%"\), but the word before it says it fell\. Say it rose \("up \{\{c\}\}"\)/u);
+  assert.match(refused(source, "Sales are up {{f}}.", "f", "fall"), /\{\{f\}\} is a fall \(it renders "-4\.1%"\)/u);
+  assert.match(refused(source, "Sales moved -{{c}}.", "c", "change"), /The minus typed before \{\{c\}\} would show "-8\.2%", but the figure is not negative\. Remove it/u);
+  assert.match(refused(source, "Conversion was {{r}}%.", "r", "ratio"), /The "%" typed after \{\{r\}\} would show "0\.35%", but the figure is not a percentage\. Remove it, or bind a percentage field/u);
+  assert.match(refused(source, "You sold ${{u}} bikes.", "u", "units"), /The "\$" typed before \{\{u\}\} would show "\$120", but the figure is not money\. Remove it, or bind a currency field/u);
+  // A change worked out by DeriveResult or CalculateValues is known by its recipe, whatever it was labelled.
+  const derived = evidence([{ key: "vs_prior", label: "vs last month", type: "percent", percentScale: "percent" }, { key: "gap", label: "Gap", type: "currency", currency: "AUD" }], [{ vs_prior: 5.3, gap: 1200 }]);
+  const recipes = { ...derived, provenance: { ...derived.provenance, calculations: [
+    { column: "vs_prior", formula: "(sep − aug) ÷ aug × 100", operator: "percent_change" as const },
+    { column: "gap", formula: `difference(${derived.resultId}[0].sep, ${derived.resultId}[1].sep)` },
+  ] } };
+  assert.match(refused(recipes, "Sales dropped {{v}}.", "v", "vs_prior"), /\{\{v\}\} is a rise/u);
+  assert.match(refused(recipes, "Takings are down {{g}}.", "g", "gap"), /\{\{g\}\} is a rise \(it renders "\$1,200"\)/u);
+  // A count after "lost" is not a change, a column named for one way ("Drop") carries a size,
+  // and a hyphen between two figures is a range, not a minus.
+  const counts = evidence([{ key: "lost", label: "Customers lapsed", type: "number" }, { key: "drop", label: "Drop", type: "currency", currency: "AUD" }, { key: "low", label: "Low", type: "currency", currency: "AUD" }, { key: "high", label: "High", type: "currency", currency: "AUD" }], [{ lost: 12, drop: 640, low: 5, high: 10 }]);
+  const sized = { ...counts, provenance: { ...counts.provenance, calculations: [{ column: "drop", formula: "aug − sep", operator: "subtract" as const }] } };
+  assert.equal(text(compose(sized, { markdown: "You lost {{lost}} customers and takings dropped {{drop}}; prices ran {{low}}-{{high}}.", values: [value(sized, "lost", "lost"), value(sized, "drop", "drop"), value(sized, "low", "low"), value(sized, "high", "high")] })),
+    "You lost 12 customers and takings dropped $640.00; prices ran $5.00-$10.00.");
 });
 
 test("caveats are one footnote, said once, and never cost the answer its state", () => {
@@ -497,4 +534,70 @@ test("a source's data cutoff and the uncovered days since are statable facts, an
   // A date before the cutoff that no cited evidence covers is still a claim to bind.
   const earlier = withFreshness("The {{peak}} hour took {{peak_sales}}, as it did on 2 August.");
   assert.match(earlier.ok ? "" : earlier.issues.join(" "), /Unbound figures: 2/u);
+});
+
+const job: TraceTableColumn = { key: "job", label: "Work order", type: "string" };
+const overdue = (count: number, completeness: ResultSemantics["completeness"] = "complete") => evidence([job, { key: "days", label: "Days overdue", type: "number" }],
+  Array.from({ length: count }, (_, index) => ({ job: `WO-${index}`, days: 40 - index })), semantics(["job"], completeness));
+const jobTable = (source: AnswerEvidence, limit: number) => [{ id: "t", resultId: source.resultId, columnKeys: ["job", "days"], headers: ["Job", "Days"], limit }];
+
+test("a table's row count is a count only when it shows the whole result or a ranking the owner asked for", () => {
+  // Thirty jobs were overdue and the table showed twelve: "12 work orders are overdue" passed as Verified.
+  const jobs = overdue(30);
+  const cut = compose(jobs, { markdown: "12 work orders are overdue.\n\n{{t}}", tables: jobTable(jobs, 12) }, { question: "Which work orders are overdue?" });
+  assert.match(cut.ok ? "" : cut.issues.join(" "), /Unbound figures: 12 \(in "12 work orders are overdue\."\)/u);
+  assert.ok(compose(jobs, { markdown: "30 work orders are overdue.\n\n{{t}}", tables: jobTable(jobs, 30) }, { question: "Which work orders are overdue?" }).ok);
+  assert.ok(compose(jobs, { markdown: "The 12 most overdue work orders:\n\n{{t}}", tables: jobTable(jobs, 12) }, { question: "Which work orders are most overdue?" }).ok);
+  // Every row on show is still not the whole when the result itself was capped.
+  const capped = overdue(30, "limited");
+  const all = compose(capped, { markdown: "30 work orders are overdue.\n\n{{t}}", tables: jobTable(capped, 30) }, { question: "Which work orders are overdue?" });
+  assert.match(all.ok ? "" : all.issues.join(" "), /Unbound figures: 30/u);
+});
+
+test("a financial year and the head of a ranking the owner asked for are not figures", () => {
+  const year = { label: "1 Jul 2025 to 30 Jun 2026", start: "2025-07-01", end: "2026-06-30", timezone: "Australia/Melbourne" };
+  const fy = evidence([{ key: "item", label: "Item", type: "string" }, money], [{ item: "Bikes", sales: 512_340 }, { item: "Parts", sales: 88_120 }], semantics(["item"]));
+  const scoped = { ...fy, provenance: { ...fy.provenance, timeRange: year } };
+  assert.equal(text(compose(scoped, { markdown: "Sales were {{s}} in FY 2025-26.", values: [value(scoped, "s", "sales", 0, "compact")] })), "Sales were $512.3k in FY 2025-26.");
+  assert.match(text(compose(scoped, { markdown: "By line:\n\n{{t}}", tables: [{ id: "t", resultId: scoped.resultId, columnKeys: ["item", "sales"], headers: ["Item", "FY2025-26"], limit: 5 }] })), /\| Item \| FY2025-26 \|/u);
+  // Only the year after makes a financial year.
+  const skipped = compose(scoped, { markdown: "Sales were {{s}} in 2025-27.", values: [value(scoped, "s", "sales")] });
+  assert.match(skipped.ok ? "" : skipped.issues.join(" "), /Unbound figures: 27/u);
+
+  const jobs = overdue(10);
+  const ranked = (markdown: string, question: string) => compose(jobs, { markdown: `${markdown}\n\n{{t}}`, tables: jobTable(jobs, 10) }, { question });
+  assert.ok(ranked("Chase the top three jobs first.", "Which are my most overdue jobs?").ok);
+  // Tight: beyond the rows on show, a ranking nobody asked for, or a count that is not a ranking's head.
+  for (const [markdown, question, figure] of [
+    ["Chase the top 20 jobs first.", "Which are my most overdue jobs?", /Unbound figures: 20/u],
+    ["Chase the top three jobs first.", "Which jobs are overdue?", /Unbound figures: three/u],
+    ["Three jobs are over a month late.", "Which are my most overdue jobs?", /Unbound figures: Three/u],
+  ] as const) {
+    const result = ranked(markdown, question);
+    assert.match(result.ok ? "" : result.issues.join(" "), figure, markdown);
+  }
+});
+
+test("a figure that rounds to zero carries no sign, and a small rate never reads as zero", () => {
+  // "-0.0%" and "-$0" read as falls; "0.0" beside 125.5 read as nothing at all.
+  const source = evidence([{ key: "item", label: "Item", type: "string" }, { key: "change", label: "Change", type: "percent", percentScale: "percent" }, { key: "rate", label: "Rate", type: "number" }, { key: "cash", label: "Cash", type: "currency", currency: "AUD" }],
+    [{ item: "Tube", change: -0.04, rate: 0.004, cash: -0.4 }, { item: "Bike", change: 12.5, rate: 125.5, cash: 12000 }]);
+  assert.match(text(compose(source, { markdown: "Moves:\n\n{{t}}", tables: [{ id: "t", resultId: source.resultId, columnKeys: ["item", "change", "rate", "cash"], headers: ["Item", "Change", "Rate", "Cash"], limit: 5 }] })),
+    /\| Tube \| -0\.04% \| 0\.004 \| \$0 \|\n\| Bike \| 12\.5% \| 125\.5 \| \$12,000 \|/u);
+  // A precision the model asks for keeps its sign off a zero too.
+  assert.equal(text(compose(source, { markdown: "Cash moved {{c}}.", values: [{ ...value(source, "c", "cash"), decimals: 0 }] })), "Cash moved $0.");
+});
+
+test("the prompt never asks for a figure the composer refuses, and gives each kind of arithmetic one owner", () => {
+  const instructions = renderOmniInstructions({ topicIndex: "- sales_analytics", topicCount: 1, timezone: "Australia/Melbourne", currency: "AUD", todayLine: options.today, activeConnectors: ["lightspeed"], freshnessLines: "" });
+  // The example limitation "the 12 largest of 905 stale lines" was itself refused: limitations cannot bind a figure.
+  assert.doesNotMatch(instructions, /12 largest of 905/u);
+  const stale = overdue(12, "limited");
+  const noted = compose(stale, { markdown: "Chase these first.\n\n{{t}}", tables: jobTable(stale, 12), limitations: ["The 12 largest of 905 stale lines."] });
+  assert.match(noted.ok ? "" : noted.issues.join(" "), /Unbound figures: 12 \(in "The 12 largest of 905 stale lines\."\); 905/u);
+  // CalculateValues between two cells, DeriveResult across rows or results: the chat prompt, the shared rules and the composer agree.
+  for (const contract of [instructions, OMNI_ANALYTICAL_RULES, COMPOSE_ANSWER_INSTRUCTIONS]) {
+    assert.match(contract, /CalculateValues[^.]*between two (?:result )?cells/u);
+    assert.doesNotMatch(contract, /DeriveResult owns arithmetic|computed by DeriveResult or a modeled measure, including a ratio or difference of two cells/u);
+  }
 });
