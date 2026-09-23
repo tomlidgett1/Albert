@@ -45,3 +45,7 @@ enabled = false
 
 [analytics]
 enabled = false
+
+# ADR 0144: the partner session broker authenticates partner API keys itself.
+[functions.partner-session]
+verify_jwt = false

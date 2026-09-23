@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { cache } from "react";
-import { createClient } from "../../../utils/supabase/server.js";
+import { createClient, requestBearerAccessToken } from "../../../utils/supabase/server.js";
 import { disconnectFivetranXero, OAuthFlowError } from "../../oauth/src/worker-rpc.js";
 import { toConnectionsWorkspace } from "./connections-workspace.js";
 
@@ -212,10 +212,16 @@ function singleton(value: unknown): unknown {
  * memoisation a route doing K RPCs paid 2K serial round trips (ADR 0134).
  * React's `cache()` is keyed to the request in the App Router, so the cookie
  * store this reads is always the current request's.
+ *
+ * An API client's bearer token (ADR 0144) is verified with GoTrue the same
+ * way; its request never falls back to cookies.
  */
 export const requireUser = cache(async () => {
   const supabase = await createClient();
-  const { data, error } = await supabase.auth.getUser();
+  const accessToken = await requestBearerAccessToken();
+  const { data, error } = accessToken
+    ? await supabase.auth.getUser(accessToken)
+    : await supabase.auth.getUser();
   if (error || !data.user) throw new ControlPlaneError("Authentication is required.", 401);
   return { supabase, user: data.user };
 });
