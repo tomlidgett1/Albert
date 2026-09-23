@@ -281,7 +281,8 @@ test("a suggested follow-up that states an unsupported figure is dropped, not re
   const first = suggest(["Why did Bikes drop 23% last week?", "Want the top 10 products by margin?", "How did August compare with July 2025?"]);
   assert.ok(first.ok);
   assert.equal(first.answer.state, "Verified");
-  assert.deepEqual(first.answer.followUps, ["Want the top 10 products by margin?", "How did August compare with July 2025?"]);
+  // An offer reaches the owner as the request it offers (a chip is sent as the owner's message).
+  assert.deepEqual(first.answer.followUps, ["Show the top 10 products by margin", "How did August compare with July 2025?"]);
   // 14 August 2026 was a Friday, and a raw placeholder cannot reach a chip.
   const second = suggest(["Which items have not sold in 180 days?", "What drove sales on Thursday 14 August?", "What is behind {{sales}}?"]);
   assert.ok(second.ok);

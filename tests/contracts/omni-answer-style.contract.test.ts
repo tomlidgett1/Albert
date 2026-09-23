@@ -292,6 +292,19 @@ test("a numeric identifier reads as a name, not a quantity", () => {
     "Ticket 61802 and job 19927; 61,802 sales.");
 });
 
+test("suggested follow-ups are delivered in the owner's voice", () => {
+  // The owner tapped "Would you like the last sale date for each Trace model?"
+  // and sent Albert's own offer back to it.
+  const source = evidence([money], [{ sales: 819.99 }]);
+  const result = compose(source, { markdown: "The last Trace went for {{s}}.", values: [value(source, "s", "sales")], followUps: [
+    "Would you like the last sale date for each Trace model?",
+    "Should you restock the Trace before summer?",
+    "Is there anything else you'd like to know?",
+  ] });
+  assert.ok(result.ok);
+  assert.deepEqual(result.answer.followUps, ["Show the last sale date for each Trace model", "Should we restock the Trace before summer?"]);
+});
+
 test("the composer names a week bucket by its first day", () => {
   assert.match(COMPOSE_ANSWER_INSTRUCTIONS, /the row dated 2026-09-14 is "the week of 14 September" \(Monday 14 to Sunday 20\), never "the week ending 14 September"/u);
 });

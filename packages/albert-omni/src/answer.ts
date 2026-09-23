@@ -6,7 +6,7 @@ import { sanitizeAnswerText, sanitizeTraceText } from "../../shared/src/index.js
 import { findUngroundedNumbersWithEvidence, ownerStatedGroundingValues } from "../../../services/conversation/src/grounding.js";
 import type { PivotSourceResult } from "./pivot.js";
 import { answerPeriodIssues } from "./answer-scope.js";
-import { extractOmniFollowUps } from "./follow-ups.js";
+import { extractOmniFollowUps, ownerVoiceFollowUp } from "./follow-ups.js";
 import { BLANK_CALCULATION_NOTE } from "./derive.js";
 
 const slotId = z.string().regex(/^[a-z][a-z_]{0,39}$/u);
@@ -829,7 +829,10 @@ export function composeAnswer(
   // drop 23%?" asserts a fall), but it is not worth a model round trip: one
   // that states a figure nothing supports, or leaves a placeholder raw, is
   // dropped. Links in the body were already checked as prose.
-  const suggested = request.followUps.filter((question) => {
+  const suggested = request.followUps.flatMap((question) => {
+    const asOwner = ownerVoiceFollowUp(withoutEmDashes(question));
+    return asOwner ? [asOwner] : [];
+  }).filter((question) => {
     if (/\{\{|\}\}/u.test(question)) return false;
     const asked = unbound(question, true);
     return !asked.figures.length && !asked.issues.length;
@@ -852,5 +855,5 @@ Never type an em dash; use a comma, a colon or a full stop.
 Use citedResultIds for every result that supports the conclusion.
 limitations is the answer's single footnote, shown once in small type beneath it. Give it zero to two short items, each under twenty words, and only what would change how the owner reads a figure: a proxy, a partial period, a missing source, a known data gap. Never repeat there what the body already says, and never list routine basis (currency, timezone, "completed non-voided sales") that would not mislead anyone. The harness adds its own note when a table is cut short. limitations cannot bind a figure, so never type a count or amount there. The harness decides the answer state; you cannot promote an answer to Verified.
 outcome answer presents query evidence; explanation answers a definition question without figures; clarification asks the one blocking question; no_data cites the executed empty result; unavailable names the missing capability. Do not use explanation to avoid retrieving business figures.
-followUps are questions, not findings: the period, window or ranking size one asks about is fine, but one that states any other figure ("Why did Bikes drop 23%?") is dropped.
+followUps are the owner's next messages, sent as written when they tap one, so each is in the owner's voice: a request ("Show the last sale date for each Trace model", "Break the change down by category") or a question they would ask you ("Why did August takings fall?"), about the business as "we" and "our". Never an offer or a question for the owner ("Would you like…?", "Want me to…?", "Should I…?", "Are your prices locked in?"). They are requests, not findings: the period, window or ranking size one asks about is fine, but one that states any other figure ("Why did Bikes drop 23%?") is dropped.
 If composition reports issues, repair the references or run the necessary query or derivation, then compose again. After acceptance, finish with a brief hand-over; do not rewrite the accepted answer.`;
