@@ -81,5 +81,5 @@ create it, add its membership, and point the client's `actingUserId` at it.
 - Audit: the function logs `partner_session_minted` / `_rejected` /
   `_tenant_mismatch` / `_failed` with client and tenant ids, never tokens.
 - Each mint creates one auth session for the acting member. Partners cache the
-  token until shortly before it expires (Yellow Jersey keeps a 15-minute
-  margin), so this is a handful of sessions per hour at most.
+  token until shortly before it expires (Yellow Jersey keeps a 20-minute
+  margin, longer than any turn), so this is a handful of sessions per hour at most.
