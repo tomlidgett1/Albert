@@ -64,6 +64,9 @@ type CodexBackgroundJob = {
   deadlineAt?: number;
   writes?: Promise<void>;
   writeError?: Error;
+  /** The save loop in flight, and whether state changed after it began. */
+  saving?: Promise<void>;
+  saveRequested?: boolean;
   completion?: Promise<void>;
 };
 
@@ -132,6 +135,11 @@ function omniPublicFailure(error: unknown): Readonly<{ code: string; message: st
   if (error instanceof DOMException && error.name === "AbortError") {
     return { code: "omni_cancelled", message: "The analysis was cancelled." };
   }
+  // A defect in our own code is its own diagnosis: a TypeError whose text
+  // names "catalogue" is not the semantic layer being down.
+  if (error instanceof ReferenceError || error instanceof TypeError || error instanceof RangeError) {
+    return { code: "omni_runtime_defect", message: "The analysis could not be completed safely." };
+  }
   const message = unknownErrorMessage(error);
   if (/cancelled/iu.test(message)) {
     return { code: "omni_cancelled", message: "The analysis was cancelled." };
@@ -142,18 +150,35 @@ function omniPublicFailure(error: unknown): Readonly<{ code: string; message: st
   if (/Max turns/iu.test(message)) {
     return { code: "omni_turn_budget", message: "The analysis reached its step budget before finishing." };
   }
-  if (/Cube|semantic|catalogue/iu.test(message)) {
-    return { code: "omni_semantic_unavailable", message: "The governed semantic layer was unavailable." };
+  // Provider account and capacity failures, most specific first. Status codes
+  // count only at the start of a provider message: "205431 tokens" is not a 5xx.
+  if (/no credits remaining|insufficient_quota|exceeded your current quota|credit balance is too low|credit_balance_exhausted|billing/iu.test(message)) {
+    return { code: "omni_model_quota", message: "The model provider account is out of credit." };
   }
   // The managed Agents API names its failure categories (ADR 0141).
-  if (/context_length_exceeded|session_budget_exceeded/iu.test(message)) {
+  if (/context_length_exceeded|session_budget_exceeded|context window|maximum context length|prompt is too long/iu.test(message)) {
     return { code: "omni_turn_budget", message: "The analysis outgrew the model's context before finishing." };
   }
-  if (/401|429|api key|authentication|quota|usage_limit_exceeded|credit_balance_exhausted|cyber_policy|invalid_request|resource_not_found|authentication_error|executor_version_incompatible/iu.test(message)) {
+  if (/^\s*429\b|rate_limit|usage_limit_exceeded/iu.test(message)) {
+    return { code: "omni_model_rate_limited", message: "The model provider is limiting requests right now. Try again in a minute." };
+  }
+  if (/overloaded|^\s*5\d\d\b|server_error|internal_error|service unavailable/iu.test(message)) {
+    return { code: "omni_model_unavailable", message: "The model provider was temporarily unavailable." };
+  }
+  if (/^\s*40[13]\b|api key|authentication|permission_error|invalid_request|resource_not_found|cyber_policy|executor_version_incompatible|^\s*400\b/iu.test(message)) {
     return { code: "omni_model_rejected", message: "The model request was rejected by the provider." };
   }
-  if (/without a final answer/iu.test(message)) {
+  if (/stopped without a complete Albert response/iu.test(message)) {
+    return { code: "omni_model_incomplete", message: "The model stopped before finishing its answer." };
+  }
+  if (/without a (?:validated )?final answer|without a composed plan/iu.test(message)) {
     return { code: "omni_missing_answer", message: "The analysis finished without a final answer." };
+  }
+  if (/checkpoint|durable job/iu.test(message)) {
+    return { code: "omni_runtime_unavailable", message: "The analysis runtime lost its saved progress." };
+  }
+  if (/^Cube |Cube (?:meta request|returned|did not finish)|semantic turn lease|semantic model changed|catalogue|Cube turn bearer/iu.test(message)) {
+    return { code: "omni_semantic_unavailable", message: "The governed semantic layer was unavailable." };
   }
   return { code: "omni_runtime_failed", message: "The analysis could not be completed safely." };
 }
@@ -533,16 +558,43 @@ export class CodexRuntimeHttpHandler {
 
   private saveOmniJob(job: CodexBackgroundJob): Promise<void> {
     if (!job.durable || !job.omniTurn || !this.omniStore) return Promise.resolve();
-    const snapshot: OmniJobSnapshot = structuredClone({ turn: job.omniTurn, createdAt: job.createdAt, deadlineAt: job.deadlineAt!, events: job.events, ...(job.checkpoint ? { checkpoint: job.checkpoint } : {}), ...(job.result ? { result: job.result as OmniSemanticTurnResult } : {}), ...(job.failure ? { failure: job.failure } : {}) });
-    const save = (job.writes ?? Promise.resolve()).then(async () => {
+    if (job.writeError) return Promise.reject(job.writeError);
+    // One save in flight and one more for whatever changed meanwhile. Writing
+    // the whole encrypted snapshot (up to 48 MB) once per trace event grew as
+    // events × snapshot size, and every emit waited on the database for it.
+    job.saveRequested = true;
+    if (!job.saving) {
+      const loop = (async () => {
+        try {
+          while (job.saveRequested && !job.writeError) {
+            job.saveRequested = false;
+            const snapshot: OmniJobSnapshot = structuredClone({ turn: job.omniTurn!, createdAt: job.createdAt, deadlineAt: job.deadlineAt!, events: job.events, ...(job.checkpoint ? { checkpoint: job.checkpoint } : {}), ...(job.result ? { result: job.result as OmniSemanticTurnResult } : {}), ...(job.failure ? { failure: job.failure } : {}) });
+            for (let attempt = 0; ; attempt += 1) {
+              try {
+                job.durable!.revision = await this.omniStore!.save(job.durable!, snapshot);
+                break;
+              } catch (error) {
+                // A lost lease or an oversized checkpoint is final; a busy
+                // database is not, and used to fail the whole analysis.
+                const message = error instanceof Error ? error.message : String(error);
+                if (attempt >= 2 || /lease was lost|size bound|identity/iu.test(message)) throw error;
+                await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 250 : 1_000));
+              }
+            }
+          }
+        } catch (error) {
+          job.writeError = error instanceof Error ? error : new Error("The durable checkpoint failed.");
+          job.abort.abort(job.writeError);
+        } finally {
+          job.saving = undefined;
+        }
+      })();
+      job.saving = loop;
+      job.writes = loop;
+    }
+    return job.saving!.then(() => {
       if (job.writeError) throw job.writeError;
-      job.durable!.revision = await this.omniStore!.save(job.durable!, snapshot);
     });
-    job.writes = save.catch((error: unknown) => {
-      job.writeError = error instanceof Error ? error : new Error("The durable checkpoint failed.");
-      job.abort.abort(job.writeError);
-    });
-    return save;
   }
 
   private publishJobEvent(job: CodexBackgroundJob, event: CodexRuntimeBufferedEvent): void {
@@ -648,7 +700,9 @@ export class CodexRuntimeHttpHandler {
       deadlineAt: job.deadlineAt,
       ...(job.checkpoint ? { resume: job.checkpoint } : {}),
       checkpoint: async (checkpoint) => { job.checkpoint = checkpoint; await this.saveOmniJob(job); },
-      emit: async (event) => { this.publishJobEvent(job, event); await job.writes; if (job.writeError) throw job.writeError; },
+      // A trace event is committed before any poll returns it, so the analysis
+      // itself need not wait on the database for each one.
+      emit: async (event) => { if (job.writeError) throw job.writeError; this.publishJobEvent(job, event); },
       queryRecorder,
     }).then(async (result) => {
       job.result = { ...result, buildHash: this.omniBuildHash };
@@ -675,7 +729,11 @@ export class CodexRuntimeHttpHandler {
       await this.saveOmniJob(job).catch(() => undefined);
       process.stdout.write(`${JSON.stringify({
         event: "omni_job_failed",
+        jobId: job.id,
+        turnId: turn.turnId,
         harness,
+        model: turn.model,
+        effort: turn.effort,
         code: failure.code,
         diagnosticCode: diagnosticFailureCode(error),
         errorClass: error instanceof Error ? error.name : "unknown",

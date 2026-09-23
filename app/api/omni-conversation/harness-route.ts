@@ -180,6 +180,10 @@ function publicHarnessFailure(error: unknown, profile: OmniHarnessRouteProfile):
       omni_turn_timeout: "The analysis ran out of time before finishing.",
       omni_turn_budget: "The analysis reached its step budget before finishing.",
       omni_model_rejected: "The model request was rejected by the provider.",
+      omni_model_quota: "The model provider account is out of credit.",
+      omni_model_rate_limited: "The model provider is limiting requests right now. Try again in a minute.",
+      omni_model_unavailable: "The model provider was temporarily unavailable.",
+      omni_model_incomplete: "The model stopped before finishing its answer.",
       omni_missing_answer: "The analysis finished without a final answer.",
       replayed_request: "This request was already used. Ask the question again.",
     };
@@ -742,10 +746,13 @@ export async function handleOmniHarnessConversation(
             });
           }
           await emit.drain?.();
+          // The runtime's failure class rides on the digest ("omni_runtime_failure.omni_model_quota"),
+          // so a failed turn can be diagnosed from the control plane after Fly's log buffer rolls over.
+          const runtimeClass = error instanceof OmniRuntimeServiceError && /^[a-z][a-z0-9_]{1,40}$/u.test(error.code) ? `.${error.code}` : "";
           await failConversationTurn({
             conversationId,
             turnId,
-            failureCode: disconnected ? "client_disconnected" : `${profile.logPrefix}_runtime_failure`,
+            failureCode: disconnected ? "client_disconnected" : `${profile.logPrefix}_runtime_failure${runtimeClass}`,
             supabase: auth.supabase,
           });
         } catch (finalizeError) {

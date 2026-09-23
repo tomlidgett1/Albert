@@ -504,6 +504,26 @@ export async function runGovernedAnalyticalTurn(
       const zodIssues = original && typeof original === "object" && Array.isArray((original as { issues?: unknown }).issues)
         ? ((original as { issues: unknown[] }).issues as Array<{ path?: unknown; message?: unknown }>).slice(0, 6)
         : [];
+      // Only a failed argument check is an argument problem. The SDK routes
+      // every exception from a tool's execute here too (a Cube outage, a
+      // defect in our code); calling those "invalid arguments" sent the model
+      // off rewriting arguments that were fine.
+      const argumentFailure = zodIssues.length > 0 || (error instanceof Error && /^Invalid JSON input for tool/u.test(error.message));
+      if (!argumentFailure) {
+        const errorClass = error instanceof Error ? error.name : "Error";
+        await emit({
+          type: "progress",
+          status: "warning",
+          stage: "query",
+          label: sanitizeTraceText(`${toolLabel} call failed while running`, 200),
+          detail: sanitizeTraceText(errorClass, 120),
+        });
+        return JSON.stringify({
+          ok: false,
+          error: `The tool failed while running; your arguments were accepted. ${sanitizeTraceText(error instanceof Error ? error.message : String(error), 240)}`,
+          guidance: "Try the call once more, or continue with the evidence already gathered.",
+        });
+      }
       const issuePath = (issue: { path?: unknown }) => Array.isArray(issue.path) && issue.path.length > 0 ? issue.path.join(".") : "input";
       const issues = zodIssues.length
         ? zodIssues.map((issue) => `${issuePath(issue)}: ${typeof issue.message === "string" ? issue.message : "invalid"}`).join("; ")
