@@ -193,3 +193,8 @@ Runtime `albert-codex-runtime` deployment `omni-audit-20260923` and web
 schema changed and no migration was needed: the failure class rides in the
 existing `result_digest` pattern. The iMessage bridge calls the runtime over
 HTTP and was not redeployed.
+
+The second pass (bf903c5) went out the same day as runtime deployment
+`omni-audit-b-20260923` and web `dpl_MDZuAKXdxhGqpvC4idhKdCVTUwJr`, after the
+14:09 UTC hourly brief. The web is deployed too because it runs the same
+harness for the OAI Codex harness (`app/api/newagent-conversation`).
