@@ -238,6 +238,12 @@ class RateGovernor:
         return min(self.MAX_WAIT_S, 1.0 / self.drip_rate)
 
 
+def _token_revoked(body: str) -> bool:
+    """Lightspeed answers a rotated-away access token with 403, not 401."""
+    text = (body or "").lower()
+    return "revoked" in text and "token" in text
+
+
 def _retry_after(value) -> float | None:
     try:
         seconds = float(value)
@@ -315,7 +321,11 @@ class LightspeedClient:
                 status = error.code
                 body = error.read().decode("utf-8", "replace")
                 self.governor.observe(error.headers)
-                if status == 401:
+                if status == 401 or (status == 403 and _token_revoked(body)):
+                    # A 403 "Access token has been revoked" means the grant's
+                    # refresher rotated the token under a long walk (the
+                    # partner broker's refresher runs on its own schedule,
+                    # ADR 0151): fetch the current one and retry, like a 401.
                     if attempt >= 1:
                         raise LightspeedError(f"Lightspeed rejected the access token twice for {path}")
                     force_refresh = True

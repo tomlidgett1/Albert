@@ -49,3 +49,7 @@ enabled = false
 # ADR 0144: the partner session broker authenticates partner API keys itself.
 [functions.partner-session]
 verify_jwt = false
+
+# ADR 0151: partner provisioning authenticates partner platform keys itself.
+[functions.partner-provision]
+verify_jwt = false

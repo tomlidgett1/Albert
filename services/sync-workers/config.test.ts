@@ -407,3 +407,24 @@ test("Fivetran Xero config is optional, complete, and uses a Fivetran-legal sche
   });
   assert.equal(onFly.fivetran?.tokenBrokerOrigin, "https://albert-sync-worker-dogfood.fly.dev");
 });
+
+test("partner token brokers load with the Fivetran config and fail closed on a bad entry", () => {
+  const fivetran = { ...valid, FIVETRAN_API_KEY: "key", FIVETRAN_API_SECRET: "secret", FIVETRAN_GROUP_ID: "group" };
+  assert.equal(loadSyncWorkerConfig(fivetran).fivetran?.partnerTokenBrokers, undefined);
+  const brokered = loadSyncWorkerConfig({
+    ...fivetran,
+    ALBERT_PARTNER_TOKEN_BROKERS: JSON.stringify([{
+      partner: "yellow-jersey",
+      url: "https://yj.example/api/partner/albert/token",
+      secret: "x".repeat(40),
+    }]),
+  });
+  assert.equal(
+    brokered.fivetran?.partnerTokenBrokers?.get("yellow-jersey")?.url,
+    "https://yj.example/api/partner/albert/token",
+  );
+  assert.throws(
+    () => loadSyncWorkerConfig({ ...fivetran, ALBERT_PARTNER_TOKEN_BROKERS: "[{}]" }),
+    /ALBERT_PARTNER_TOKEN_BROKERS\[0\]\.entry is invalid|ALBERT_PARTNER_TOKEN_BROKERS\[0\]\.partner is invalid/u,
+  );
+});

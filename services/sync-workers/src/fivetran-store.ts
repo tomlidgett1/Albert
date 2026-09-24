@@ -6,6 +6,7 @@ const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const FIVETRAN_ID = /^[A-Za-z0-9_]{6,64}$/;
 const STATE_HASH = /^[0-9a-f]{64}$/;
 const SERVICE_ID = /^[a-z][a-z0-9_]{1,63}$/;
+const PARTNER_ID = /^[a-z0-9][a-z0-9-]{2,63}$/;
 
 export type FivetranConnectionRow = Readonly<{
   tenantId: string;
@@ -19,6 +20,8 @@ export type FivetranConnectionRow = Readonly<{
   lastSyncState: string | null;
   /** Albert-native connection whose grant Fivetran uses (Deputy). */
   nativeConnectionId?: string | null;
+  /** Partner client whose token broker holds the grant (ADR 0151). */
+  partnerClientId?: string | null;
 }>;
 
 export type FivetranOAuthSessionRow = Readonly<{
@@ -50,6 +53,7 @@ type FivetranRowRecord = {
   auth_health: string;
   last_sync_state: string | null;
   native_connection_id: string | null;
+  partner_client_id?: string | null;
 };
 
 function toRow(row: FivetranRowRecord): FivetranConnectionRow {
@@ -64,6 +68,7 @@ function toRow(row: FivetranRowRecord): FivetranConnectionRow {
     authHealth: row.auth_health,
     lastSyncState: row.last_sync_state,
     nativeConnectionId: row.native_connection_id,
+    partnerClientId: row.partner_client_id ?? null,
   };
 }
 
@@ -338,7 +343,11 @@ export class FivetranConnectionStore {
     destinationSchema: string;
     service: string;
     displayName: string;
-    nativeConnectionId: string;
+    /** The Albert-native grant Fivetran rides, or… */
+    nativeConnectionId?: string;
+    /** …the partner client whose token broker holds the grant (ADR 0151). */
+    partnerClientId?: string;
+    partner?: string;
     externalAccountReference?: string;
     /** sha256 hex of the SDK connector's broker bearer secret (Xero). */
     tokenSecretHash?: string;
@@ -346,7 +355,12 @@ export class FivetranConnectionStore {
     sdkPackageSha256?: string;
   }>): Promise<void> {
     const connectionId = requireUlid(input.connectionId, "connection_id");
-    requireUlid(input.nativeConnectionId, "native_connection_id");
+    // Exactly one grant source: a native connection or a partner client.
+    if (Boolean(input.nativeConnectionId) === Boolean(input.partnerClientId)) throw new Error("fivetran_grant_source_invalid");
+    if (input.nativeConnectionId) requireUlid(input.nativeConnectionId, "native_connection_id");
+    if (input.partnerClientId && (!PARTNER_ID.test(input.partnerClientId) || !PARTNER_ID.test(input.partner ?? ""))) {
+      throw new Error("fivetran_partner_client_invalid");
+    }
     if (!SERVICE_ID.test(input.service)) throw new Error("fivetran_service_invalid");
     if (!FIVETRAN_ID.test(input.fivetranConnectionId)) throw new Error("fivetran_connection_id_invalid");
     if (input.tokenSecretHash && !STATE_HASH.test(input.tokenSecretHash)) throw new Error("token_secret_hash_invalid");
@@ -373,7 +387,10 @@ export class FivetranConnectionStore {
                'nativeConnectionId', $7::text,
                'externalAccountReference', $8::text,
                'tokenSecretHash', $10::text,
-               'sdkPackageSha256', $11::text
+               'sdkPackageSha256', $11::text,
+               'partnerClientId', $12::text,
+               'partner', $13::text,
+               'credentialSource', CASE WHEN $12::text IS NULL THEN NULL ELSE 'partner' END
              )),
              $9, now(), now(), 'syncing'
            )`,
@@ -384,11 +401,13 @@ export class FivetranConnectionStore {
             input.destinationSchema,
             input.service,
             input.displayName.slice(0, 120),
-            input.nativeConnectionId,
+            input.nativeConnectionId ?? null,
             input.externalAccountReference ?? null,
             input.authorisedBy,
             input.tokenSecretHash ?? null,
             input.sdkPackageSha256 ?? null,
+            input.partnerClientId ?? null,
+            input.partnerClientId ? input.partner : null,
           ],
         );
       } catch (error) {
@@ -396,7 +415,7 @@ export class FivetranConnectionStore {
         // connected this native grant. The caller unwinds its Fivetran-side
         // connection and returns the surviving row.
         if ((error as { code?: string })?.code === "23505") {
-          throw new Error("fivetran_native_already_connected");
+          throw new Error(input.partnerClientId ? "fivetran_partner_already_connected" : "fivetran_native_already_connected");
         }
         throw error;
       }
@@ -405,8 +424,9 @@ export class FivetranConnectionStore {
            tenant_id, audit_id, actor_user_id, actor_type, action,
            resource_type, resource_id, audit_metadata
          ) values ($1, $2, $3, 'user', 'fivetran.connection_authorised',
-           'fivetran_connection', $4, jsonb_build_object('service', $5::text, 'nativeConnectionId', $6::text))`,
-        [input.tenantId, ulid(), input.authorisedBy, connectionId, input.service, input.nativeConnectionId],
+           'fivetran_connection', $4, jsonb_strip_nulls(jsonb_build_object(
+             'service', $5::text, 'nativeConnectionId', $6::text, 'partnerClientId', $7::text)))`,
+        [input.tenantId, ulid(), input.authorisedBy, connectionId, input.service, input.nativeConnectionId ?? null, input.partnerClientId ?? null],
       );
     });
   }
@@ -468,6 +488,7 @@ export class FivetranConnectionStore {
       `select tenant_id, connection_id, fivetran_connection_id, destination_schema,
               service, display_name, status, auth_health, last_sync_state,
               account_metadata ->> 'nativeConnectionId' as native_connection_id,
+              account_metadata ->> 'partnerClientId' as partner_client_id,
               account_metadata ->> 'tokenSecretHash' as token_secret_hash
          from control_plane.fivetran_connections
         where tenant_id = $1
@@ -487,7 +508,8 @@ export class FivetranConnectionStore {
     const result = await this.db.query<FivetranRowRecord>(
       `select tenant_id, connection_id, fivetran_connection_id, destination_schema,
               service, display_name, status, auth_health, last_sync_state,
-              account_metadata ->> 'nativeConnectionId' as native_connection_id
+              account_metadata ->> 'nativeConnectionId' as native_connection_id,
+              account_metadata ->> 'partnerClientId' as partner_client_id
          from control_plane.fivetran_connections
         where tenant_id = $1
           and account_metadata ->> 'nativeConnectionId' = $2
@@ -500,13 +522,38 @@ export class FivetranConnectionStore {
     return row ? toRow(row) : null;
   }
 
+  /** The live connection a partner-brokered grant already feeds (ADR 0151). */
+  async findByPartnerGrant(input: Readonly<{
+    tenantId: string;
+    service: string;
+  }>): Promise<FivetranConnectionRow | null> {
+    if (!SERVICE_ID.test(input.service)) throw new Error("fivetran_service_invalid");
+    const result = await this.db.query<FivetranRowRecord>(
+      `select tenant_id, connection_id, fivetran_connection_id, destination_schema,
+              service, display_name, status, auth_health, last_sync_state,
+              account_metadata ->> 'nativeConnectionId' as native_connection_id,
+              account_metadata ->> 'partnerClientId' as partner_client_id
+         from control_plane.fivetran_connections
+        where tenant_id = $1
+          and service = $2
+          and account_metadata ? 'partnerClientId'
+          and status in ('connected', 'degraded', 'blocked')
+        order by created_at desc
+        limit 1`,
+      [input.tenantId, input.service],
+    );
+    const row = result.rows[0];
+    return row ? toRow(row) : null;
+  }
+
   /** Every live connection for a service across tenants (background relays). */
   async listConnectedByService(input: Readonly<{ service: string }>): Promise<readonly FivetranConnectionRow[]> {
     if (!SERVICE_ID.test(input.service)) throw new Error("fivetran_service_invalid");
     const result = await this.db.query<FivetranRowRecord>(
       `select tenant_id, connection_id, fivetran_connection_id, destination_schema,
               service, display_name, status, auth_health, last_sync_state,
-              account_metadata ->> 'nativeConnectionId' as native_connection_id
+              account_metadata ->> 'nativeConnectionId' as native_connection_id,
+              account_metadata ->> 'partnerClientId' as partner_client_id
          from control_plane.fivetran_connections
         where service = $1
           and status in ('connected', 'degraded', 'blocked')
@@ -534,13 +581,15 @@ export class FivetranConnectionStore {
       auth_health: string;
       last_sync_state: string | null;
       native_connection_id: string | null;
+      partner_client_id: string | null;
     }>(
       `select connection.tenant_id, connection.connection_id,
               connection.fivetran_connection_id, connection.destination_schema,
               connection.service,
               connection.display_name, connection.status, connection.auth_health,
               connection.last_sync_state,
-              connection.account_metadata ->> 'nativeConnectionId' as native_connection_id
+              connection.account_metadata ->> 'nativeConnectionId' as native_connection_id,
+              connection.account_metadata ->> 'partnerClientId' as partner_client_id
          from control_plane.fivetran_connections as connection
          join control_plane.memberships as membership
            on membership.tenant_id = connection.tenant_id
@@ -564,6 +613,7 @@ export class FivetranConnectionStore {
       authHealth: row.auth_health,
       lastSyncState: row.last_sync_state,
       nativeConnectionId: row.native_connection_id,
+      partnerClientId: row.partner_client_id,
     };
   }
 
