@@ -9,7 +9,9 @@
  *
  * This config mirrors the trusted bridge pattern (cube-playground/bridge):
  *   1. Every request's security context must carry the authenticated
- *      either a running Albert turn or a claimed dashboard refresh lease.
+ *      tenant and exactly one execution claim: a running Albert turn, a
+ *      claimed dashboard refresh lease, or a partner semantic query lease
+ *      (ADR 0153).
  *   2. A custom Postgres driver issues a turn-bound capability from the
  *      control plane (`control_plane.issue_semantic_analytical_capability`)
  *      and applies `SET ROLE semantic_ro` plus the capability GUC on every
@@ -132,13 +134,32 @@ function pgConfigFromUrl(url) {
   return config;
 }
 
-async function issueSemanticReadCapability({
-  tenantId,
-  conversationId,
-  turnId,
-  dashboardTileId,
-  dashboardRefreshLeaseId,
-}) {
+/**
+ * Which execution a security context is for: a running turn, a dashboard
+ * tile refresh, or a partner semantic query lease. A context carrying more
+ * than one claim (or none) has no execution and fails closed.
+ */
+function executionKind({ conversationId, turnId, dashboardTileId, dashboardRefreshLeaseId, semanticQueryLeaseId }) {
+  const kinds = [];
+  if (conversationId && turnId) kinds.push('turn');
+  if (dashboardTileId && dashboardRefreshLeaseId) kinds.push('dashboard');
+  if (semanticQueryLeaseId) kinds.push('semantic_query');
+  return kinds.length === 1 ? kinds[0] : null;
+}
+
+async function issueSemanticReadCapability(albertContext) {
+  const {
+    tenantId,
+    conversationId,
+    turnId,
+    dashboardTileId,
+    dashboardRefreshLeaseId,
+    semanticQueryLeaseId,
+  } = albertContext;
+  const kind = executionKind(albertContext);
+  if (!tenantId || !kind) {
+    throw new Error('An analytical capability needs a tenant and exactly one execution claim.');
+  }
   const controlUrl = requiredEnv([
     'ALBERT_SEMANTIC_CONTROL_DATABASE_URL',
     'CONTROL_PLANE_DATABASE_URL',
@@ -154,19 +175,25 @@ async function issueSemanticReadCapability({
   try {
     await client.query('BEGIN');
     await client.query('SET LOCAL ROLE albert_semantic_control');
-    const dashboardRefresh = dashboardTileId && dashboardRefreshLeaseId;
-    const result = await client.query(
-      dashboardRefresh
-        ? `SELECT control_plane.issue_dashboard_analytical_capability(
-             $1::text, $2::text, $3::text, 'semantic_read'::text
-           ) AS capability`
-        : `SELECT control_plane.issue_semantic_analytical_capability(
-             $1::text, $2::text, $3::text, 'semantic_read'::text
-           ) AS capability`,
-      dashboardRefresh
-        ? [tenantId, dashboardTileId, dashboardRefreshLeaseId]
-        : [tenantId, conversationId, turnId],
-    );
+    const result = kind === 'semantic_query'
+      ? await client.query(
+        `SELECT control_plane.issue_semantic_query_analytical_capability(
+           $1::text, $2::text, 'semantic_read'::text
+         ) AS capability`,
+        [tenantId, semanticQueryLeaseId],
+      )
+      : await client.query(
+        kind === 'dashboard'
+          ? `SELECT control_plane.issue_dashboard_analytical_capability(
+               $1::text, $2::text, $3::text, 'semantic_read'::text
+             ) AS capability`
+          : `SELECT control_plane.issue_semantic_analytical_capability(
+               $1::text, $2::text, $3::text, 'semantic_read'::text
+             ) AS capability`,
+        kind === 'dashboard'
+          ? [tenantId, dashboardTileId, dashboardRefreshLeaseId]
+          : [tenantId, conversationId, turnId],
+      );
     const capability = result.rows[0] && result.rows[0].capability;
     if (typeof capability !== 'string' || capability.length < 100 || capability.length > 4096) {
       throw new Error('Control plane returned an invalid analytical capability.');
@@ -214,16 +241,7 @@ class CapabilityPostgresDriver extends PostgresDriver {
 
   async prepareConnection(conn, options) {
     await super.prepareConnection(conn, options);
-    const {
-      tenantId,
-      conversationId,
-      turnId,
-      dashboardTileId,
-      dashboardRefreshLeaseId,
-    } = this.albertContext;
-    const conversationTurn = conversationId && turnId;
-    const dashboardRefresh = dashboardTileId && dashboardRefreshLeaseId;
-    if (!tenantId || (!conversationTurn && !dashboardRefresh)) {
+    if (!this.albertContext.tenantId || !executionKind(this.albertContext)) {
       // Connection-health probes (SELECT 1) run without a security context;
       // any query against RLS-protected staging tables will fail in Postgres
       // with a clear "analytical capability" error rather than leaking rows.
@@ -253,6 +271,9 @@ function albertContextFrom(securityContext) {
     dashboardTileId: typeof context.dashboard_tile_id === 'string' ? context.dashboard_tile_id : null,
     dashboardRefreshLeaseId: typeof context.dashboard_refresh_lease_id === 'string'
       ? context.dashboard_refresh_lease_id
+      : null,
+    semanticQueryLeaseId: typeof context.semantic_query_lease_id === 'string'
+      ? context.semantic_query_lease_id
       : null,
     role,
     specialistAgentId,
@@ -284,6 +305,9 @@ module.exports = {
   // documented endpoints it proves while preserving the established default
   // scopes for all ordinary signed clients.
   contextToApiScopes: (securityContext, defaultScopes) => {
+    // A partner's semantic query lease reads the catalogue and loads data,
+    // nothing else (no SQL or GraphQL surface).
+    if (typeof securityContext?.semantic_query_lease_id === 'string') return ['meta', 'data'];
     if (securityContext?.albert_release_smoke !== true) return defaultScopes;
     const requested = securityContext.scope;
     if (!Array.isArray(requested) || requested.length !== 2 ||
@@ -302,11 +326,13 @@ module.exports = {
     return `CUBEJS_APP_${tenantId || 'anonymous'}`;
   },
 
-  // Each live turn or dashboard refresh lease gets a distinct driver whose
-  // pooled connections carry only that execution's capability.
+  // Each live turn, dashboard refresh lease or semantic query lease gets a
+  // distinct driver whose pooled connections carry only that execution's
+  // capability.
   contextToOrchestratorId: ({ securityContext }) => {
-    const { tenantId, turnId, dashboardRefreshLeaseId } = albertContextFrom(securityContext);
-    return `CUBEJS_APP_${tenantId || 'anonymous'}_${turnId || dashboardRefreshLeaseId || 'no-execution'}`;
+    const { tenantId, turnId, dashboardRefreshLeaseId, semanticQueryLeaseId } = albertContextFrom(securityContext);
+    const execution = turnId || dashboardRefreshLeaseId || semanticQueryLeaseId || 'no-execution';
+    return `CUBEJS_APP_${tenantId || 'anonymous'}_${execution}`;
   },
 
   driverFactory: ({ securityContext }) => {
@@ -339,20 +365,11 @@ module.exports = {
   },
 
   queryRewrite: (query, { securityContext }) => {
-    const {
-      tenantId,
-      conversationId,
-      turnId,
-      dashboardTileId,
-      dashboardRefreshLeaseId,
-      role,
-      specialistAgentId,
-    } = albertContextFrom(securityContext);
-    const conversationTurn = conversationId && turnId;
-    const dashboardRefresh = dashboardTileId && dashboardRefreshLeaseId;
-    if (!tenantId || (!conversationTurn && !dashboardRefresh)) {
+    const albertContext = albertContextFrom(securityContext);
+    const { tenantId, role, specialistAgentId } = albertContext;
+    if (!tenantId || !executionKind(albertContext)) {
       throw new Error(
-        'Albert Cube queries require an authenticated turn or dashboard refresh lease.',
+        'Albert Cube queries require an authenticated turn, dashboard refresh lease or semantic query lease.',
       );
     }
     // Specialist selection is signed server context, not a browser claim. The

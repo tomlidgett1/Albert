@@ -124,6 +124,8 @@ export type CubeLoadResult = Readonly<{
   executionMs: number;
   /** True when this result was served from the per-turn client cache. */
   cached: boolean;
+  /** Rows matching the query before limit and offset, when the query asked for `total`. */
+  total?: number;
 }>;
 
 export type CubeLoadFailure = Readonly<{
@@ -146,12 +148,22 @@ export type CubeSecurityContext = Readonly<{
     turn_id: string;
     dashboard_tile_id?: never;
     dashboard_refresh_lease_id?: never;
+    semantic_query_lease_id?: never;
   }>
   | Readonly<{
     dashboard_tile_id: string;
     dashboard_refresh_lease_id: string;
     conversation_id?: never;
     turn_id?: never;
+    semantic_query_lease_id?: never;
+  }>
+  /** A partner's governed query under a semantic query lease (ADR 0153). */
+  | Readonly<{
+    semantic_query_lease_id: string;
+    conversation_id?: never;
+    turn_id?: never;
+    dashboard_tile_id?: never;
+    dashboard_refresh_lease_id?: never;
   }>
   /**
    * Catalogue-only: no lease, so the data API refuses every query (Cube's
@@ -163,5 +175,6 @@ export type CubeSecurityContext = Readonly<{
     turn_id?: never;
     dashboard_tile_id?: never;
     dashboard_refresh_lease_id?: never;
+    semantic_query_lease_id?: never;
   }>
 );

@@ -34,10 +34,12 @@ export function signCubeJwt(input: Readonly<{
         conversation_id: input.securityContext.conversation_id,
         turn_id: input.securityContext.turn_id,
       }
-      : {
-        dashboard_tile_id: input.securityContext.dashboard_tile_id,
-        dashboard_refresh_lease_id: input.securityContext.dashboard_refresh_lease_id,
-      }),
+      : input.securityContext.semantic_query_lease_id
+        ? { semantic_query_lease_id: input.securityContext.semantic_query_lease_id }
+        : {
+          dashboard_tile_id: input.securityContext.dashboard_tile_id,
+          dashboard_refresh_lease_id: input.securityContext.dashboard_refresh_lease_id,
+        }),
     exp: Math.floor(Date.now() / 1000) + (input.expiresInSeconds ?? 3_600),
   });
   const signature = createHmac("sha256", secret)

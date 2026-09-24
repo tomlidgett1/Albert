@@ -717,6 +717,7 @@ export class CubeClient {
         annotation,
         executionMs: Date.now() - started,
         cached: false,
+        ...(typeof body.total === "number" && Number.isFinite(body.total) ? { total: body.total } : {}),
       };
     }
     return {

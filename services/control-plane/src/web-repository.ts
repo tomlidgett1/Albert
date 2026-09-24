@@ -191,6 +191,11 @@ export const ALBERT_RATE_LIMIT_POLICIES = Object.freeze({
   "alerts.check": Object.freeze({ limit: 12, windowSeconds: 3_600 }),
   /** Deterministic element requeries (ADR 0134): each one runs a governed query. */
   "dashboard.requery": Object.freeze({ limit: 240, windowSeconds: 3_600 }),
+  /**
+   * Partner semantic queries (ADR 0153): one call is a batch of governed
+   * queries for one dashboard element, and a page opens a dozen at once.
+   */
+  "semantic.query": Object.freeze({ limit: 240, windowSeconds: 60 }),
 } as const);
 
 export type AlbertRateLimitAction = keyof typeof ALBERT_RATE_LIMIT_POLICIES;
