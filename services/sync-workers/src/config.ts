@@ -7,6 +7,7 @@ import { assertProductionRuntimeBoundary } from "../../../packages/config/src/pr
 import { loadEncodedAes256Keyring } from "../../../packages/security/src/index.js";
 import { isFivetranDestinationSchema } from "../../../packages/fivetran/src/index.js";
 import type { FivetranWorkerConfig } from "./fivetran-http.js";
+import { parsePartnerTokenBrokers } from "./partner-grants.js";
 
 const CONNECTOR_PROVIDERS = ["lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"] as const;
 export type ConnectorProvider = (typeof CONNECTOR_PROVIDERS)[number];
@@ -378,6 +379,9 @@ function loadFivetranWorkerConfig(
   if (sdkPythonVersion && !/^3\.\d{1,2}$/u.test(sdkPythonVersion)) {
     throw new Error("FIVETRAN_SDK_PYTHON_VERSION must look like 3.12.");
   }
+  // Partner-brokered grants (ADR 0151): the partner's token endpoint and the
+  // HMAC secret shared with it, per partner. Unset = no partner brokers.
+  const partnerTokenBrokers = parsePartnerTokenBrokers(source.ALBERT_PARTNER_TOKEN_BROKERS);
   return Object.freeze({
     apiKey,
     apiSecret,
@@ -388,5 +392,6 @@ function loadFivetranWorkerConfig(
     ...(sdkPythonVersion ? { sdkPythonVersion } : {}),
     ...(tokenBrokerOrigin ? { tokenBrokerOrigin } : {}),
     ...(destinationRole ? { destinationRole } : {}),
+    ...(partnerTokenBrokers.size ? { partnerTokenBrokers } : {}),
   });
 }

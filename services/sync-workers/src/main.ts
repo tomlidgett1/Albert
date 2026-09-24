@@ -25,6 +25,7 @@ import { FivetranDestinationMaintenance } from "./fivetran-destination-maintenan
 import { FivetranDeputyTokenRelay } from "./fivetran-deputy-relay.js";
 import { FivetranWorkerHttpHandler } from "./fivetran-http.js";
 import { FivetranConnectionStore } from "./fivetran-store.js";
+import { PartnerGrantBridge } from "./partner-grants.js";
 import { OAuthWorkerHttpHandler } from "./oauth-http.js";
 import { OAuthSessionStore } from "./oauth-session-store.js";
 import { PgTransactionalDatabase } from "./postgres.js";
@@ -204,6 +205,10 @@ export async function runSyncWorker(): Promise<void> {
     }),
     connectors: connectorFactory,
   });
+  // Partner-brokered grants (ADR 0151): the partner refreshes; this worker asks.
+  const partnerGrants = config.fivetran?.partnerTokenBrokers?.size
+    ? new PartnerGrantBridge({ db: controlDb, brokers: config.fivetran.partnerTokenBrokers })
+    : undefined;
   const fivetran = config.fivetran
     ? new FivetranWorkerHttpHandler({
         oauthWorkerSigningSecret: config.oauthWorkerSigningSecret,
@@ -244,9 +249,10 @@ export async function runSyncWorker(): Promise<void> {
               connector: () => registry.get("lightspeed-r"),
             })
           : undefined,
+        partnerGrants,
       })
     : null;
-  const fivetranDeputyRelay = fivetran && connectorFactory.isConfigured("deputy")
+  const fivetranDeputyRelay = fivetran && (connectorFactory.isConfigured("deputy") || partnerGrants)
     ? new FivetranDeputyTokenRelay(fivetran)
     : null;
   const fivetranDestinationMaintenance = fivetran

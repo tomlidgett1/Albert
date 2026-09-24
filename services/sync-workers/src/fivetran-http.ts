@@ -18,12 +18,39 @@ import { isStripeLiveFivetranSecret } from "../../../connectors/stripe/index.js"
 import type { DeputyFivetranCredentialBridge, NativeFivetranCredentialBridge, StripeFivetranCredentialBridge } from "./fivetran-native-credentials.js";
 import type { FivetranDestinationStore } from "./fivetran-destinations.js";
 import { packageSdkProject } from "./fivetran-sdk-package.js";
-import type { FivetranConnectionStore } from "./fivetran-store.js";
+import type { FivetranConnectionRow, FivetranConnectionStore } from "./fivetran-store.js";
+import { partnerProviderForService, type PartnerGrantBridge } from "./partner-grants.js";
 
 function randomBase64UrlSecret(): string {
   const bytes = (randomBytes as unknown as (size: number) => unknown)(32);
   return (bytes as { toString(encoding: string): string }).toString("base64url");
 }
+
+/**
+ * Where a Fivetran connection's vendor grant lives: an Albert-native OAuth
+ * connection (Albert's vault refreshes it), or a partner client whose token
+ * broker holds and refreshes it (ADR 0151). Exactly one per start request.
+ */
+type GrantSource =
+  | Readonly<{ kind: "native"; nativeConnectionId: string }>
+  | Readonly<{ kind: "partner" }>;
+
+/** The fields every grant bridge returns that the start paths use. */
+type GrantCredential = Readonly<{
+  accessToken: string;
+  expiresAt: string;
+  externalAccountReference: string;
+  displayName: string;
+}>;
+
+/** SDK connectors refetch under 3 minutes left; ask the partner for 5. */
+const SDK_PARTNER_MIN_VALIDITY_SECONDS = 5 * 60;
+/**
+ * Fivetran holds a static Deputy token between relay cycles (6 h), so a
+ * partner-brokered token must outlive one cycle with margin, the same 8 h the
+ * native Deputy bridge refreshes at.
+ */
+const DEPUTY_PARTNER_MIN_VALIDITY_SECONDS = 8 * 60 * 60;
 
 export type FivetranWorkerConfig = Readonly<{
   apiKey: string;
@@ -39,6 +66,8 @@ export type FivetranWorkerConfig = Readonly<{
   lightspeedSdkProjectDir?: string;
   /** Python runtime Fivetran should use for the SDK connectors. */
   sdkPythonVersion?: string;
+  /** Partner token brokers by partner id (ALBERT_PARTNER_TOKEN_BROKERS, ADR 0151). */
+  partnerTokenBrokers?: ReadonlyMap<string, Readonly<{ partner: string; url: string; secret: string }>>;
 }>;
 
 /**
@@ -149,6 +178,8 @@ export class FivetranWorkerHttpHandler {
     xeroCredentials?: NativeFivetranCredentialBridge;
     /** Present when Albert's Lightspeed R-Series OAuth app is configured (Lightspeed via the SDK connector). */
     lightspeedCredentials?: NativeFivetranCredentialBridge;
+    /** Present when a partner token broker is configured (partner-brokered grants, ADR 0151). */
+    partnerGrants?: PartnerGrantBridge;
     client?: FivetranClient;
   }>) {
     if (Buffer.byteLength(dependencies.oauthWorkerSigningSecret, "utf8") < 32) {
@@ -297,6 +328,10 @@ export class FivetranWorkerHttpHandler {
    * `refreshDeputyTokens()` re-pushes a fresh one on a schedule.
    */
   private async startApiAuthorised(input: Record<string, unknown>, definition: FivetranServiceDefinition) {
+    // Partner-brokered grants cover the rotating-refresh-token vendors only.
+    if (input.grantSource === "partner" && !partnerProviderForService(definition.service)) {
+      throw new Error("fivetran_service_unsupported");
+    }
     if (definition.service === "deputy") return this.startDeputy(input, definition);
     if (definition.service === "stripe") return this.startStripe(input, definition);
     const sdk = this.sdkService(definition.service);
@@ -358,21 +393,30 @@ export class FivetranWorkerHttpHandler {
    * `refreshDeputyTokens()` re-pushes a fresh one on a schedule.
    */
   private async startDeputy(input: Record<string, unknown>, definition: FivetranServiceDefinition) {
-    const bridge = this.dependencies.deputyCredentials;
-    if (!bridge) {
-      throw new Error(
-        "fivetran_not_configured:Deputy via Fivetran needs Albert's Deputy OAuth app "
-        + "(DEPUTY_CLIENT_ID / DEPUTY_CLIENT_SECRET) on the sync worker.",
-      );
-    }
     const tenantId = requiredString(input, "tenantId", 26);
     const userId = requiredString(input, "userId", 36);
-    const nativeConnectionId = requiredString(input, "nativeConnectionId", 26);
-    const credential = await bridge.read({ tenantId, nativeConnectionId });
+    const source = grantSource(input);
+    let credential: GrantCredential & Readonly<{ subDomain: string }>;
+    if (source.kind === "partner") {
+      const partner = await this.partnerGrants().read({
+        tenantId, service: definition.service, minValiditySeconds: DEPUTY_PARTNER_MIN_VALIDITY_SECONDS,
+      });
+      if (!partner.subDomain) throw new Error("fivetran_partner_broker_invalid:no Deputy install");
+      credential = { ...partner, subDomain: partner.subDomain };
+    } else {
+      const bridge = this.dependencies.deputyCredentials;
+      if (!bridge) {
+        throw new Error(
+          "fivetran_not_configured:Deputy via Fivetran needs Albert's Deputy OAuth app "
+          + "(DEPUTY_CLIENT_ID / DEPUTY_CLIENT_SECRET) on the sync worker.",
+        );
+      }
+      credential = await bridge.read({ tenantId, nativeConnectionId: source.nativeConnectionId });
+    }
 
     // One Fivetran connection per Deputy install: re-running the grant for an
     // install Fivetran already syncs just refreshes its token.
-    const existing = await this.dependencies.store.findByNativeConnection({ tenantId, nativeConnectionId });
+    const existing = await this.findExisting(tenantId, definition.service, source);
     if (existing) {
       await this.client.updateConfig(existing.fivetranConnectionId, {
         sub_domain: credential.subDomain,
@@ -426,17 +470,17 @@ export class FivetranWorkerHttpHandler {
         destinationSchema,
         service: definition.service,
         displayName: credential.displayName ? `${credential.displayName} (Fivetran)` : definition.displayName,
-        nativeConnectionId,
+        ...(await this.grantRecord(tenantId, source)),
         externalAccountReference: credential.externalAccountReference,
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "fivetran_native_already_connected") {
+      if (isAlreadyConnected(error)) {
         // A concurrent start won the unique guard: unwind this side's Fivetran
         // connection and answer with the winner so both callers converge.
         await this.client.deleteConnection(created.id).catch(() => undefined);
         await this.dependencies.destinations.retire({ destinationSchema, tenantId }).catch(() => undefined);
         await this.dependencies.destinations.purge({ destinationSchema, tenantId }).catch(() => undefined);
-        const winner = await this.dependencies.store.findByNativeConnection({ tenantId, nativeConnectionId });
+        const winner = await this.findExisting(tenantId, definition.service, source);
         if (winner) return response({ connectionId: winner.connectionId, fivetranConnectionId: winner.fivetranConnectionId });
       }
       throw error;
@@ -595,7 +639,8 @@ export class FivetranWorkerHttpHandler {
    */
   private async startSdk(input: Record<string, unknown>, definition: FivetranServiceDefinition, sdkService: SdkServiceDefinition) {
     const bridge = sdkService.bridge;
-    if (!bridge) {
+    // A partner-brokered grant needs no Albert OAuth app: the partner refreshes it.
+    if (!bridge && input.grantSource !== "partner") {
       throw new Error(`fivetran_not_configured:${sdkService.notConfigured}`);
     }
     const brokerOrigin = this.dependencies.config.tokenBrokerOrigin;
@@ -604,12 +649,30 @@ export class FivetranWorkerHttpHandler {
     }
     const tenantId = requiredString(input, "tenantId", 26);
     const userId = requiredString(input, "userId", 36);
-    const nativeConnectionId = requiredString(input, "nativeConnectionId", 26);
+    const source = grantSource(input);
     // Proves the grant is live before anything is created on Fivetran.
-    const credential = await bridge.read({ tenantId, nativeConnectionId });
+    const credential: GrantCredential = source.kind === "partner"
+      ? await this.partnerGrants().read({
+          tenantId, service: definition.service, minValiditySeconds: SDK_PARTNER_MIN_VALIDITY_SECONDS,
+        })
+      : await bridge!.read({ tenantId, nativeConnectionId: source.nativeConnectionId });
     if (!credential.externalAccountReference) throw new Error(sdkService.accountMissing);
 
-    const existing = await this.dependencies.store.findByNativeConnection({ tenantId, nativeConnectionId });
+    const existing = await this.findExisting(tenantId, definition.service, source);
+    if (existing && source.kind === "partner") {
+      // A repeat partner registration: the partner already serves this
+      // connection's tokens, so there is nothing to rotate or redeploy. The
+      // grant just answered, so record it healthy and, if the last sync died
+      // on an expired grant, start one now instead of waiting for the schedule.
+      await this.dependencies.store.recordSyncState({
+        tenantId, connectionId: existing.connectionId, syncState: existing.lastSyncState ?? "syncing",
+        authHealth: "healthy", status: "connected",
+      });
+      if (existing.authHealth !== "healthy" && !existing.fivetranConnectionId.startsWith("pending_")) {
+        await this.resumeSingleFivetranSync(existing.fivetranConnectionId).catch(() => undefined);
+      }
+      return response({ connectionId: existing.connectionId, fivetranConnectionId: existing.fivetranConnectionId });
+    }
     if (existing) {
       // Re-consent for an org Fivetran already syncs: rotate the broker secret
       // and refresh the deployed code, nothing else.
@@ -648,8 +711,9 @@ export class FivetranWorkerHttpHandler {
     });
     // The secret hash must exist before Fivetran runs the connector's first
     // setup test, or the broker would refuse it. Row is born connected; a
-    // failure below disconnects it again. The unique guard on the native
-    // connection makes a concurrent duplicate start converge on the winner.
+    // failure below disconnects it again. The unique guard on the grant
+    // (native connection or partner client) makes a concurrent duplicate
+    // start converge on the winner.
     try {
       await this.dependencies.store.createConnected({
         tenantId,
@@ -659,16 +723,16 @@ export class FivetranWorkerHttpHandler {
         destinationSchema,
         service: definition.service,
         displayName: credential.displayName ? `${credential.displayName} (Fivetran)` : definition.displayName,
-        nativeConnectionId,
+        ...(await this.grantRecord(tenantId, source)),
         externalAccountReference: credential.externalAccountReference,
         tokenSecretHash: sha256Hex(secret),
         sdkPackageSha256: sdk.sha256,
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "fivetran_native_already_connected") {
+      if (isAlreadyConnected(error)) {
         await this.dependencies.destinations.retire({ destinationSchema, tenantId }).catch(() => undefined);
         await this.dependencies.destinations.purge({ destinationSchema, tenantId }).catch(() => undefined);
-        const winner = await this.dependencies.store.findByNativeConnection({ tenantId, nativeConnectionId });
+        const winner = await this.findExisting(tenantId, definition.service, source);
         if (winner) return response({ connectionId: winner.connectionId, fivetranConnectionId: winner.fivetranConnectionId });
       }
       throw error;
@@ -865,15 +929,24 @@ export class FivetranWorkerHttpHandler {
       return errorResponse("unauthorised", 401);
     }
     const row = await this.dependencies.store.loadForTokenBroker({ tenantId, connectionId }).catch(() => null);
-    if (!row || !row.tokenSecretHash || !row.nativeConnectionId) return errorResponse("unauthorised", 401);
+    if (!row || !row.tokenSecretHash || (!row.nativeConnectionId && !row.partnerClientId)) {
+      return errorResponse("unauthorised", 401);
+    }
     const expected = Buffer.from(row.tokenSecretHash, "hex");
     const actual = Buffer.from(sha256Hex(presented), "hex");
     if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
       return errorResponse("unauthorised", 401);
     }
-    const bridge = this.sdkService(row.service)?.bridge;
-    if (!bridge) return errorResponse("not_found", 404);
-    const credential = await bridge.read({ tenantId, nativeConnectionId: row.nativeConnectionId });
+    if (!this.sdkService(row.service)) return errorResponse("not_found", 404);
+    let credential: GrantCredential;
+    if (row.partnerClientId) {
+      // Partner-brokered (ADR 0151): the partner refreshes; Albert only relays.
+      credential = await this.partnerCredential(row, SDK_PARTNER_MIN_VALIDITY_SECONDS);
+    } else {
+      const bridge = this.sdkService(row.service)?.bridge;
+      if (!bridge || !row.nativeConnectionId) return errorResponse("not_found", 404);
+      credential = await bridge.read({ tenantId, nativeConnectionId: row.nativeConnectionId });
+    }
     await this.dependencies.store.recordSyncState({
       tenantId, connectionId, syncState: row.lastSyncState ?? "syncing", authHealth: "healthy",
     }).catch(() => undefined);
@@ -897,18 +970,24 @@ export class FivetranWorkerHttpHandler {
    */
   async refreshDeputyTokens(signal?: AbortSignal): Promise<number> {
     const bridge = this.dependencies.deputyCredentials;
-    if (!bridge) return 0;
+    const partnerGrants = this.dependencies.partnerGrants;
+    if (!bridge && !partnerGrants) return 0;
     const rows = await this.dependencies.store.listConnectedByService({ service: "deputy" });
     let pushed = 0;
     for (const row of rows) {
       if (signal?.aborted) break;
-      if (!row.nativeConnectionId) continue;
+      if (row.partnerClientId ? !partnerGrants : !bridge || !row.nativeConnectionId) continue;
       try {
-        const credential = await bridge.read({
-          tenantId: row.tenantId,
-          nativeConnectionId: row.nativeConnectionId,
-          signal,
-        });
+        // Partner-brokered rows ask the partner for a token that outlives the
+        // next relay cycle; the partner refreshes through its one refresher.
+        const credential = row.partnerClientId
+          ? await this.partnerCredential(row, DEPUTY_PARTNER_MIN_VALIDITY_SECONDS, signal)
+          : await bridge!.read({
+              tenantId: row.tenantId,
+              nativeConnectionId: row.nativeConnectionId!,
+              signal,
+            });
+        if (!credential.subDomain) throw new Error("fivetran_partner_broker_invalid:no Deputy install");
         await this.client.updateConfig(row.fivetranConnectionId, {
           sub_domain: credential.subDomain,
           access_token: credential.accessToken,
@@ -930,6 +1009,63 @@ export class FivetranWorkerHttpHandler {
       }
     }
     return pushed;
+  }
+
+  private partnerGrants(): PartnerGrantBridge {
+    const grants = this.dependencies.partnerGrants;
+    if (!grants) {
+      throw new Error("fivetran_not_configured:Partner-brokered grants need ALBERT_PARTNER_TOKEN_BROKERS on the sync worker.");
+    }
+    return grants;
+  }
+
+  /** The live row this grant already feeds, if any. */
+  private findExisting(tenantId: string, service: string, source: GrantSource): Promise<FivetranConnectionRow | null> {
+    return source.kind === "partner"
+      ? this.dependencies.store.findByPartnerGrant({ tenantId, service })
+      : this.dependencies.store.findByNativeConnection({ tenantId, nativeConnectionId: source.nativeConnectionId });
+  }
+
+  /** The grant-source fields a new fivetran_connections row records. */
+  private async grantRecord(tenantId: string, source: GrantSource): Promise<
+    Readonly<{ nativeConnectionId: string }> | Readonly<{ partnerClientId: string; partner: string }>
+  > {
+    if (source.kind === "native") return { nativeConnectionId: source.nativeConnectionId };
+    const binding = await this.partnerGrants().binding(tenantId);
+    if (!binding) throw new Error("fivetran_partner_binding_not_found");
+    return { partnerClientId: binding.clientId, partner: binding.partner };
+  }
+
+  /**
+   * A partner-brokered row's token. The tenant's binding must still be the
+   * client the row was created for; a switched-off or replaced client never
+   * receives another token. An expired grant is recorded on the row so the
+   * workspace tile and the partner's status poll see why syncs stop.
+   */
+  private async partnerCredential(
+    row: FivetranConnectionRow,
+    minValiditySeconds: number,
+    signal?: AbortSignal,
+  ): Promise<GrantCredential & Readonly<{ subDomain?: string }>> {
+    try {
+      const credential = await this.partnerGrants().read({
+        tenantId: row.tenantId, service: row.service, minValiditySeconds, signal,
+      });
+      if (credential.partnerClientId !== row.partnerClientId) throw new Error("fivetran_partner_binding_not_found");
+      return credential;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (/^fivetran_partner_(?:grant_expired|binding_not_found)/u.test(message)) {
+        await this.dependencies.store.recordSyncState({
+          tenantId: row.tenantId,
+          connectionId: row.connectionId,
+          syncState: row.lastSyncState ?? "failed",
+          authHealth: "expired",
+          status: "degraded",
+        }).catch(() => undefined);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -1164,4 +1300,18 @@ export class FivetranWorkerHttpHandler {
       ...(connection.nativeConnectionId ? { nativeConnectionId: connection.nativeConnectionId } : {}),
     });
   }
+}
+
+function grantSource(input: Record<string, unknown>): GrantSource {
+  if (input.grantSource === "partner") {
+    if (input.nativeConnectionId !== undefined) throw new Error("invalid_request");
+    return { kind: "partner" };
+  }
+  if (input.grantSource !== undefined && input.grantSource !== "native") throw new Error("invalid_request");
+  return { kind: "native", nativeConnectionId: requiredString(input, "nativeConnectionId", 26) };
+}
+
+function isAlreadyConnected(error: unknown): boolean {
+  return error instanceof Error
+    && (error.message === "fivetran_native_already_connected" || error.message === "fivetran_partner_already_connected");
 }

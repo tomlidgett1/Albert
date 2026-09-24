@@ -7,20 +7,23 @@
  * into that bearer token:
  *
  *   partner key (Authorization: Bearer albert_pk_…)
- *     → SHA-256, matched against ALBERT_PARTNER_CLIENTS (never the key itself)
+ *     → SHA-256, matched against ALBERT_PARTNER_CLIENTS (never the key itself),
+ *       then against provisioned clients (control_plane.partner_clients,
+ *       ADR 0151) through the service_role-only digest lookup RPC
  *     → magic-link mint for the client's acting member (GoTrue admin only)
  *     → the session must resolve to the client's bound tenant, or it is revoked
  *     → { accessToken, expiresAt } — no refresh token ever leaves this function
  *
- * The service-role key is used for GoTrue's admin API and nothing else: it
- * reads no control-plane table (service_role has no control_plane grants since
- * 0172). Every Albert RPC the partner then triggers runs under the acting
- * member's own policies, exactly like the iMessage bridge (ADR 0120/0121).
+ * The service-role key is used for GoTrue's admin API and the one digest
+ * lookup RPC (0195); it reads no control-plane table directly (service_role
+ * has no control_plane grants since 0172). Every Albert RPC the partner then
+ * triggers runs under the acting member's own policies, exactly like the
+ * iMessage bridge (ADR 0120/0121).
  *
  * Deploy: supabase functions deploy partner-session --no-verify-jwt
  *           --project-ref jjiugnriaypjoxsupjft
  */
-import { createClient } from "npm:@supabase/supabase-js@2.112.0";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.112.0";
 
 type PartnerClient = Readonly<{
   /** Stable id for logs and revocation, e.g. "yellow-jersey-ashburton". */
@@ -122,6 +125,28 @@ function partnerKey(authorization: string | null): string | null {
   return PARTNER_KEY_PATTERN.test(key) ? key : null;
 }
 
+/**
+ * A client provisioned through partner-provision (ADR 0151). The RPC matches
+ * the digest exactly; the key itself is stored nowhere in Albert.
+ */
+async function provisionedClient(admin: SupabaseClient, digest: string): Promise<PartnerClient | undefined> {
+  const { data, error } = await admin.rpc("albert_partner_client_by_digest", { p_key_sha256: digest });
+  if (error) throw new Error(`partner client lookup failed: ${error.code ?? "unknown"}`);
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null | undefined;
+  if (!row || typeof row !== "object") return undefined;
+  const { client_id: clientId, partner, tenant_id: tenantId, acting_user_id: actingUserId, enabled } = row;
+  if (
+    typeof clientId !== "string" || !CLIENT_ID_PATTERN.test(clientId)
+    || typeof partner !== "string" || !CLIENT_ID_PATTERN.test(partner)
+    || typeof tenantId !== "string" || !ULID_PATTERN.test(tenantId)
+    || typeof actingUserId !== "string" || !UUID_PATTERN.test(actingUserId)
+    || typeof enabled !== "boolean"
+  ) {
+    throw new Error("partner client lookup returned an invalid row");
+  }
+  return Object.freeze({ clientId, partner, keySha256: digest, tenantId, actingUserId, enabled });
+}
+
 function requiredEnv(name: string): string {
   const value = Deno.env.get(name)?.trim();
   if (!value) throw new BrokerConfigurationError(`${name} is not configured.`);
@@ -154,6 +179,17 @@ Deno.serve(async (request) => {
   for (const candidate of clients) {
     if (digestsEqual(candidate.keySha256, digest) && !client) client = candidate;
   }
+
+  const noSession = { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false };
+  const admin = createClient(supabaseUrl, serviceKey, { auth: noSession });
+  if (!client) {
+    try {
+      client = await provisionedClient(admin, digest);
+    } catch (error) {
+      log("partner_session_lookup_failed", { detail: error instanceof Error ? error.message.slice(0, 300) : "unknown" });
+      return json({ error: "broker_unavailable" }, 503);
+    }
+  }
   if (!client || !client.enabled) {
     log("partner_session_rejected", {
       reason: client ? "client_disabled" : "unknown_key",
@@ -162,8 +198,6 @@ Deno.serve(async (request) => {
     return json({ error: "invalid_partner_key" }, 401);
   }
 
-  const noSession = { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false };
-  const admin = createClient(supabaseUrl, serviceKey, { auth: noSession });
   try {
     const member = await admin.auth.admin.getUserById(client.actingUserId);
     const email = member.data.user?.email;
