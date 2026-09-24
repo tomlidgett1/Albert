@@ -1,5 +1,5 @@
 import type { AgentInputItem, Tool } from "@openai/agents";
-import type { AgentRunPreferences } from "../../shared/src/index.js";
+import type { AgentRunPreferences, ReasoningEffort } from "../../shared/src/index.js";
 import type { OmniTurnUsage } from "./contracts.js";
 
 /**
@@ -40,6 +40,11 @@ export type OmniDriverRunOptions = Readonly<{
   signal?: AbortSignal;
   /** Model requests this run must leave unused for the runs after it. */
   reserveTurns?: number;
+  /**
+   * A lower reasoning effort for this run only: the answer written against
+   * the clock (ADR 0152). Drivers that cannot change it ignore it.
+   */
+  effort?: ReasoningEffort;
 }>;
 
 export type OmniDriverResume = Readonly<{

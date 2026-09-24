@@ -76,12 +76,12 @@ test("a turn out of exploration time composes from the evidence it gathered inst
   // Turns that ran twenty queries used to hit the hard deadline mid-step and
   // throw everything away. Exploration now stops before the deadline and the
   // answer nudge composes from the results already held.
-  const runs: { maxTurns?: number; userText: string }[] = [];
+  const runs: { maxTurns?: number; userText: string; effort?: string }[] = [];
   let queried: { resultId: string } | undefined;
   context.mock.method(Runner.prototype, "run", async (agent: Agent, input: unknown, runOptions: { signal?: AbortSignal; maxTurns?: number }) => {
     const items = input as { role?: string; content?: unknown }[];
     const last = items.at(-1);
-    runs.push({ maxTurns: runOptions.maxTurns, userText: typeof last?.content === "string" ? last.content : JSON.stringify(last?.content ?? "") });
+    runs.push({ maxTurns: runOptions.maxTurns, userText: typeof last?.content === "string" ? last.content : JSON.stringify(last?.content ?? ""), effort: (agent.modelSettings.reasoning as { effort?: string } | undefined)?.effort });
     if (runs.length === 1) {
       await invoke(agent, "SearchSemanticModel", { topicName: "sales_analytics", searchPattern: null });
       queried = JSON.parse(String(await invoke(agent, "GenerateSemanticQuery", { name: "August sales", topic: "sales_analytics", query: { measures: ["sales_analytics.gross_takings"], dimensions: null, segments: null, timeDimensions: [{ dimension: "sales_analytics.completed_at", granularity: null, dateRange: "2026-08-01 to 2026-08-31", compareDateRange: null }], filters: null, order: null, limit: null } })));
@@ -101,11 +101,61 @@ test("a turn out of exploration time composes from the evidence it gathered inst
     assert.equal(runs.length, 2);
     assert.equal(runs[0]!.maxTurns, 45, "the exploring run leaves requests for the answer");
     assert.match(runs[1]!.userText, /no new queries can run/u);
+    assert.deepEqual(runs.map((run) => run.effort), ["max", "low"], "the answer against the clock is written at low effort");
     assert.ok(events.some((event) => event.type === "progress" && event.label === "Writing the answer from the checks completed so far"));
     assert.equal(result.answerState, "Qualified");
     assert.match(events.find((event) => event.type === "answer")?.text ?? "", /^Gross takings were \$600\.00\./u);
     // A query cut short by the end of exploration is not reported as a failed query.
     assert.equal(events.some((event) => event.type === "progress" && /^Query failed/u.test(event.label ?? "")), false);
+  });
+});
+
+test("a write-up still unfinished near the deadline delivers the checked results, never a timeout", async (context) => {
+  // Production 2026-09-24: GPT 6 Luna at Max gathered 35 results, the answer
+  // nudge ran at Max with no time of its own, and the hard deadline threw all
+  // of it away ("The analysis ran out of time before finishing."). The SDK
+  // ends an aborted streamed run quietly, so each run here returns empty.
+  const efforts: (string | undefined)[] = [];
+  context.mock.method(Runner.prototype, "run", async (agent: Agent, _input: unknown, runOptions: { signal?: AbortSignal }) => {
+    efforts.push((agent.modelSettings.reasoning as { effort?: string } | undefined)?.effort);
+    if (efforts.length === 1) {
+      await invoke(agent, "SearchSemanticModel", { topicName: "sales_analytics", searchPattern: null });
+      const queried = JSON.parse(String(await invoke(agent, "GenerateSemanticQuery", { name: "August sales by product", topic: "sales_analytics", query: { measures: ["sales_analytics.gross_takings", "sales_analytics.gross_profit"], dimensions: ["sales_analytics.product_name"], segments: null, timeDimensions: [{ dimension: "sales_analytics.completed_at", granularity: null, dateRange: "2026-08-01 to 2026-08-31", compareDateRange: null }], filters: null, order: null, limit: null } })));
+      assert.equal(queried.ok, true);
+    }
+    // Still thinking when its time runs out.
+    await new Promise((resolve) => runOptions.signal?.addEventListener("abort", resolve, { once: true }));
+    return { async *[Symbol.asyncIterator]() {}, completed: Promise.resolve(), rawResponses: [], history: [], finalOutput: "" };
+  });
+  await fixture(async (turn, url) => {
+    const events: OmniTraceEventInput[] = [];
+    const deadlineAt = Date.now() + 6_000;
+    const result = await runOmniSemanticTurn({ turn, cubeApiUrl: url, deadlineAt, openai: { apiKey: "synthetic-fixture", baseUrl: "https://provider.example.test" }, emit: (event) => { events.push(event); } });
+    assert.ok(Date.now() < deadlineAt, "the answer lands before the hard deadline");
+    assert.deepEqual(efforts, ["max", "low"], "the write-up under time pressure runs at low effort");
+    assert.ok(events.some((event) => event.type === "progress" && event.label === "Writing the answer from the checks completed so far"));
+    const answer = events.find((event) => event.type === "answer");
+    assert.match(answer?.text ?? "", /^I ran out of time before finishing this analysis/u);
+    assert.match(answer?.text ?? "", /\| Workshop Service \| \$300\.00 \| \$90\.00 \|/u);
+    assert.ok((answer?.followUps ?? []).length > 0, "the owner can ask to finish it");
+    assert.equal(result.answerState, "Qualified");
+    assert.equal(events.some((event) => event.type === "error"), false);
+  });
+});
+
+test("a turn the owner cancels stays cancelled rather than delivering checked results", async (context) => {
+  const controller = new AbortController();
+  context.mock.method(Runner.prototype, "run", async (agent: Agent, _input: unknown, runOptions: { signal?: AbortSignal }) => {
+    await invoke(agent, "SearchSemanticModel", { topicName: "sales_analytics", searchPattern: null });
+    await invoke(agent, "GenerateSemanticQuery", { name: "August sales", topic: "sales_analytics", query: { measures: ["sales_analytics.gross_takings"], dimensions: null, segments: null, timeDimensions: [{ dimension: "sales_analytics.completed_at", granularity: null, dateRange: "2026-08-01 to 2026-08-31", compareDateRange: null }], filters: null, order: null, limit: null } });
+    controller.abort(new Error("The analysis was cancelled."));
+    await new Promise((resolve) => runOptions.signal?.aborted ? resolve(undefined) : runOptions.signal?.addEventListener("abort", resolve, { once: true }));
+    return { async *[Symbol.asyncIterator]() {}, completed: Promise.resolve(), rawResponses: [], history: [], finalOutput: "" };
+  });
+  await fixture(async (turn, url) => {
+    const events: OmniTraceEventInput[] = [];
+    await assert.rejects(runOmniSemanticTurn({ turn, cubeApiUrl: url, signal: controller.signal, openai: { apiKey: "synthetic-fixture", baseUrl: "https://provider.example.test" }, emit: (event) => { events.push(event); } }), /cancelled/u);
+    assert.equal(events.some((event) => event.type === "answer"), false);
   });
 });
 

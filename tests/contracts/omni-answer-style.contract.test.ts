@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ulid } from "ulid";
-import { ANSWER_NOTE_PREFIX, COMPOSE_ANSWER_INSTRUCTIONS, composeAnswer, type AnswerEvidence, type ComposeAnswerInput } from "../../packages/albert-omni/src/answer.js";
+import { ANSWER_NOTE_PREFIX, COMPOSE_ANSWER_INSTRUCTIONS, composeAnswer, composeCheckedResultsAnswer, type AnswerEvidence, type ComposeAnswerInput } from "../../packages/albert-omni/src/answer.js";
 import { OMNI_ANALYTICAL_RULES, renderOmniInstructions } from "../../packages/albert-omni/src/prompts.js";
 import { stripScopedCalendarDates } from "../../packages/shared/src/reporting-dates.js";
 import { renderAssistantMarkdown } from "../../app/dash/lib/render-assistant-markdown.js";
@@ -724,4 +724,27 @@ test("the prompt never asks for a figure the composer refuses, and gives each ki
     assert.match(contract, /CalculateValues[^.]*between two (?:result )?cells/u);
     assert.doesNotMatch(contract, /DeriveResult owns arithmetic|computed by DeriveResult or a modeled measure, including a ratio or difference of two cells/u);
   }
+});
+
+test("a write-up that cannot finish delivers the checked results as governed tables", () => {
+  const categories = evidence([{ key: "cat", label: "Category name", type: "string" }, { key: "rev", label: "Revenue (inc GST)", type: "currency", currency: "AUD" }], [{ cat: "Services", rev: 24199 }, { cat: "Brakes", rev: 4505 }], semantics(["cat"]), { topic: "Category performance, last 12 complete weeks" });
+  const products = evidence([{ key: "item_id", label: "Item ID", type: "string" }, { key: "name", label: "Item name", type: "string" }, { key: "gp", label: "Gross profit", type: "currency", currency: "AUD" }, { key: "units", label: "Units sold (last 90 days)", type: "number" }], [{ item_id: "123", name: "Tempo helmet", gp: 820.5, units: 12 }, { item_id: "456", name: "Brake pads", gp: 610, units: 44 }], semantics(["item_id"]), { topic: "Top five stocked products by gross profit" });
+  const snapshot = evidence([{ key: "as_of", label: "Latest snapshot", type: "date" }], [{ as_of: "2026-09-17" }], semantics([]), { topic: "Latest inventory snapshot date" });
+  const earlier = evidence([money], [{ sales: 999 }], semantics([]), { topic: "Earlier question", priorTurn: true });
+  const answer = composeCheckedResultsAnswer([earlier, categories, products, snapshot], { ...options, reason: "time" });
+  assert.ok(answer);
+  assert.equal(answer.state, "Qualified");
+  const text = answer.text;
+  assert.match(text, /^I ran out of time before finishing this analysis, so here are the results I had already checked\./u);
+  // Newest first; a heading never states a figure; ID columns, prior-turn and figure-less results stay out.
+  assert.ok(text.indexOf("### Top stocked products by gross profit") < text.indexOf("### Category performance\n"), text);
+  assert.match(text, /\| Item name \| Gross profit \| Units sold \|\n\| --- \| ---: \| ---: \|\n\| Tempo helmet \| \$820\.50 \| 12 \|/u);
+  assert.match(text, /\| Category name \| Revenue \|/u);
+  assert.doesNotMatch(text, /Item ID|\b123\b|\b456\b|Latest snapshot|\$999/u);
+  assert.match(text, /Note: The interpretation and recommendations were not written before time ran out\./u);
+  assert.equal(answer.followUps.length, 1);
+  // On iMessage (no tables) it says so in a line.
+  const brief = composeCheckedResultsAnswer([categories], { ...options, imessage: true, reason: "incomplete" });
+  assert.equal(brief?.state, "Unavailable");
+  assert.equal(brief?.text, "I couldn't finish writing up this analysis. Ask me to finish it, or ask a narrower question.");
 });

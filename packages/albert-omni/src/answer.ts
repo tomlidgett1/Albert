@@ -844,6 +844,100 @@ export function composeAnswer(
   } };
 }
 
+type ComposeOptions = Parameters<typeof composeAnswer>[2];
+
+const CHECKED_NUMERIC = new Set<TraceTableColumn["type"]>(["number", "currency", "percent"]);
+const NUMBER_WORDS = "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|fifty|hundred|thousand";
+const NUMBER_WORD = new RegExp(`\\b(?:${NUMBER_WORDS})\\b`, "giu");
+const HAS_NUMBER_WORD = new RegExp(`\\b(?:${NUMBER_WORDS})\\b`, "iu");
+
+/**
+ * A result's name as a heading that states no figure: a clause that carried a
+ * window or a count is dropped ("Category performance, last 12 complete
+ * weeks" reads "Category performance"), and a spelled count goes ("Top five
+ * products" reads "Top products").
+ */
+function checkedHeading(topic: string): string {
+  return topic
+    .split(",")
+    .filter((clause, index) => index === 0 || !/\d/u.test(clause) && !HAS_NUMBER_WORD.test(clause))
+    .join(",")
+    .replace(/\s+(?:(?:for|over|in|during)\s+)?(?:the\s+)?(?:last|past|previous|prior|next)\s+\S*\d\S*(?:\s+complete)?\s+(?:days?|weeks?|months?|quarters?|years?)\b/giu, "")
+    .replace(/\S*\d\S*/gu, " ")
+    .replace(NUMBER_WORD, " ")
+    .replace(/[#*_`|]/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .replace(/\s+([,.;:])/gu, "$1")
+    .replace(/^[\s,.;:-]+|[\s,.;:-]+$/gu, "")
+    .trim();
+}
+
+/**
+ * The answer of last resort for a turn whose write-up cannot finish (ADR
+ * 0152): the results already checked are delivered as governed tables, newest
+ * first, rather than discarded behind "the analysis ran out of time". Every
+ * cell still resolves from its result through composeAnswer; the harness
+ * writes only the opening line, headings and one limitation, and offers the
+ * owner a follow-up that finishes the analysis from those results. With no
+ * result holding a figure, or on iMessage (no tables), it says so in a line
+ * instead. Null only if composition itself refuses.
+ */
+export function composeCheckedResultsAnswer(
+  evidence: readonly AnswerEvidence[],
+  options: ComposeOptions & Readonly<{ reason: "time" | "incomplete" }>,
+): ComposedAnswer | null {
+  const { reason, ...composeOptions } = options;
+  const picked: { source: AnswerEvidence; columns: TraceTableColumn[] }[] = [];
+  const seen = new Set<string>();
+  for (const source of [...evidence].reverse()) {
+    if (source.priorTurn || source.rows.length === 0) continue;
+    const numeric = source.columns.filter((column) => CHECKED_NUMERIC.has(column.type));
+    if (!numeric.length) continue;
+    const name = source.topic.trim().toLowerCase();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const label = source.columns.find((column) => !CHECKED_NUMERIC.has(column.type)
+      && !/(?:^|_)(?:id|key|code)$/iu.test(column.key) && !/\bID\b/u.test(column.label));
+    picked.push({ source, columns: [...(label ? [label] : []), ...numeric.slice(0, label ? 4 : 5)] });
+    if (picked.length === 3) break;
+  }
+  const opening = reason === "time"
+    ? "I ran out of time before finishing this analysis, so here are the results I had already checked."
+    : "I couldn't finish writing up this analysis, so here are the results I had already checked.";
+  const limitation = reason === "time"
+    ? "The interpretation and recommendations were not written before time ran out."
+    : "The interpretation and recommendations were not written.";
+  const followUps = ["Finish this analysis from the results you checked"];
+  const accepted = (result: ReturnType<typeof composeAnswer>) => (result.ok ? result.answer : null);
+  if (!picked.length || composeOptions.imessage) {
+    return accepted(composeAnswer({
+      outcome: "unavailable",
+      markdown: `${opening.replace(/, so here are[^.]*\./u, ".")} Ask me to finish it, or ask a narrower question.`,
+      values: [], tables: [], citedResultIds: [], limitations: [], followUps,
+    }, new Map(), composeOptions));
+  }
+  const sources = new Map(picked.map(({ source }) => [source.resultId, source]));
+  const tables = picked.map(({ source, columns }, index) => ({
+    id: `checked_${String.fromCharCode(97 + index)}`,
+    resultId: source.resultId,
+    columnKeys: columns.map((column) => column.key),
+    headers: columns.map((column) => column.label.replace(/\s*\([^)]*\)\s*$/u, "").trim().slice(0, 40) || column.key.slice(0, 40)),
+    limit: 8,
+    sort: null,
+  }));
+  const compose = (withHeadings: boolean) => composeAnswer({
+    outcome: "answer",
+    markdown: [opening, ...tables.map((table, index) => {
+      const heading = withHeadings ? checkedHeading(picked[index]!.source.topic) : "";
+      return `${heading ? `### ${heading}\n\n` : ""}{{${table.id}}}`;
+    })].join("\n\n"),
+    values: [], tables, citedResultIds: [...sources.keys()], limitations: [limitation], followUps,
+  }, sources, composeOptions);
+  // A heading is the model's own query name; if the grounding check objects
+  // to anything in it, the tables go without headings rather than not at all.
+  return accepted(compose(true)) ?? accepted(compose(false));
+}
+
 export const COMPOSE_ANSWER_INSTRUCTIONS = `# Composing the final answer
 
 Use ComposeAnswer to deliver the answer. Its accepted content is exactly what the owner receives.
