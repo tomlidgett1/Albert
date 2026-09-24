@@ -162,4 +162,44 @@ that 403 like a 401: it fetches the current token once and retries. A plain
 
 ## Deploy (2026-09-24)
 
-Recorded after the rollout.
+- **Control plane:** migration 0195 was applied by the checksummed runner
+  with the migration-owner role, using the local administrator login because
+  no dedicated deployer URL was configured. The five RPCs are executable by
+  `service_role` only. `partner_clients` grants nothing to client roles, and
+  the worker cannot read `key_sha256`.
+- **Edge functions:** `partner-provision` (new) and `partner-session` were
+  deployed with `--use-api`. `ALBERT_PARTNER_PLATFORMS` holds Yellow Jersey's
+  platform-key digest. Ashburton still mints through `ALBERT_PARTNER_CLIENTS`
+  (checked live).
+- **Worker:** `albert-sync-worker-dogfood`, deployment
+  `fly-sync-worker-0249cfec-20260924T071942Z`, built from 0249cfe, with
+  `ALBERT_PARTNER_TOKEN_BROKERS` staged into the same rollout. Nothing on the
+  worker's code paths changed between the image it replaced (3e42311) and
+  this branch's base.
+- **Web:** `dpl_ArjV7dWkcA2ZpePuG5gMBLez2bgA`, release SHA 0249cfe. A first
+  attempt from a git **worktree** (`dpl_8s2JE9dqBxGSKafeNkuMV9SCW2Jt`)
+  shipped without Vercel git metadata. That left the release identity empty,
+  and every authenticated route answered 503 for about three minutes. It was
+  rolled back to `dpl_GT5DYszt58QaEWTLJxvqFQ2XuuHB`, then redeployed from a
+  plain clone. **Deploy the web from a normal checkout, never a worktree.**
+- **Verified live with a made-up store** (Yellow Jersey "Albert Provisioning
+  Test Shop"):
+  - provisioning created tenant `01M395QZ8S6G72EY21RXT8AFT8`, and a repeat
+    run was idempotent;
+  - the DB-backed client minted a session (`/api/session` 200 as owner);
+  - `POST /api/partner/sources` for Lightspeed went through the worker to
+    Yellow Jersey's broker and back with an honest
+    `fivetran_partner_grant_expired: not_connected`, because the test store
+    has no grant;
+  - a tenant without a binding (Ashburton) was refused with
+    `fivetran_partner_binding_not_found`.
+
+  No Fivetran connection was created. Fivetran's plan is still paused, and
+  the only real grants belong to Ashburton, which would be a duplicate copy.
+- **Cleanup found a pre-existing bug:** this was the project's first
+  tenant-scope deletion. `purge_tenant_control` fails with 42501 on
+  `managed_agent_sessions` (0193): its FORCE RLS actor policy calls
+  `require_current_tenant_id()`, which raises "authentication required" in
+  the deletion worker's context. `partner_clients` purges cleanly. Until that
+  policy is fixed, no tenant can be erased. The test tenant is disabled and
+  waits in `deleting` (request `01M3962W58HKB38S1XCBH2KVD6`, `retry_wait`).
