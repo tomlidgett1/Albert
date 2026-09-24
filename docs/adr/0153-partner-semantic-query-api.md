@@ -84,3 +84,25 @@ it, so a partner table can say how many rows match.
 - Lease rows older than a day are deleted by the next claim for that tenant.
 - The query ledger (`analytical_query_attempts`) needs a turn, so partner
   queries are logged by lease id in the web logs instead.
+
+## Deploy (2026-09-24)
+
+- **Control plane:** migration 0196 was applied by the checksummed runner
+  with the deployer role (built from the local administrator pooler URL, as
+  0195 was).
+- **Cube:** `albert-cube`, image label `semantic-lease-20260924`, from 51f06be
+  (`fly deploy -c deploy/fly/cube.toml --remote-only`). The only change is the
+  lease claim in `checkAuth`; turn and dashboard claims behave as before.
+- **Web:** `dpl_AAskyJMtLoTqGCLj6jarwn1XLstp` (51f06be), then
+  `dpl_9HzH9zg8oGsHMbCbLLo2WtLMvSAo` (85617c4, a partner table may list up to
+  50 dimensions and 40 measures). Both from a plain clone.
+- **Verified live** as Ashburton through Yellow Jersey's partner key: meta,
+  lease reuse across a batch, tenant binding (`expectedTenantId` mismatch
+  refused), bearer-only auth, and 18 dashboard query shapes (KPIs with
+  totals, Top N, pivots with grouping sets, group filters, list filter
+  counts, row listings with `total`, Deputy and Xero views). Yellow Jersey's
+  dashboard now reads only this API (its commit fccecd2f).
+- **Before the next web deploy from another branch:** this branch
+  (`claude/semantic-query-api`) must be merged first. A web deploy without
+  it removes `/api/semantic/*`, and Yellow Jersey's dashboard then shows
+  "Albert's semantic layer could not be reached" for every store.
