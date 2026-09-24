@@ -47,8 +47,9 @@ const filterSchema: z.ZodType<CubeFilter> = z.lazy(() => z.union([
 const DATE = z.string().max(40);
 
 export const semanticQuerySchema = z.object({
-  measures: z.array(MEMBER).max(24).optional(),
-  dimensions: z.array(MEMBER).max(12).optional(),
+  // A partner's table lists many columns at once (Omni's own queries stay far smaller).
+  measures: z.array(MEMBER).max(40).optional(),
+  dimensions: z.array(MEMBER).max(50).optional(),
   segments: z.array(MEMBER).max(8).optional(),
   timeDimensions: z.array(z.object({
     dimension: MEMBER,

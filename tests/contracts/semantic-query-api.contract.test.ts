@@ -60,6 +60,8 @@ test("the query schema is strict and bounded", () => {
   assert.equal(semanticQuerySchema.safeParse({ measures: ["sales_analytics.gross_takings"], renewQuery: true }).success, false);
   assert.equal(semanticQuerySchema.safeParse({ measures: ["sales_analytics.gross_takings"], limit: 2001 }).success, false);
   assert.equal(semanticQuerySchema.safeParse({ measures: ["sales_analytics.gross_takings; drop"] }).success, false);
+  assert.equal(semanticQuerySchema.safeParse({ dimensions: Array.from({ length: 50 }, (_, index) => `sales_analytics.d${index}`), ungrouped: true }).success, true);
+  assert.equal(semanticQuerySchema.safeParse({ dimensions: Array.from({ length: 51 }, (_, index) => `sales_analytics.d${index}`) }).success, false);
   assert.equal(semanticQuerySchema.safeParse({
     measures: ["sales_analytics.gross_takings"],
     timeDimensions: [{ dimension: "sales_analytics.completed_at", granularity: "month", dateRange: ["2025-10-01", "2026-09-30"] }],
