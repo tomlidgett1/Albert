@@ -14,6 +14,7 @@ import {
 } from "@/packages/shared/src/dashboard-pivot";
 import { DashPopover } from "./DashPopover";
 import { ElementEditorTabs } from "./ElementEditorTabs";
+import { TableStyleEditor } from "./TableStyleEditor";
 import styles from "./element-editor.module.css";
 
 type Shelf = "rows" | "columns" | "values";
@@ -592,82 +593,7 @@ export function PivotEditor({
           </>
         ) : (
           <div className={styles.formatSections}>
-            <details open>
-              <summary>Table style</summary>
-              <div className={styles.settings}>
-                <label className={styles.setting}>
-                  <span>Preset</span>
-                  <select
-                    aria-label="Table style"
-                    value={tableStyle?.preset ?? "spreadsheet"}
-                    onChange={(event) =>
-                      onStyleChange({
-                        ...tableStyle,
-                        preset: event.target.value as
-                          "spreadsheet" | "presentation",
-                        rowHeight:
-                          event.target.value === "presentation"
-                            ? "large"
-                            : "small",
-                        verticalGrid: event.target.value === "spreadsheet",
-                        bandedRows: false,
-                      })
-                    }
-                  >
-                    <option value="spreadsheet">Spreadsheet</option>
-                    <option value="presentation">Presentation</option>
-                  </select>
-                </label>
-                <label className={styles.setting}>
-                  <span>Cell spacing</span>
-                  <select
-                    aria-label="Cell spacing"
-                    value={tableStyle?.rowHeight ?? "small"}
-                    onChange={(event) =>
-                      onStyleChange({
-                        ...tableStyle,
-                        rowHeight: event.target.value as
-                          "small" | "medium" | "large",
-                      })
-                    }
-                  >
-                    <option value="small">Small</option>
-                    <option value="medium">Medium</option>
-                    <option value="large">Large</option>
-                  </select>
-                </label>
-                <label className={styles.setting}>
-                  <span>Banded rows</span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    aria-label="Banded rows"
-                    checked={tableStyle?.bandedRows ?? false}
-                    onChange={(event) =>
-                      onStyleChange({
-                        ...tableStyle,
-                        bandedRows: event.target.checked,
-                      })
-                    }
-                  />
-                </label>
-                <label className={styles.setting}>
-                  <span>Vertical gridlines</span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    aria-label="Vertical gridlines"
-                    checked={tableStyle?.verticalGrid ?? false}
-                    onChange={(event) =>
-                      onStyleChange({
-                        ...tableStyle,
-                        verticalGrid: event.target.checked,
-                      })
-                    }
-                  />
-                </label>
-              </div>
-            </details>
+            <TableStyleEditor value={tableStyle} onChange={onStyleChange} />
             <details open>
               <summary>Totals</summary>
               <div className={styles.settings}>

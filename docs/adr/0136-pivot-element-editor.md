@@ -136,3 +136,24 @@ applied 0190 as albert_control_deployer with the migration-owner role. Actual
 Chrome dragging, saving, leaving and reopening the dashboard now passes;
 currency and count metadata remain correct after transposition. The complete
 release check passes with 1,546 contracts and two optional live tests skipped.
+
+## Amendment — extended formatting and resize QA, 6 September
+
+Tables and pivots share the same style editor and existing display contract.
+Presets supply initial values; explicit grid and banding settings remain
+independent, and banding cannot override a selected cell's highlight.
+
+Flint receives browser-computed colors normalized to its supported hex form,
+including alpha. Bar labels use the existing semantic value formatter and
+host text colors. On narrow vertical charts, label density adapts without
+removing marks or their exact tooltips.
+
+Keyboard layout changes author the current breakpoint directly. Older
+responsive-grid callbacks cannot replace those dimensions; a native pointer
+gesture resumes grid-authored layout changes. Layout saves use the existing
+ordered mutation queue and overlay pending layouts on incoming documents.
+An older refresh revision cannot replace a newer saved document.
+
+See [the extended QA report](../dashboard-sigma-extended-qa-2026-09-06.md)
+for the real-browser matrix, resize/save regression, automated results, and
+remaining differences from Sigma. These changes are local and not deployed.

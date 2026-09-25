@@ -15,6 +15,7 @@
 
 import { useId, useState } from "react";
 import { ElementEditorTabs } from "./ElementEditorTabs";
+import { TableStyleEditor } from "./TableStyleEditor";
 
 import type {
   DashboardColumnFormat,
@@ -440,6 +441,13 @@ export function ElementProperties({
         </>
       ) : (
         <>
+          {display.mode === "table" ? (
+            <TableStyleEditor
+              value={display.tableStyle}
+              defaultVerticalGrid
+              onChange={tableStyle => onDisplayChange({ ...display, tableStyle })}
+            />
+          ) : null}
           {formatColumn ? (
             <div className={styles.propSection} role="group" aria-label="Column format">
               <label className={styles.propRow}>

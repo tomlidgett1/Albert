@@ -1507,6 +1507,7 @@ export default function DashboardWorkspace({
   // the previous one returned instead of conflicting on it.
   const mutationChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const optimisticMutationsRef = useRef(new Map<symbol, { tileId: string; apply: (tile: DashboardTile) => DashboardTile }>());
+  const pendingLayoutsRef = useRef(new Map<symbol, DashboardLayouts>());
   // Per-tile refresh locks: a forced single-tile refresh never waits on, or
   // is dropped by, the whole-dashboard refresh (and vice versa).
   const tilesInFlightRef = useRef(new Set<string>());
@@ -1533,6 +1534,7 @@ export default function DashboardWorkspace({
   const layoutWidth = frameWidth ? frameWidth - 48 : width;
   const breakpoint: Breakpoint = layoutWidth >= 1100 ? "desktop" : layoutWidth >= 680 || embedded ? "tablet" : "mobile";
   const latestLayouts = useRef<ResponsiveLayouts<Breakpoint>>({});
+  const keyboardLayoutBreakpoint = useRef<Breakpoint | null>(null);
   const revisionRef = useRef(0);
   const loadedDashboardId = dashboard?.dashboardId;
   useEffect(() => {
@@ -1550,7 +1552,10 @@ export default function DashboardWorkspace({
   }, [onDashboardChange]);
 
   const applyDashboard = useCallback((serverDocument: DashboardDocument) => {
-    const next = { ...serverDocument, tiles: serverDocument.tiles.map(tile => {
+    // A refresh started before a save may finish after it. Its older document
+    // must not move the revision or the visible layout backwards.
+    if (serverDocument.dashboardId === dashboardRef.current?.dashboardId && serverDocument.revision < revisionRef.current) return;
+    const next = { ...serverDocument, layouts: [...pendingLayoutsRef.current.values()].at(-1) ?? serverDocument.layouts, tiles: serverDocument.tiles.map(tile => {
       let current = tile;
       for (const pending of optimisticMutationsRef.current.values()) if (pending.tileId === tile.tileId) current = pending.apply(current);
       return current;
@@ -1695,16 +1700,31 @@ export default function DashboardWorkspace({
       desktop: serializable(hydrateLayout(layouts.desktop ?? [], ids, 12)),
       tablet: serializable(hydrateLayout(layouts.tablet ?? [], ids, 8)),
     };
-    try {
-      applyDashboard(await dashboardRequest("/api/dashboard/layout", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(withDashboardId({ layouts: body, expectedRevision: revisionRef.current })),
-      }));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Layout could not be saved.");
-      await loadDashboard();
-    }
+    const mutationId = Symbol("layout");
+    pendingLayoutsRef.current.set(mutationId, body);
+    const run = mutationChainRef.current.then(async () => {
+      try {
+        const currentIds = dashboardRef.current?.tiles.map(tile => tile.tileId) ?? ids;
+        const currentLayouts: DashboardLayouts = {
+          desktop: serializable(hydrateLayout(body.desktop, currentIds, 12)),
+          tablet: serializable(hydrateLayout(body.tablet, currentIds, 8)),
+        };
+        const document = await dashboardRequest("/api/dashboard/layout", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(withDashboardId({ layouts: currentLayouts, expectedRevision: revisionRef.current })),
+        });
+        pendingLayoutsRef.current.delete(mutationId);
+        applyDashboard(document);
+        setError(null);
+      } catch (caught) {
+        pendingLayoutsRef.current.delete(mutationId);
+        await loadDashboard();
+        setError(caught instanceof Error ? caught.message : "Layout could not be saved.");
+      }
+    });
+    mutationChainRef.current = run.catch(() => undefined);
+    await run;
   }, [applyDashboard, dashboard, loadDashboard, withDashboardId]);
 
   const mutateTile = useCallback(async (
@@ -1830,6 +1850,7 @@ export default function DashboardWorkspace({
   const moveWithKeyboard = useCallback((tileId: string, event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (!event.key.startsWith("Arrow")) return;
     event.preventDefault();
+    keyboardLayoutBreakpoint.current = breakpoint;
     const columns = breakpoint === "desktop" ? 12 : breakpoint === "tablet" ? 8 : 1;
     const current = [...(latestLayouts.current[breakpoint] ?? [])];
     const index = current.findIndex(({ i }) => i === tileId);
@@ -2010,7 +2031,17 @@ export default function DashboardWorkspace({
                 // chrome itself stays invisible (cursor change only).
                 handles: ["n", "s", "e", "w", "ne", "nw", "se", "sw"],
               }}
-              onLayoutChange={(_layout, layouts) => { latestLayouts.current = layouts; setLayoutState(layouts); }}
+              onLayoutChange={(_layout, layouts) => {
+                // Keyboard input authors the layout directly. RGL's internal
+                // responsive state can echo an older size even after new props
+                // arrive. Only pointer gestures take authorship back from the
+                // keyboard; changing canvas pixels must not undo a key press.
+                if (keyboardLayoutBreakpoint.current === breakpoint) return;
+                latestLayouts.current = layouts;
+                setLayoutState(layouts);
+              }}
+              onDragStart={() => { keyboardLayoutBreakpoint.current = null; }}
+              onResizeStart={() => { keyboardLayoutBreakpoint.current = null; }}
               onDragStop={(layout, _old, next) => {
                 const stoppedBreakpoint = breakpoint;
                 setAnnouncement(`Moved tile to column ${(next?.x ?? 0) + 1}, row ${(next?.y ?? 0) + 1}.`);

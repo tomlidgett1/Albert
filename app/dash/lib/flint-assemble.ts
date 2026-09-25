@@ -43,14 +43,24 @@ const DARK_TOKENS: FlintThemeTokens = {
   palette: ["#b8e35a", "#79c5f2", "#d3a0e5", "#f2a66f"],
 };
 
+// Flint 0.5's contrast and presence calculations only parse hex colors.
+// Browser-computed theme tokens arrive as rgb()/rgba(), including the alpha
+// in our quiet gridlines. Preserve it so Flint can composite against the host.
+function flintColor(color: string): string {
+  const rgb = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/iu.exec(color);
+  if (!rgb) return color;
+  const hex = (value: number) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
+  return `#${rgb.slice(1, 4).map(value => hex(Number(value))).join("")}${rgb[4] === undefined ? "" : hex(Number(rgb[4]) * 255)}`;
+}
+
 export function flintThemeTokens(appearance: FlintAppearance, override?: Partial<FlintThemeTokens>): FlintThemeTokens {
   const base = appearance === "dark" ? DARK_TOKENS : LIGHT_TOKENS;
   return {
-    canvas: override?.canvas || base.canvas,
-    ink: override?.ink || base.ink,
-    muted: override?.muted || base.muted,
-    grid: override?.grid || base.grid,
-    palette: override?.palette?.length ? override.palette : base.palette,
+    canvas: flintColor(override?.canvas || base.canvas),
+    ink: flintColor(override?.ink || base.ink),
+    muted: flintColor(override?.muted || base.muted),
+    grid: flintColor(override?.grid || base.grid),
+    palette: (override?.palette?.length ? override.palette : base.palette).map(flintColor),
   };
 }
 
@@ -82,6 +92,17 @@ export function albertFlintTheme(appearance: FlintAppearance, tokens?: Partial<F
         single: next.palette[0],
         categorical: [...next.palette],
       },
+    },
+    type: {
+      axisLabel: { color: next.muted },
+      axisTitle: { color: next.muted },
+      keyLabel: { color: next.muted },
+      valueLabel: { color: next.ink },
+    },
+    dataLabels: {
+      show: "whenTheyFit",
+      placement: "outsideMark",
+      inkMode: "fixed",
     },
     marks: {
       point: {
@@ -177,6 +198,8 @@ export function paintAssembledSpec(
   normalizeNumericAxes(next, plan);
   if (plan.chart_spec.chartType === "Line Chart") {
     labelLinePointValues(next, plan, tokens.ink, plotWidth);
+  } else if (["Bar Chart", "Grouped Bar Chart", "Stacked Bar Chart"].includes(plan.chart_spec.chartType)) {
+    formatBarValueLabels(next, plan, plotWidth);
   }
   return next;
 }
@@ -366,6 +389,43 @@ function sourceValueRows(spec: Record<string, unknown>): Array<Record<string, un
   take(spec.data);
   if (isRecord(spec.spec)) take(spec.spec.data);
   return bags;
+}
+
+/** Apply the same units and authored precision to bar labels as line labels. */
+function formatBarValueLabels(spec: Record<string, unknown>, plan: AssemblableFlintPlan, plotWidth: number): void {
+  const bags = sourceValueRows(spec);
+  const visit = (node: Record<string, unknown>) => {
+    if (isRecord(node.mark) && node.mark.type === "text" && isRecord(node.encoding)) {
+      const field = encodingField(node.encoding.text);
+      const measure = field && rowFieldName(field);
+      const semantic = measure && (plan.semantic_types[measure]
+        ?? Object.entries(plan.semantic_types).find(([key]) => vegaSafeField(key) === measure)?.[1]);
+      if (measure && semantic && encodingType(node.encoding.text) === "quantitative") {
+        const labelField = `__albert_bar_label_${vegaSafeField(measure)}`;
+        for (const rows of bags) {
+          const labels = rows.map(row => formatPointValue(row[measure], semantic) ?? "");
+          const category = encodingType(node.encoding.y) === "quantitative" && encodingField(node.encoding.x);
+          const categories = category ? firstSeenValues(rows, rowFieldName(category)) : [];
+          const offset = encodingField(node.encoding.xOffset);
+          const seriesCount = offset ? Math.max(1, firstSeenValues(rows, rowFieldName(offset)).length) : 1;
+          const fontSize = typeof node.mark.fontSize === "number" ? node.mark.fontSize : 10.5;
+          // Formatting can make a label wider than Flint's original numeric
+          // estimate. Keep a readable subset on narrow vertical charts; every
+          // mark and its exact tooltip remain present, including omitted labels.
+          const labelWidth = Math.max(0, ...labels.map(label => label.length)) * fontSize * 0.65 + 8;
+          const step = categories.length ? Math.max(1, Math.ceil(labelWidth * categories.length * seriesCount / Math.max(1, plotWidth))) : 1;
+          rows.forEach((row, index) => {
+            const categoryIndex = category ? categories.indexOf(row[rowFieldName(category)]) : index;
+            row[labelField] = categoryIndex % step === 0 ? labels[index] : "";
+          });
+        }
+        node.encoding.text = { field: labelField, type: "nominal" };
+      }
+    }
+    if (isRecord(node.spec)) visit(node.spec);
+    if (Array.isArray(node.layer)) node.layer.filter(isRecord).forEach(visit);
+  };
+  visit(spec);
 }
 
 function stampPointLabels(

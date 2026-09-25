@@ -250,11 +250,10 @@
 .plainHeader { display: flex; align-items: center; gap: 6px; }
 .headerChevron { display: inline-block; margin-left: 8px; color: var(--dash-text-muted); font-size: 12px; font-weight: 400; }
 .tableFrame[data-vertical-grid="false"] td, .tableFrame[data-vertical-grid="false"] th { border-right-color: transparent; }
-.tableFrame[data-banded="true"] tbody tr:nth-child(even) td { background: var(--dash-surface-soft); }
+.tableFrame[data-banded="true"] tbody tr:nth-child(even) td:not([data-selected="true"]) { background: var(--dash-surface-soft); }
 .tableFrame[data-density="medium"] td, .tableFrame[data-density="medium"] tbody th { height: 32px; padding-top: 7px; padding-bottom: 7px; }
 .tableFrame[data-density="large"] td, .tableFrame[data-density="large"] tbody th { height: 40px; padding-top: 11px; padding-bottom: 11px; }
 .tableFrame[data-preset="presentation"] thead th, .tableFrame[data-preset="presentation"] tbody th { background: var(--dash-surface); }
-.tableFrame[data-preset="presentation"] td, .tableFrame[data-preset="presentation"] th { border-right: 0; }
 .tableMessage { margin: 0; padding: 6px 8px; color: var(--dash-text-muted); font-size: 11px; border-top: 1px solid var(--dash-table-grid); }
 .pivotEmpty { display: grid; flex: 1; place-items: center; padding: 24px; color: var(--dash-text-muted); font-size: 12px; text-align: center; }
 .pivotTable td, .pivotTable tbody th { height: 20px; padding-top: 2px; padding-bottom: 2px; font-size: 12px; }

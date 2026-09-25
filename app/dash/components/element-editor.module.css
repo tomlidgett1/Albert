@@ -344,24 +344,28 @@
   color: var(--dash-text-muted);
   font-size: 11px;
 }
-.formatSections details {
+.formatSections details,
+.tableStyleSection {
   padding: 0 16px;
   border-bottom: 1px solid var(--dash-border-soft);
 }
-.formatSections summary {
+.formatSections summary,
+.tableStyleSection > summary {
   min-height: 40px;
   align-content: center;
   font-weight: 500;
   cursor: pointer;
   list-style: none;
 }
-.formatSections summary::before {
+.formatSections summary::before,
+.tableStyleSection > summary::before {
   display: inline-block;
   width: 14px;
   content: "›";
   transition: transform 160ms ease;
 }
-.formatSections details[open] > summary::before {
+.formatSections details[open] > summary::before,
+.tableStyleSection[open] > summary::before {
   transform: rotate(90deg);
 }
 .settings {
@@ -538,6 +542,7 @@
   .tabIndicator,
   .tooltip,
   .formatSections summary::before,
+  .tableStyleSection > summary::before,
   .setting input[type="checkbox"]::after {
     transition: none;
   }

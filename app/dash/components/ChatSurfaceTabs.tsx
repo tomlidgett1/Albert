@@ -13,8 +13,8 @@ const OPTIONS = [
 ] as const satisfies ReadonlyArray<{ value: ChatSurface; label: string }>;
 
 /**
- * The Chat / Discover / Scheduled / Alerts slider in the chat top bar: the dash
- * segmented pill control (36px track, 30px sliding thumb) measured against the active tab.
+ * Page navigation for Chat / Discover / Scheduled / Alerts, using the dash
+ * underline tabs with a 36px target and an indicator measured against the active label.
  */
 export function ChatSurfaceTabs(props: Readonly<{
   value: ChatSurface;
