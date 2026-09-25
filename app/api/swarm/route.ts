@@ -118,10 +118,11 @@ export async function POST(request: Request): Promise<Response> {
       return jsonError("Connect a data source before starting a swarm.", 409, correlationId);
     }
 
-    const plan = await allocateSwarmPlan({
+    const allocation = await allocateSwarmPlan({
       question: parsed.message,
       connectors,
       businessContextExcerpt: context?.rendered,
+      timezone: tenant.timezone,
       apiKey,
       baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
       safetyIdentifier: createHash("sha256")
@@ -129,6 +130,15 @@ export async function POST(request: Request): Promise<Response> {
         .digest("hex"),
       signal: request.signal,
     });
+    const plan = allocation.plan;
+    const logPlan = allocation.source === "fallback" ? logger.warn : logger.info;
+    logPlan("swarm.plan_allocated", {
+      tenantId: tenant.tenant_id,
+      source: allocation.source,
+      periodSource: allocation.periodSource,
+      issue: allocation.issue,
+      agentCount: plan.agents.length,
+    }, correlationId);
     const agents = prepareSwarmAgents(plan, parsed.message);
 
     turnId = ulid();
@@ -163,7 +173,14 @@ export async function POST(request: Request): Promise<Response> {
       question: parsed.message,
       model: preferences.model,
       reasoningEffort: preferences.reasoningEffort,
-      plan: { periodLabel: plan.periodLabel, rationale: plan.rationale },
+      plan: {
+        periodLabel: plan.periodLabel,
+        rationale: plan.rationale,
+        period: plan.period,
+        source: allocation.source,
+        periodSource: allocation.periodSource,
+        issue: allocation.issue,
+      },
       agents: agents.map((agent) => ({
         key: agent.key,
         title: agent.title,

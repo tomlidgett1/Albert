@@ -72,7 +72,7 @@ import TenantDeletionWorkspace, {
 } from "./components/TenantDeletionWorkspace";
 import DashboardWorkspace from "./components/DashboardWorkspace";
 import ProactiveWorkspace from "./components/ProactiveWorkspace";
-import SwarmPanel from "./components/SwarmPanel";
+import SwarmPanel, { SWARM_PANEL_DEFAULT_WIDTH } from "./components/SwarmPanel";
 import RecommendedAnalysis from "./components/RecommendedAnalysis";
 import {
   hydrateSwarmFromRun,
@@ -434,19 +434,36 @@ function swarmAgentPhase(status: string): SwarmAgentLiveState["phase"] {
   return "pending";
 }
 
+type PersistedSwarmAgent = Readonly<{
+  agentKey: string;
+  title: string;
+  tagline: string;
+  role: string;
+  status: string;
+  headline: string | null;
+  answerState: string | null;
+  conversationId: string | null;
+  turnId: string | null;
+  failureNote: string | null;
+}>;
+
+type PersistedSwarmRun = Readonly<{
+  runId: string;
+  parentConversationId: string;
+  parentTurnId: string;
+  question: string;
+  status: string;
+  plan?: { periodLabel?: string };
+  synthesis?: {
+    answer?: string;
+    answerState?: string;
+    followUps?: string[];
+  } | null;
+  agents?: readonly PersistedSwarmAgent[];
+}>;
+
 function swarmAgentsFromPersisted(
-  agents: readonly Readonly<{
-    agentKey: string;
-    title: string;
-    tagline: string;
-    role: string;
-    status: string;
-    headline: string | null;
-    answerState: string | null;
-    conversationId: string | null;
-    turnId: string | null;
-    failureNote: string | null;
-  }>[],
+  agents: readonly PersistedSwarmAgent[],
 ): SwarmAgentLiveState[] {
   return agents.map((agent) => ({
     key: agent.agentKey,
@@ -865,6 +882,8 @@ export default function DashPage() {
   const [takeawaysOpen, setTakeawaysOpen] = useState(false);
   const [swarmEnabled, setSwarmEnabled] = useState(false);
   const [swarmPanelOpen, setSwarmPanelOpen] = useState(false);
+  const [swarmPanelWidth, setSwarmPanelWidth] = useState(SWARM_PANEL_DEFAULT_WIDTH);
+  const [swarmPanelResizing, setSwarmPanelResizing] = useState(false);
   const [swarmConversationIds, setSwarmConversationIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -1374,6 +1393,12 @@ export default function DashPage() {
   }, [collapsed]);
 
   useEffect(() => {
+    if (swarmPanelOpen) return;
+    setSwarmPanelWidth(SWARM_PANEL_DEFAULT_WIDTH);
+    setSwarmPanelResizing(false);
+  }, [swarmPanelOpen]);
+
+  useEffect(() => {
     if (collapsed) {
       sidebarWasCollapsedRef.current = true;
       setSidebarNavRevealed(false);
@@ -1868,85 +1893,91 @@ export default function DashPage() {
   };
 
   const hydrateSwarmConversation = useCallback((conversationId: string) => {
-    void fetch(`/api/swarm?conversationId=${encodeURIComponent(conversationId)}`, { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((payload: unknown) => {
-        if (!payload || typeof payload !== "object") return;
-        const run = (payload as {
-          run?: {
-            runId: string;
-            parentConversationId: string;
-            parentTurnId: string;
-            question: string;
-            status: string;
-            plan?: { periodLabel?: string };
-            synthesis?: {
-              answer?: string;
-              answerState?: string;
-              followUps?: string[];
-            } | null;
-            agents?: readonly {
-              agentKey: string;
-              title: string;
-              tagline: string;
-              role: string;
-              status: string;
-              headline: string | null;
-              answerState: string | null;
-              conversationId: string | null;
-              turnId: string | null;
-              failureNote: string | null;
-            }[];
-          };
-        }).run;
-        if (!run || run.parentConversationId !== conversationId || !run.agents) return;
-        const agents = swarmAgentsFromPersisted(run.agents);
-        hydrateSwarmFromRun({
-          runId: run.runId,
-          parentConversationId: run.parentConversationId,
-          parentTurnId: run.parentTurnId,
-          question: run.question,
-          periodLabel: run.plan?.periodLabel ?? "As asked",
-          agents,
-          answer: run.synthesis?.answer ?? null,
-          answerState: run.synthesis?.answerState ?? null,
-          followUps: run.synthesis?.followUps,
-        });
-        if (run.status === "running" || run.status === "synthesising" || run.synthesis) {
-          setSwarmPanelOpen(true);
-          setTakeawaysOpen(false);
-        }
-        const settled = run.agents.every((agent) => (
-          agent.status === "completed" || agent.status === "failed" || agent.status === "stopped"
-        ));
-        if (!settled || run.synthesis || run.status === "stopped" || run.status === "abandoned") {
-          return;
-        }
-        void fetch("/api/swarm/synthesis", {
+    void (async () => {
+      const response = await fetch(
+        `/api/swarm?conversationId=${encodeURIComponent(conversationId)}`,
+        { cache: "no-store" },
+      ).catch(() => null);
+      if (!response?.ok) return;
+      const payload = await response.json().catch(() => null) as
+        | { run?: PersistedSwarmRun }
+        | null;
+      let run = payload?.run;
+      if (!run || run.parentConversationId !== conversationId || !run.agents) return;
+
+      // A run still marked open with no fleet in this browser was stranded by
+      // a disconnect (or is live on another device). Reconciliation is
+      // lease-gated server-side, so asking is safe either way: a stranded run
+      // settles with its completed findings intact, a live one is untouched.
+      const liveHere = swarmRunSnapshot().active && swarmRunSnapshot().runId === run.runId;
+      if (!liveHere && (run.status === "running" || run.status === "synthesising")) {
+        const reconciled = await fetch("/api/swarm/reconcile", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ runId: run.runId }),
-        }).then((response) => (response.ok ? response.json() : null)).then((result: unknown) => {
-          const synthesis = result && typeof result === "object"
-            ? (result as {
-              synthesis?: { answer?: string; answerState?: string; followUps?: string[] };
-            }).synthesis
-            : null;
-          if (!synthesis?.answer) return;
-          hydrateSwarmFromRun({
-            runId: run.runId,
-            parentConversationId: run.parentConversationId,
-            parentTurnId: run.parentTurnId,
-            question: run.question,
-            periodLabel: run.plan?.periodLabel ?? "As asked",
-            agents,
-            answer: synthesis.answer,
-            answerState: synthesis.answerState ?? null,
-            followUps: synthesis.followUps,
-          });
-        }).catch(() => undefined);
-      })
-      .catch(() => undefined);
+        }).then((result) => (result.ok ? result.json() : null)).catch(() => null) as
+          | { run?: PersistedSwarmRun }
+          | null;
+        if (reconciled?.run?.runId === run.runId && reconciled.run.agents) {
+          run = reconciled.run;
+        }
+      }
+      if (!run.agents) return;
+
+      const agents = swarmAgentsFromPersisted(run.agents);
+      hydrateSwarmFromRun({
+        runId: run.runId,
+        parentConversationId: run.parentConversationId,
+        parentTurnId: run.parentTurnId,
+        question: run.question,
+        periodLabel: run.plan?.periodLabel ?? "As asked",
+        agents,
+        answer: run.synthesis?.answer ?? null,
+        answerState: run.synthesis?.answerState ?? null,
+        followUps: run.synthesis?.followUps,
+      });
+      if (run.status === "running" || run.status === "synthesising" || run.synthesis) {
+        setSwarmPanelOpen(true);
+        setTakeawaysOpen(false);
+      }
+      const settled = run.agents.every((agent) => (
+        agent.status === "completed" || agent.status === "failed" || agent.status === "stopped"
+      ));
+      const anyCompleted = run.agents.some((agent) => agent.status === "completed");
+      if (
+        !settled
+        || !anyCompleted
+        || run.synthesis
+        || run.status === "stopped"
+        || run.status === "abandoned"
+      ) {
+        return;
+      }
+      const finalRun = run;
+      await fetch("/api/swarm/synthesis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: finalRun.runId }),
+      }).then((result) => (result.ok ? result.json() : null)).then((result: unknown) => {
+        const synthesis = result && typeof result === "object"
+          ? (result as {
+            synthesis?: { answer?: string; answerState?: string; followUps?: string[] };
+          }).synthesis
+          : null;
+        if (!synthesis?.answer) return;
+        hydrateSwarmFromRun({
+          runId: finalRun.runId,
+          parentConversationId: finalRun.parentConversationId,
+          parentTurnId: finalRun.parentTurnId,
+          question: finalRun.question,
+          periodLabel: finalRun.plan?.periodLabel ?? "As asked",
+          agents,
+          answer: synthesis.answer,
+          answerState: synthesis.answerState ?? null,
+          followUps: synthesis.followUps,
+        });
+      }).catch(() => undefined);
+    })();
   }, []);
 
   const openSavedConversation = async (conversationId: string) => {
@@ -3262,7 +3293,7 @@ export default function DashPage() {
       type: "narrative",
       purpose: "acknowledgement",
       occurredAt: new Date().toISOString(),
-      text: snap.periodLabel
+      text: snap.periodLabel && snap.periodLabel !== "As asked"
         ? `I'll split this across ${snap.agents.length} specialists for ${snap.periodLabel}.`
         : `I'll split this across ${snap.agents.length} specialists, then combine what they find.`,
     };
@@ -4668,7 +4699,10 @@ export default function DashPage() {
             onConversationsChanged={loadConversationSummaries}
           />
         ) : activeItem === "Chat" ? (
-          <div className={`${styles.chatShell} ${sidePanelOpen ? styles.chatShellTakeawaysOpen : ""}`}>
+          <div
+            className={`${styles.chatShell} ${sidePanelOpen ? styles.chatShellTakeawaysOpen : ""} ${swarmPanelResizing ? styles.chatShellTakeawaysResizing : ""}`}
+            style={swarmPanelOpen ? { ["--takeaways-panel-width" as string]: `${swarmPanelWidth}px` } : undefined}
+          >
           <div className={styles.chatWorkspace} ref={chatWorkspaceRef}>
             <header className={styles.chatTopBar}>
               <div className={styles.chatTopIdentity}>
@@ -5326,7 +5360,13 @@ export default function DashPage() {
             inert={!sidePanelOpen || undefined}
           >
             {swarmPanelOpen ? (
-              <SwarmPanel onClose={() => setSwarmPanelOpen(false)} />
+              <SwarmPanel
+                onClose={() => setSwarmPanelOpen(false)}
+                width={swarmPanelWidth}
+                onWidthChange={setSwarmPanelWidth}
+                onResizeActiveChange={setSwarmPanelResizing}
+                onWidenPastDefault={() => setCollapsed(true)}
+              />
             ) : (
               <div className={styles.takeawaysPanelInner}>
                 <div className={styles.takeawaysHeader}>

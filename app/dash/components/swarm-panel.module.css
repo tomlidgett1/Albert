@@ -1,12 +1,48 @@
 /* Codex-style Swarm slide-out. Tokens come from dash.module.css. */
 
 .inner {
+  position: relative;
   display: flex;
-  width: 320px;
-  min-width: 320px;
+  width: 100%;
+  min-width: 0;
   height: 100%;
   min-height: 0;
   flex-direction: column;
+}
+
+.resizeHandle {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 10px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.resizeHandle::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 1px;
+  background: transparent;
+  transition: background 150ms ease-out;
+}
+
+.resizeHandle:hover::after,
+.resizeHandle:focus-visible::after,
+.innerResizing .resizeHandle::after {
+  background: var(--dash-text-muted);
+}
+
+.resizeHandle:focus-visible {
+  outline: none;
 }
 
 .header {
@@ -98,6 +134,16 @@
   background: var(--dash-surface-hover);
 }
 
+.orb {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  margin-top: 2px;
+  place-items: center;
+  line-height: 0;
+}
+
 .dot {
   flex: 0 0 auto;
   width: 7px;
@@ -105,11 +151,6 @@
   margin-top: 6px;
   border-radius: 999px;
   background: var(--dash-text-muted);
-}
-
-.dotLive {
-  background: var(--dash-text-heading);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dash-text-heading) 12%, transparent);
 }
 
 .dotDone {
@@ -201,8 +242,14 @@
   font-size: 13px;
 }
 
+@media (max-width: 720px) {
+  .resizeHandle {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .dotLive {
-    box-shadow: none;
+  .resizeHandle::after {
+    transition: none;
   }
 }

@@ -34,9 +34,12 @@ Cube-backed.
    planner (no Cube, no lease) reads the question, active connectors, and
    a short business-context excerpt, then emits 2-5 work packages. Each
    package has a role, a must-cover assignment, and an explicit exclude
-   list so agents do not duplicate. A deterministic fallback splits by
-   connected domain (sales, labour, cash) and adds a challenge agent on
-   causal questions when the model plan is missing or invalid.
+   list so agents do not duplicate. A shared period is used only when the
+   question names one or is a movement/KPI question; snapshot briefs stay
+   "As asked" and must not invent a 13-week window. A deterministic
+   fallback splits by connected domain (sales, labour, cash) and adds a
+   challenge agent on causal questions when the model plan is missing or
+   invalid.
 3. **Every worker is a real Codex conversation.** The browser fans the
    packages through `/api/codex-conversation` with bounded concurrency
    (3). Each child owns its own conversation, turn, Cube orchestrator,
@@ -81,3 +84,67 @@ discloses that Swarm runs several governed turns.
 Automatic delegation without the Swarm button. Nested swarms. Agent-to-
 agent chat. V3 workers. A durable cross-device live pair beyond the
 persisted run row (reload resumes from that row).
+
+## Update — 2026-08-24: staged waves, grounded periods, governed synthesis
+
+Five hardening changes, still within the original decision:
+
+1. **Challenge and reconcile run as a second wave.** Measure and explain
+   agents go first; when they settle, the browser briefs the second wave
+   with their distilled findings (headline, key numbers, confidence) so a
+   challenge argues against the real story. Still hub-and-spoke, depth 1:
+   the brief is one-way and marked untrusted evidence.
+2. **The shared window is resolved once into ISO dates.** When a plan
+   carries a shared window (`plan.period`), workers are told the exact
+   query and comparison dates instead of re-deriving a label — period
+   grounding is Codex's biggest measured failure mode (ADR 0114). Snapshot
+   briefs keep `period: null` and the "As asked" rule. The parent answer's
+   provenance time range now carries the resolved dates.
+3. **Model plans are validated, not trusted.** Paraphrased-overlapping
+   assignments (token-Jaccard, not string equality) and work naming a
+   source the tenant has not connected reject the plan to the fallback;
+   an invalid period alone is salvaged with the computed default.
+4. **Allocation and synthesis are observable.** The plan jsonb records
+   `source`, `periodSource`, and `issue`; the stored synthesis records
+   `source` and `unsupportedFigures`; fallbacks log at warn with the
+   reason instead of being swallowed.
+5. **Synthesis figures are enforced, not just instructed.** Every dollar
+   and percentage figure in the draft must match a finding (by magnitude,
+   0.5% tolerance). Unsupported figures get one named repair attempt;
+   whatever survives demotes the parent answer from Derived to
+   Exploratory and is persisted for review.
+
+## Update — 2026-08-24: the fleet survives the browser that started it
+
+The orchestrator lives in a tab, so a close, reload, or slept laptop used
+to strand `swarm_runs`/`swarm_agents` in 'running' forever, and a record
+POST that failed could mark a finished analysis failed. Migration 0169,
+still within the original decision (browser-authenticated leases;
+`service_role` never begins a turn):
+
+1. **Stranded runs reconcile on hydrate.** Reopening a conversation whose
+   run is still open, with no fleet in that browser, asks
+   `/api/swarm/reconcile`. The RPC is gated on the parent turn's lease —
+   a live orchestrator renews it from the heartbeat and agent lifecycle
+   routes — so an expired lease is proof the browser is gone, and a live
+   run on another device is untouched. Still-open agents fail with a
+   disconnect note, the run settles, and the normal hydration path then
+   asks synthesis to salvage whatever completed.
+2. **Child answers are recovered server-side.** Each child turn persists
+   its answer on its own conversation before the browser relays it.
+   Synthesis re-reads every child's persisted answer by its stored
+   conversation/turn ids, prefers it over the browser-relayed copy, and
+   recovers a 'failed' agent row whose analysis actually finished
+   (`albert_swarm_agent_completed` now accepts recovery from 'failed';
+   'stopped' stays terminal because the owner chose it).
+3. **A synthesised parent turn completes instead of failing.**
+   `albert_swarm_complete_parent_turn` closes the turn as completed with
+   the answer state taken from the persisted synthesis — lineage the
+   retired browser-callable `complete_albert_turn` could not establish.
+   History and model context accept the swarm completion receipt in
+   `result_digest` in place of an answer artifact. Unavailable synthesis
+   still releases the turn as failed, matching the other runtimes.
+
+Relaunching unfinished agents from their persisted prompts on hydrate was
+considered and deliberately left out: a page visit must not silently spend
+model budget; salvage-then-settle is deterministic.

@@ -47,11 +47,24 @@ export const swarmStoredSynthesisSchema = z.object({
   answerState: z.enum(["Derived", "Exploratory", "No data", "Unavailable"]),
   followUps: z.array(z.string().max(180)).max(4),
   disagreements: z.array(z.string().max(200)).max(4).catch([]),
+  source: z.enum(["model", "model-repaired", "fallback"]).optional(),
+  unsupportedFigures: z.array(z.string().max(80)).max(8).optional(),
 }).strict();
+
+export const swarmPlanPeriodSchema = z.object({
+  start: z.string().min(1).max(10),
+  end: z.string().min(1).max(10),
+  compareStart: z.string().min(1).max(10),
+  compareEnd: z.string().min(1).max(10),
+}).passthrough();
 
 export const swarmPlanDocumentSchema = z.object({
   periodLabel: z.string().min(1).max(80),
   rationale: z.string().max(280).catch(""),
+  period: swarmPlanPeriodSchema.nullable().catch(null).optional(),
+  source: z.enum(["model", "fallback"]).optional(),
+  periodSource: z.enum(["model", "fallback", "none"]).optional(),
+  issue: z.string().max(200).nullable().optional(),
 }).passthrough();
 
 export const swarmRunSchema = z.object({
@@ -75,10 +88,22 @@ export const swarmPanelSchema = z.object({
   conversationIds: z.array(ulidSchema).max(400),
 }).strict();
 
+export const swarmReconcileSchema = z.object({
+  reconciled: z.boolean(),
+  run: swarmRunSchema,
+}).strict();
+
+export const swarmParentTurnCompletionSchema = z.object({
+  turnStatus: z.string().min(1).max(40),
+  completed: z.boolean(),
+}).strict();
+
 export type SwarmAgent = z.infer<typeof swarmAgentSchema>;
 export type SwarmRun = z.infer<typeof swarmRunSchema>;
 export type SwarmPanel = z.infer<typeof swarmPanelSchema>;
 export type SwarmStoredSynthesis = z.infer<typeof swarmStoredSynthesisSchema>;
+export type SwarmReconcileResult = z.infer<typeof swarmReconcileSchema>;
+export type SwarmParentTurnCompletion = z.infer<typeof swarmParentTurnCompletionSchema>;
 
 function parseAgent(data: unknown): SwarmAgent {
   const parsed = swarmAgentSchema.safeParse(data);
@@ -136,7 +161,14 @@ export async function beginSwarmRun(input: Readonly<{
   question: string;
   model: string;
   reasoningEffort: string;
-  plan: Readonly<{ periodLabel: string; rationale: string }>;
+  plan: Readonly<{
+    periodLabel: string;
+    rationale: string;
+    period: Readonly<{ start: string; end: string; compareStart: string; compareEnd: string }> | null;
+    source: "model" | "fallback";
+    periodSource: "model" | "fallback" | "none";
+    issue: string | null;
+  }>;
   agents: readonly Readonly<{
     key: string;
     title: string;
@@ -217,4 +249,32 @@ export async function recordSwarmSynthesis(input: Readonly<{
 
 export async function stopSwarmRun(runId: string): Promise<SwarmRun> {
   return parseRun(await rpc("albert_swarm_stop", { p_run_id: runId }));
+}
+
+/**
+ * Settle a run whose orchestrating browser is gone. The RPC is gated on the
+ * parent turn's lease (a live fleet keeps renewing it), so calling this for a
+ * run that is still being driven is a no-op that returns the current state.
+ */
+export async function reconcileSwarmRun(runId: string): Promise<SwarmReconcileResult> {
+  const data = await rpc("albert_swarm_reconcile_run", { p_run_id: runId });
+  const parsed = swarmReconcileSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new ControlPlaneError("The swarm run returned invalid state.", 503);
+  }
+  return parsed.data;
+}
+
+/**
+ * Close a synthesised run's parent turn as completed. The RPC derives the
+ * answer state from the persisted synthesis, so it refuses runs that have not
+ * recorded one.
+ */
+export async function completeSwarmParentTurn(runId: string): Promise<SwarmParentTurnCompletion> {
+  const data = await rpc("albert_swarm_complete_parent_turn", { p_run_id: runId });
+  const parsed = swarmParentTurnCompletionSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new ControlPlaneError("The swarm parent turn returned invalid state.", 503);
+  }
+  return parsed.data;
 }

@@ -2578,6 +2578,11 @@
   --takeaways-panel-width: 320px;
 }
 
+.chatShellTakeawaysResizing .takeawaysPanel,
+.chatShellTakeawaysResizing .chatWorkspace {
+  transition: none;
+}
+
 .chatWorkspace {
   display: flex;
   position: relative;
