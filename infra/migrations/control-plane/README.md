@@ -95,6 +95,12 @@ stage/schema/table must already exist in `pipeline_stats`. The dedicated
 operator-diagnostic control identity can only claim a grant and append its
 completed/failed outcome; it has no direct table privilege. See ADR 0017.
 
+The owner-facing `My Data` surface uses a distinct one-use request family on
+the same isolated service. It derives the current tenant from Auth, permits
+only owner/manager roles, and accepts only destination schemas registered on
+that tenant's active Fivetran connections. Results are paginated, filtered for
+credential/system fields, and terminally audited before return. See ADR 0100.
+
 Migrations must remain transactional and rerunnable. Lookup rows use conflict
 handling, objects use idempotent DDL, and policies/triggers are replaced by
 name. Apply files as the migration owner through the migration pipeline only.

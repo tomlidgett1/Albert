@@ -1,0 +1,246 @@
+views:
+  - name: lightspeed_x_sales_analytics
+    title: Lightspeed X-Series sales analytics
+    description: >
+      Whole-sale X-Series commerce: signed closed sales and returns, tax,
+      surcharges, gift-card liabilities, open lifecycle, customer, outlet,
+      register and author. One row per sale header.
+    meta:
+      ai_context: >
+        Default headline is net_sales_including_tax over sold_at or outlet-local
+        business_date. It includes signed closed returns and excludes gift-card
+        load liabilities. gross_sales_including_tax excludes returns. Never add
+        net_tax to tax-inclusive sales. Parked, pending and voided records do not
+        contribute money. Use the line view for products/margin, payment view for
+        tenders and refund view for return-order timing.
+    cubes:
+      - join_path: lightspeed_x_sales
+        includes:
+          - tenant_id
+          - invoice_number
+          - receipt_number
+          - short_code
+          - sale_state
+          - source_type
+          - source_reference
+          - currency_code
+          - sold_at
+          - business_date
+          - created_at
+          - updated_at
+          - is_closed
+          - is_return
+          - is_on_account
+          - is_layby
+          - requires_delivery
+          - requires_pickup
+          - is_service_sale
+          - has_customer
+          - sale_records
+          - closed_transactions
+          - closed_sales
+          - closed_returns
+          - pending_sales
+          - parked_sales
+          - voided_sales
+          - purchasing_customers
+          - gross_sales_including_tax
+          - returns_including_tax
+          - net_sales_including_tax
+          - net_sales_excluding_tax
+          - net_tax
+          - net_surcharges
+          - loyalty_value
+          - gift_card_loads
+          - net_tendered
+          - current_outstanding_value
+          - average_closed_sale_value
+          - return_rate_pct
+      - join_path: lightspeed_x_sales.lightspeed_x_outlets
+        prefix: true
+        includes: [outlet_name, currency_code, outlet_timezone, city, suburb, state, postcode, country_code]
+      - join_path: lightspeed_x_sales.lightspeed_x_registers
+        prefix: true
+        includes: [register_name]
+      - join_path: lightspeed_x_sales.lightspeed_x_users
+        prefix: true
+        includes: [display_name, account_type]
+      - join_path: lightspeed_x_sales.lightspeed_x_customers
+        prefix: true
+        includes: [display_name, company_name, city, suburb, state, postcode, country_code, is_repeat_customer]
+    folders:
+      - { name: Sales, includes: [net_sales_including_tax, gross_sales_including_tax, returns_including_tax, closed_sales, average_closed_sale_value, purchasing_customers] }
+      - { name: Tax and adjustments, includes: [net_sales_excluding_tax, net_tax, net_surcharges, loyalty_value, gift_card_loads] }
+      - { name: Lifecycle, includes: [sale_state, is_return, closed_transactions, closed_returns, pending_sales, parked_sales, voided_sales, current_outstanding_value, return_rate_pct] }
+      - { name: Trading time, includes: [sold_at, business_date, created_at, updated_at] }
+      - { name: Outlet and register, includes: [lightspeed_x_outlets_outlet_name, lightspeed_x_outlets_outlet_timezone, lightspeed_x_registers_register_name] }
+      - { name: Customer and staff, includes: [has_customer, lightspeed_x_customers_display_name, lightspeed_x_customers_company_name, lightspeed_x_customers_is_repeat_customer, lightspeed_x_users_display_name] }
+
+  - name: lightspeed_x_product_sales_analytics
+    title: Lightspeed X-Series product sales analytics
+    description: >
+      Closed sale-line product performance by product, variant, SKU, category,
+      type, brand, supplier, outlet and salesperson, including units, returns,
+      explicit discounts, tax, COGS and margin.
+    meta:
+      ai_context: >
+        net_product_sales_excluding_tax is signed and after explicit line
+        discounts but before the system discount-product line. Report
+        sale_level_discounts separately; do not allocate them to products without
+        an explicit rule. Gift-card loads are excluded from earned product sales.
+        Gross profit is before sale-level discount and uses the cost recorded on
+        each sale line, not the current catalogue supply price.
+    cubes:
+      - join_path: lightspeed_x_sale_lines
+        includes:
+          - tenant_id
+          - invoice_number
+          - sale_state
+          - sold_at
+          - business_date
+          - currency_code
+          - line_status
+          - return_reason
+          - is_return_line
+          - is_gift_card_load
+          - is_sale_level_discount
+          - quantity
+          - unit_price_excluding_tax
+          - unit_cost
+          - unit_discount
+          - line_total_excluding_tax
+          - line_cost_total
+          - line_discount_total
+          - line_tax_total
+          - line_total_including_tax
+          - closed_line_items
+          - distinct_closed_sales
+          - units_sold
+          - units_returned
+          - net_units
+          - gross_product_sales_excluding_tax
+          - net_product_sales_excluding_tax
+          - product_returns_excluding_tax
+          - explicit_line_discounts
+          - sale_level_discounts
+          - net_product_tax
+          - net_cost_of_goods
+          - gross_profit_before_sale_level_discount
+          - gross_margin_pct_before_sale_level_discount
+          - gift_card_load_value
+          - distinct_products_sold
+          - average_selling_price_excluding_tax
+      - join_path: lightspeed_x_sale_lines.lightspeed_x_products
+        prefix: true
+        includes: [product_name, variant_name, sku, handle, supplier_code, source, active, is_variant, has_variants, tracks_inventory, is_composite]
+      - join_path: lightspeed_x_sale_lines.lightspeed_x_products.lightspeed_x_product_categories
+        prefix: true
+        includes: [category_name, is_leaf_category, category_path]
+      - join_path: lightspeed_x_sale_lines.lightspeed_x_products.lightspeed_x_product_types
+        prefix: true
+        includes: [product_type_name]
+      - join_path: lightspeed_x_sale_lines.lightspeed_x_products.lightspeed_x_brands
+        prefix: true
+        includes: [brand_name]
+      - join_path: lightspeed_x_sale_lines.lightspeed_x_products.lightspeed_x_suppliers
+        prefix: true
+        includes: [supplier_name]
+      - join_path: lightspeed_x_sale_lines.lightspeed_x_outlets
+        prefix: true
+        includes: [outlet_name, outlet_timezone, city, state, country_code]
+      - join_path: lightspeed_x_sale_lines.lightspeed_x_users
+        prefix: true
+        includes: [display_name]
+    folders:
+      - { name: Product sales, includes: [gross_product_sales_excluding_tax, net_product_sales_excluding_tax, product_returns_excluding_tax, units_sold, units_returned, net_units, average_selling_price_excluding_tax] }
+      - { name: Profitability, includes: [net_cost_of_goods, gross_profit_before_sale_level_discount, gross_margin_pct_before_sale_level_discount] }
+      - { name: Discounts and tax, includes: [explicit_line_discounts, sale_level_discounts, net_product_tax, is_sale_level_discount] }
+      - { name: Product, includes: [lightspeed_x_products_product_name, lightspeed_x_products_variant_name, lightspeed_x_products_sku, lightspeed_x_product_categories_category_name, lightspeed_x_product_types_product_type_name, lightspeed_x_brands_brand_name, lightspeed_x_suppliers_supplier_name] }
+      - { name: Context, includes: [sold_at, business_date, invoice_number, lightspeed_x_outlets_outlet_name, lightspeed_x_users_display_name] }
+
+  - name: lightspeed_x_payments_analytics
+    title: Lightspeed X-Series payments analytics
+    description: >
+      Non-deleted tender events embedded in closed X-Series sales: collections,
+      refund tenders, payment type, surcharge, outlet and register.
+    meta:
+      ai_context: >
+        Use payment amounts for tender mix and money collected/refunded, not for
+        revenue. Positive amounts are collections and negative amounts are
+        refunds. Payment surcharge is metadata on the tender and may also be
+        represented in sale adjustments; never add it to sale revenue blindly.
+    cubes:
+      - join_path: lightspeed_x_sale_payments
+        includes:
+          - tenant_id
+          - invoice_number
+          - sale_state
+          - payment_type_name
+          - payment_source_type
+          - currency_code
+          - paid_at
+          - business_date
+          - payment_amount
+          - payment_surcharge
+          - is_refund_tender
+          - payment_events
+          - collected_amount
+          - refund_tender_amount
+          - net_tender_amount
+          - payment_surcharges
+          - paid_sales
+          - average_payment
+      - join_path: lightspeed_x_sale_payments.lightspeed_x_payment_types
+        prefix: true
+        includes: [payment_type_name, gateway, disabled, internal]
+      - join_path: lightspeed_x_sale_payments.lightspeed_x_outlets
+        prefix: true
+        includes: [outlet_name, outlet_timezone, city, state, country_code]
+      - join_path: lightspeed_x_sale_payments.lightspeed_x_registers
+        prefix: true
+        includes: [register_name]
+    folders:
+      - { name: Tender flow, includes: [collected_amount, refund_tender_amount, net_tender_amount, payment_events, paid_sales, average_payment] }
+      - { name: Tender classification, includes: [payment_type_name, lightspeed_x_payment_types_gateway, is_refund_tender, payment_source_type] }
+      - { name: Time and store, includes: [paid_at, business_date, lightspeed_x_outlets_outlet_name, lightspeed_x_registers_register_name] }
+
+  - name: lightspeed_x_refunds_analytics
+    title: Lightspeed X-Series refunds analytics
+    description: >
+      Return-sale grain for realised refund value, refunded tax, original sale,
+      return timing, outlet and customer. Product allocations stay in the line view.
+    meta:
+      ai_context: >
+        Only state closed is a realised refund. Parked return drafts are not
+        refund money. Refund value is the absolute value of the signed return
+        sale. Use product sales with is_return_line for returned products and
+        payment analytics for refund destination/tender.
+    cubes:
+      - join_path: lightspeed_x_returns
+        includes:
+          - tenant_id
+          - return_invoice_number
+          - original_invoice_number
+          - return_state
+          - currency_code
+          - returned_at
+          - original_sold_at
+          - business_date
+          - is_closed_return
+          - days_to_return
+          - return_records
+          - closed_returns
+          - refund_value_including_tax
+          - refunded_tax
+          - average_refund_value
+          - average_days_to_return
+      - join_path: lightspeed_x_returns.lightspeed_x_outlets
+        prefix: true
+        includes: [outlet_name, outlet_timezone, city, state, country_code]
+      - join_path: lightspeed_x_returns.lightspeed_x_customers
+        prefix: true
+        includes: [display_name, company_name]
+    folders:
+      - { name: Refunds, includes: [refund_value_including_tax, refunded_tax, closed_returns, average_refund_value] }
+      - { name: Return lifecycle, includes: [return_state, returned_at, original_sold_at, days_to_return, average_days_to_return] }
+      - { name: Context, includes: [return_invoice_number, original_invoice_number, lightspeed_x_outlets_outlet_name, lightspeed_x_customers_display_name] }

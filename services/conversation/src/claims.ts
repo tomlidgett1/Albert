@@ -4,7 +4,7 @@ import {
   evidenceClaimInputSchema,
   type EvidenceClaimInput,
   type GovernedResult,
-} from "../../../packages/agent/src/semantic-tools.js";
+} from "../../../packages/agent/src/v3-contracts.js";
 import type { TraceCell } from "../../../packages/shared/src/index.js";
 import {
   findUngroundedNumbersForCells,
@@ -32,7 +32,11 @@ type ResolvedReference = Readonly<{
   value: TraceCell;
 }>;
 
-const comparativeLexicon = /\b(?:highest|lowest|largest|smallest|maximum|minimum|top|bottom|best|worst|more|less|greater|higher|lower|above|below|exceed(?:ed|s)?|under|over|outperform(?:ed|s)?|beat|ahead|behind|difference|delta|gap|versus|vs\.?|compared|double|twice|half|equal|same|matched|identical|led|leading|trailing|rank(?:ed|s)?|increase(?:d|s)?|decrease(?:d|s)?|declined|dropped|surged|rose|grew|fell|up|down)\b/iu;
+// "over"/"under" are comparative only about magnitude ("over $5k"), not time:
+// "over the last 12 months" and "over winter" describe the analysed window,
+// and flagging them forced claim-less period answers into the unsupported-
+// comparison failure. The lookahead excludes the temporal reading only.
+const comparativeLexicon = /\b(?:highest|lowest|largest|smallest|maximum|minimum|top|bottom|best|worst|more|less|greater|higher|lower|above|below|exceed(?:ed|s)?|under|over(?!\s+(?:the\s+|a\s+|an\s+)?(?:last|past|next|previous|prior|coming|recent|same|this|that|those|these|each|early|late|winter|spring|summer|autumn|\d))|outperform(?:ed|s)?|beat|ahead|behind|difference|delta|gap|versus|vs\.?|compared|double|twice|half|equal|same|matched|identical|led|leading|trailing|rank(?:ed|s)?|increase(?:d|s)?|decrease(?:d|s)?|declined|dropped|surged|rose|grew|fell|up|down)\b/iu;
 const assertionLexicon = Object.freeze({
   highest: /\b(?:highest|largest|maximum|top|most|led|leading)\b/iu,
   lowest: /\b(?:lowest|smallest|minimum|bottom|least|trailing)\b/iu,

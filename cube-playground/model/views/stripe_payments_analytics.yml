@@ -1,0 +1,47 @@
+views:
+  - name: stripe_payments_analytics
+    title: Stripe payments analytics
+    description: >
+      Stripe Charge and PaymentIntent collections, with customer and currency.
+      Succeeded collected money uses charge status succeeded. Refunds and
+      disputes are separate views.
+    meta:
+      ai_context: >
+        Use collected_amount over created for charge takings. Only succeeded
+        paid charges contribute. PaymentIntents are a parallel grain: do not
+        add collected_amount and received_amount in one query. Refunds use
+        stripe_refunds_analytics.
+    cubes:
+      - join_path: stripe_charges
+        includes:
+          - tenant_id
+          - status
+          - currency
+          - description
+          - failure_code
+          - captured
+          - paid
+          - refunded
+          - disputed
+          - created
+          - charge_count
+          - succeeded_charges
+          - failed_charges
+          - collected_amount
+          - refunded_amount
+          - average_charge
+      - join_path: stripe_charges.stripe_customers
+        prefix: true
+        includes: [name, email, address_country]
+      - join_path: stripe_payment_intents
+        prefix: true
+        includes:
+          - status
+          - created
+          - payment_intent_count
+          - succeeded_intents
+          - requested_amount
+          - received_amount
+    folders:
+      - { name: Charge collections, includes: [status, currency, collected_amount, succeeded_charges, average_charge, created] }
+      - { name: Payment intents, includes: [stripe_payment_intents_status, stripe_payment_intents_received_amount, stripe_payment_intents_succeeded_intents] }

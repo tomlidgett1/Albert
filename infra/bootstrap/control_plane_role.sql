@@ -13,6 +13,22 @@ BEGIN
 END;
 $$;
 
+-- The Claude Agent SDK process receives no database credential. Its host
+-- service uses this narrow identity only for opaque session transcripts and
+-- conversation/session binding; all analytical reads still go through the
+-- separately signed semantic-query service.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+    WHERE rolname = 'albert_anthropic_control'
+  ) THEN
+    CREATE ROLE albert_anthropic_control
+      NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+  END IF;
+END;
+$$;
+
 -- Deletion executes destructive, credential-bearing work under a dedicated
 -- deployment login that is a member of this group only. All data access is
 -- mediated by narrowly-scoped SECURITY DEFINER functions in the M8 migration;
@@ -110,6 +126,7 @@ ALTER ROLE albert_sync_control NOINHERIT;
 ALTER ROLE albert_webhook_control NOINHERIT;
 ALTER ROLE albert_transform_control NOINHERIT;
 ALTER ROLE albert_semantic_control NOINHERIT;
+ALTER ROLE albert_anthropic_control NOINHERIT;
 ALTER ROLE albert_operator_diagnostic_control NOINHERIT;
 
 DO $$
@@ -134,6 +151,15 @@ DO $$
 BEGIN
   EXECUTE format(
     'GRANT CONNECT ON DATABASE %I TO albert_semantic_control',
+    current_database()
+  );
+END;
+$$;
+
+DO $$
+BEGIN
+  EXECUTE format(
+    'GRANT CONNECT ON DATABASE %I TO albert_anthropic_control',
     current_database()
   );
 END;
@@ -257,6 +283,35 @@ $$;
 REVOKE ALL ON FUNCTION extensions.albert_install_deletion_queue()
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION extensions.albert_install_deletion_queue()
+  TO albert_control_migration_owner;
+
+-- Shopify customer privacy work is deliberately isolated from ingestion. The
+-- least-privilege deletion worker claims this queue: customer redaction enters
+-- verified full-connection erasure and data requests become durable operator
+-- export/delivery cases. Queue receipt alone is never fulfilment evidence.
+CREATE OR REPLACE FUNCTION extensions.albert_install_shopify_privacy_queue()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pgmq
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pgmq.meta WHERE queue_name = 'albert_shopify_privacy'
+  ) THEN
+    PERFORM pgmq.create('albert_shopify_privacy');
+  END IF;
+  GRANT ALL PRIVILEGES ON TABLE
+    pgmq.q_albert_shopify_privacy,
+    pgmq.a_albert_shopify_privacy
+  TO albert_control_migration_owner;
+  GRANT ALL PRIVILEGES ON SEQUENCE pgmq.q_albert_shopify_privacy_msg_id_seq
+  TO albert_control_migration_owner;
+END;
+$$;
+REVOKE ALL ON FUNCTION extensions.albert_install_shopify_privacy_queue()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION extensions.albert_install_shopify_privacy_queue()
   TO albert_control_migration_owner;
 
 -- pg_cron records current_user as the job identity and later executes with

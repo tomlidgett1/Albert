@@ -5,19 +5,58 @@ import { XERO_SPEC_TABLES } from "./scan-plan.js";
 import { XERO_STREAMS } from "./streams.js";
 
 /**
- * Every read scope the Xero app is entitled to, requested up front so widening
- * ingestion later never forces customers back through a re-consent. Verified
- * against the live authorize endpoint on 2026-08-06: Xero accepts this exact
- * set and refuses `accounting.transactions[.read]`, `bankfeeds` and `finance.*`
- * for granular-scope apps. No write scope is listed; the pack contains no
- * source write method, so a write grant could only ever exceed what the code
- * can use.
+ * Granular report scopes that replaced bundled `accounting.reports.read` in
+ * March 2026. Official Xero MCP report tools (P&L, balance sheet, trial
+ * balance, aged) need these on the bearer token. Existing connections keep
+ * the old grant until the organisation re-consents.
+ */
+export const XERO_REPORT_SCOPES = [
+  "accounting.reports.aged.read",
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.banksummary.read",
+  "accounting.reports.budgetsummary.read",
+  "accounting.reports.executivesummary.read",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.trialbalance.read",
+  "accounting.reports.taxreports.read",
+  "accounting.reports.tenninetynine.read",
+] as const;
+
+/**
+ * Write scopes (each includes the matching read). Official Xero MCP create and
+ * update tools require these. Albert still hides those tools in MCP test mode.
+ */
+export const XERO_WRITE_SCOPES = [
+  "accounting.settings",
+  "accounting.contacts",
+  "accounting.invoices",
+  "accounting.payments",
+  "accounting.banktransactions",
+  "accounting.manualjournals",
+  "accounting.attachments",
+  "payroll.settings",
+  "payroll.employees",
+  "payroll.payruns",
+  "payroll.payslip",
+  "payroll.timesheets",
+  "files",
+  "assets",
+  "projects",
+] as const;
+
+/**
+ * Every Xero scope this app can request in AUTH, so one consent covers
+ * ingestion and the official MCP. Bundled scopes Xero historically refused
+ * for granular-scope apps stay out: `accounting.transactions[.read]`,
+ * `accounting.reports.read`, `bankfeeds`, and `finance.*`. Requesting any of
+ * those can fail the whole authorize.
  */
 export const XERO_DEFAULT_SCOPES = [
   "offline_access",
   "openid",
   "profile",
   "email",
+  ...XERO_WRITE_SCOPES,
   "accounting.settings.read",
   "accounting.contacts.read",
   "accounting.invoices.read",
@@ -26,7 +65,7 @@ export const XERO_DEFAULT_SCOPES = [
   "accounting.manualjournals.read",
   "accounting.budgets.read",
   "accounting.attachments.read",
-  "accounting.reports.tenninetynine.read",
+  ...XERO_REPORT_SCOPES,
   "payroll.employees.read",
   "payroll.payruns.read",
   "payroll.payslip.read",
@@ -39,11 +78,9 @@ export const XERO_DEFAULT_SCOPES = [
 
 /**
  * Approval-gated at the vendor, not by Albert. The live authorize endpoint
- * refuses `accounting.journals.read` until Xero grants Advanced-tier use-case
- * approval, so it stays behind XERO_ENABLE_ADVANCED_JOURNALS rather than
- * breaking every authorization for apps that do not have it.
- * `accounting.reports.read` is refused on the same basis and is omitted
- * entirely until that approval exists.
+ * can refuse `accounting.journals.read` until Xero grants Advanced-tier
+ * use-case approval, so it stays behind XERO_ENABLE_ADVANCED_JOURNALS rather
+ * than breaking every authorization for apps that do not have it.
  */
 export const XERO_ADVANCED_SCOPES = ["accounting.journals.read"] as const;
 export const XERO_ALLOWED_SCOPES = [...XERO_DEFAULT_SCOPES, ...XERO_ADVANCED_SCOPES] as const;
@@ -76,10 +113,15 @@ export const xeroManifest: ConnectorManifest = {
     `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero-payroll-nz.yaml`,
     `https://github.com/XeroAPI/Xero-OpenAPI/blob/${XERO_ACCOUNTING_OPENAPI_REVISION}/xero-identity.yaml`,
   ],
+  // Manual-only by product decision: ingestion starts from the Connections
+  // workspace button, never automatically on connect. The control-plane
+  // schedulers and the webhook router exclude xero on the same basis
+  // (control-plane migration 0142).
+  ingestion: { initialStart: "manual" },
   oauth: {
     scopes: XERO_DEFAULT_SCOPES,
     leastPrivilegeNotes: [
-      "Albert requests every read scope the Xero app is entitled to. The full spec surface behind those scopes — accounting, budgets, attachments, 1099 reports, payroll (AU/UK/NZ), files, assets and projects — is declared as streams, so the grant and the extraction surface now match; it stays strictly read-only because the pack contains no source write method.",
+      "Albert requests every granular accounting, report, payroll, files, assets and projects scope the Xero app can put on a PKCE grant, including write variants the official MCP documents. Bundled scopes Xero refuses for granular-scope apps (accounting.transactions, accounting.reports.read, bankfeeds, finance.*) stay out so authorize does not fail for every customer.",
       "openid, profile and email identify the authorising user only. Albert stores no Xero profile record from them and they carry no accounting-data access.",
     ],
     refreshTokenRotation: true,
@@ -115,7 +157,13 @@ export const xeroManifest: ConnectorManifest = {
       },
       {
         key: "xero.api-day",
-        burstCapacity: 60,
+        // The long-run rate is the daily allowance spread over 24h (one call
+        // per ~86s at 1,000/day). A burst of 60 drained in the first two
+        // minutes of a 190-stream backfill and then handed out single tokens
+        // to a racing herd, so no multi-call page ever completed and most
+        // grants were wasted. A quarter-day burst lets a claim that holds a
+        // worker slot walk consecutive pages; the burst refills over ~6h.
+        burstCapacity: 240,
         interval: {
           kind: "window_budget",
           windowMilliseconds: 86_400_000,
@@ -191,7 +239,7 @@ export const xeroManifest: ConnectorManifest = {
   ],
   limitations: [
     "The Journals endpoint and accounting.journals.read scope require an Advanced-tier app, initial and annual security assessment, and use-case approval. Albert omits that scope unless XERO_ENABLE_ADVANCED_JOURNALS=true; ledger-backed answers remain Unavailable until approval and a live endpoint probe both succeed.",
-    "Rendered report endpoints (P&L, Balance Sheet, Trial Balance, aged summaries) sit behind accounting.reports.read, which Xero refuses for granular-scope apps; the same numbers resolve from the journals and account tables instead. The granted TenNinetyNine report is the only report surface ingested.",
+    "Rendered report endpoints (P&L, Balance Sheet, Trial Balance, aged summaries) use the granular accounting.reports.*.read scopes requested at authorize. A connection authorised before those scopes were added must reconnect before report tools succeed. Bundled accounting.reports.read is omitted because Xero can refuse it for granular-scope apps.",
     "Payroll is region-exclusive: AU, UK and NZ streams are gated on the organisation's region and the other regions report capability_unavailable rather than staging empty tables.",
     "Attachment and history fan-out streams are budget-priced against Xero's 60/minute and 1,000-5,000/day org limits; they are declared optional and fill opportunistically after core backfill.",
     "Daily request allowance is tier dependent (1,000 Starter; 5,000 higher tiers), so the worker records response budgets and replays immutable raw data instead of re-pulling.",

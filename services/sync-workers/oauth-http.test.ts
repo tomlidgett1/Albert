@@ -52,6 +52,46 @@ test("OAuth worker stores the web-bound state hash and encrypted-PKCE input cont
   assert.equal(captured[0]?.codeVerifier, payload.codeVerifier);
 });
 
+test("OAuth start refuses Stripe when the Connect app is not configured", async () => {
+  const secret = "s".repeat(48);
+  let created = 0;
+  const handler = new OAuthWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set(["https://albert.example/api/oauth/stripe/callback"]),
+    sessions: {
+      async create() {
+        created += 1;
+        return "01J00000000000000000000001";
+      },
+    } as unknown as OAuthSessionStore,
+    connectors: {
+      scopes() { return ["read_write"]; },
+      create() { throw new Error("not_used_during_start"); },
+      isConfigured(provider: string) { return provider !== "stripe"; },
+    } as OAuthConnectorFactory,
+  });
+  const payload = {
+    tenantId: "01J00000000000000000000002",
+    userId: "00000000-0000-4000-8000-000000000001",
+    provider: "stripe",
+    redirectUri: "https://albert.example/api/oauth/stripe/callback",
+    stateNonceHash: "a".repeat(64),
+    codeVerifier: "v".repeat(64),
+    expiresAt: new Date(Date.now() + 9 * 60_000).toISOString(),
+  };
+  const body = JSON.stringify(payload);
+  const signed = await signInternalRequest({ method: "POST", path: "/v1/oauth/start", body, secret });
+  const response = await handler.handle(new Request("https://worker.internal/v1/oauth/start", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...signed },
+    body,
+  }));
+  assert.equal(response.status, 503);
+  const bodyJson = await response.json() as { error?: string };
+  assert.equal(bodyJson.error, "oauth_provider_not_configured");
+  assert.equal(created, 0);
+});
+
 test("OAuth worker rejects unsigned internal calls", async () => {
   const handler = new OAuthWorkerHttpHandler({
     oauthWorkerSigningSecret: "s".repeat(48),
@@ -225,6 +265,7 @@ test("Deputy OAuth completion finalises the connection without a webhook provisi
     metadata: { endpoint: "demo.au.deputy.com" },
   } as const;
   const selectionConnector = {
+    manifest: { ingestion: { initialStart: "automatic" } } as OAuthConnectorPack["manifest"],
     async discover_accounts() { return [account]; },
     async select_account() { return account; },
   } as unknown as OAuthConnectorPack;
@@ -298,6 +339,87 @@ test("Deputy OAuth completion finalises the connection without a webhook provisi
       connectionId,
       jobRequestId: "01J00000000000000000000005",
     },
+  });
+});
+
+test("Shopify OAuth finalises from its signed shop identity without reading store data", async () => {
+  const secret = "s".repeat(48);
+  const tenantId = "01J00000000000000000000002";
+  const oauthSessionId = "01J00000000000000000000003";
+  const connectionId = "01J00000000000000000000004";
+  const userId = "00000000-0000-4000-8000-000000000001";
+  const shopDomain = "world-class-store.myshopify.com";
+  let finalizedDiscovery: unknown;
+  const connector = {
+    manifest: { ingestion: { initialStart: "manual" } } as OAuthConnectorPack["manifest"],
+    async discover_accounts() {
+      throw new Error("shopify_oauth_must_not_read_store_data");
+    },
+    async select_account() {
+      throw new Error("shopify_oauth_must_not_read_store_data");
+    },
+  } as unknown as OAuthConnectorPack;
+  const sessions = {
+    async loadCallbackReplay() { return null; },
+    async loadForCallback() {
+      return {
+        tenantId,
+        oauthSessionId,
+        initiatedBy: userId,
+        provider: "shopify",
+        redirectUri: "https://albert.example/api/oauth/shopify/callback",
+        requestedScopes: ["read_orders"],
+        status: "pending",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        codeVerifier: undefined,
+        choices: [],
+        selectedAccountReference: null,
+        vendorAccountHint: shopDomain,
+      } as const;
+    },
+    credentialVault() { return {} as WorkerCredentialVault; },
+    async provisionalCredentialReference() { return "provisional-credential"; },
+    async finalizeConnection(input: { discovery: unknown }) {
+      finalizedDiscovery = input.discovery;
+      return { connectionId, jobRequestId: null, credentialRef: "live-credential" };
+    },
+  } as unknown as OAuthSessionStore;
+  const handler = new OAuthWorkerHttpHandler({
+    oauthWorkerSigningSecret: secret,
+    allowedRedirectUris: new Set(),
+    sessions,
+    connectors: {
+      scopes() { return ["read_orders"]; },
+      create() { return connector; },
+    },
+  });
+  const body = JSON.stringify({
+    tenantId,
+    oauthSessionId,
+    userId,
+    provider: "shopify",
+    stateNonceHash: "a".repeat(64),
+    code: "already-exchanged",
+  });
+  const signed = await signInternalRequest({
+    method: "POST",
+    path: "/v1/oauth/callback",
+    body,
+    secret,
+  });
+  const response = await handler.handle(new Request("https://worker.internal/v1/oauth/callback", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...signed },
+    body,
+  }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(finalizedDiscovery, {
+    externalAccountId: shopDomain,
+    displayName: shopDomain,
+    metadata: { shopDomain },
+  });
+  assert.deepEqual(await response.json(), {
+    result: { oauthSessionId, status: "connected", connectionId, jobRequestId: null },
   });
 });
 

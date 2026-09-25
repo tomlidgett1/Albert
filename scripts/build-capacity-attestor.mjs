@@ -10,7 +10,6 @@ await build({
   platform: "node",
   target: "node22.13",
   format: "esm",
-  packages: "external",
   sourcemap: true,
   sourcesContent: false,
   legalComments: "none",

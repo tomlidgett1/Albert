@@ -45,6 +45,7 @@ export const lightspeedRManifest: ConnectorManifest = {
     "https://developers.lightspeedhq.com/retail/endpoints/TaxCategory/",
     "https://developers.lightspeedhq.com/retail/endpoints/InventoryLog/",
   ],
+  ingestion: { initialStart: "automatic" },
   oauth: {
     scopes: LIGHTSPEED_R_DEFAULT_SCOPES,
     leastPrivilegeNotes: [

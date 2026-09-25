@@ -1,0 +1,28 @@
+views:
+  - name: square_loyalty_activity_analytics
+    title: Square loyalty activity analytics
+    description: Square points earned, adjusted, expired and reward lifecycle events by date and location.
+    meta:
+      ai_context: >
+        Use created_at for point-flow reporting. points_net_change applies an
+        event-specific sign; point balances remain in square_loyalty_analytics.
+        Reward creation reserves/removes points and reward deletion restores
+        them; redemption counts benefit use but does not remove the points again.
+    cubes:
+      - join_path: square_loyalty_events
+        includes:
+          - tenant_id
+          - event_type
+          - source
+          - adjustment_reason
+          - created_at
+          - loyalty_events
+          - points_net_change
+          - points_earned
+          - points_expired
+          - rewards_created
+          - rewards_redeemed
+      - join_path: square_loyalty_events.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]
+

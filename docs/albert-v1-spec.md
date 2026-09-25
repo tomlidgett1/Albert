@@ -2,6 +2,39 @@
 
 August 2026. This document is the complete context for building Albert v1. It is written to be read in full by the build agent before any code is written, and to be kept in the repository as the source of truth (suggested: `docs/albert-v1-spec.md`, referenced from `CLAUDE.md`). Everything here has been settled through three rounds of architectural review; the builder's job is faithful implementation, not redesign. Where a genuine decision remains open, it is listed in section 23 to be raised with Tom, never guessed.
 
+> **V2 supersession (August 2026).** ADR 0077 supersedes the question-time
+> model-authored SQL design in sections 15, 16, 23 and 24. Connector ingestion,
+> immutable lineage, canonical truth, source authority, tenant isolation and
+> signed read-only execution remain constitutional. In V2 the model selects
+> semantic objects and analytical operations; trusted code alone constructs
+> executable SQL. V1 remains available only as the bounded migration rollback.
+>
+> **Deployment and V2 release authority.** ADR 0078 makes the Git-connected
+> Vercel Next.js project the production web runtime. Vercel's immutable Git and
+> deployment system identities bind the web bundle to a release; the earlier
+> ChatGPT Sites path is legacy V1 history. V2 release evidence covers only real
+> Lightspeed and Xero data and cannot require or claim Deputy qualification.
+>
+> **Owner review waiver.** ADR 0082 permits an explicit, immutable owner risk
+> acceptance to replace only the second Tier 1 semantic approval or subjective
+> human scoring for one exact V2 release. It never fabricates human ratings and
+> cannot bypass deterministic correctness, tenant isolation, fan-out,
+> grounding, evidence, runtime, latency or safety gates.
+>
+> **Personal live dashboard.** ADR 0083 narrowly amends section 5: Albert may
+> expose one private conversation-derived pinboard per user. It is not a BI or
+> query-authoring surface. Only tables with explicit trusted replay references
+> can be pinned, and every refresh preserves the original governed semantic
+> version/publication and immutable source lineage. Conversation remains the
+> primary analytical surface. Every Cube refresh runs under its own exact,
+> short-lived dashboard claim lease; it never reuses an expired chat turn.
+> Every new owner-visible V3 table is a structured replayable artefact. Final
+> pivots and cross-query tables use a deterministic derived-table transform over
+> immutable governed source events; Markdown-only tables are not produced.
+> Per-tile column labels and value formats may be customized only as bounded
+> owner presentation metadata; governed values, definitions, digests, and
+> replay recipes remain immutable.
+
 **Initial build scope: three connectors (Lightspeed Retail R-Series, Xero, Deputy), the Supabase control plane, and the complete semantic operating system underneath them.** The architecture is designed for 150+ connectors and 20,000 tenants; the initial build implements the final boundaries with the simplest correct implementation behind each.
 
 ---
@@ -14,7 +47,7 @@ Australian small businesses run three to six cloud tools: a POS, an accounting p
 
 ### 2. The idea
 
-Albert (Albert.com) is a tool-agnostic conversational analytics platform for small businesses. The owner connects their stack with OAuth. Within roughly thirty minutes their recent data is synced, reconciled across systems, and semantically modelled. Then they ask questions in plain language, in a chat, and get governed, provenance-carrying answers. The chatbot is the interface; the product and the moat is the semantic operating system underneath: a canonical business model every tool maps into, an identity graph resolving the same people, products and places across systems, source authority rules that turn overlapping observations into one truth, and a semantic layer that is the only surface the AI may query.
+Albert (Albert.com) is a tool-agnostic conversational analytics platform for small businesses. The owner connects their stack with OAuth. Within roughly thirty minutes their recent data is synced, reconciled across systems, and semantically modelled. Then they ask questions in plain language, in a chat, and get governed, provenance-carrying answers. The chatbot is the interface; the product and the moat is the semantic operating system underneath: a canonical business model every tool maps into, an identity graph resolving the same people, products and places across systems, source authority rules that turn overlapping observations into one truth, and a signed semantic query service that executes only trusted compiler output. Model-authored SQL is a V1 rollback path and is not part of Semantic Execution V2.
 
 ### 3. The wedge and the first tenant
 
@@ -23,11 +56,11 @@ Vertical one is Australian independent retail. The first tenant is a Melbourne b
 ### 4. Product promises, stated honestly
 
 - "Ready within the hour" means the most valuable recent, reconciled domains are queryable, with per-domain readiness visible; deep history backfills in the background because vendor APIs impose rate and history limits.
-- "Ask anything" means Albert always returns a governed answer, one precise clarification, or an exact statement of what data is missing and what would unlock it. Albert never manufactures a number. No figure in any answer is ever generated by a language model; every figure comes from compiled, logged SQL.
+- "Ask anything" means Albert always returns a governed answer, one precise clarification, or an exact statement of what data is missing and what would unlock it. Albert never manufactures a number. No figure in any answer is ever generated by a language model; every figure comes from a logged result returned by SQL that the semantic service validated, tenant-scoped and executed read-only.
 
 ### 5. What Albert is not
 
-Not enterprise BI. Not text-to-SQL over raw tables. Not a write-back automation tool: Albert never writes to a source system, in any version. Not a dashboard product; conversation is the primary surface, with provenance and calculation detail one tap away.
+Not enterprise BI. Not unconstrained text-to-SQL over an ungoverned warehouse. Not a write-back automation tool: Albert never writes to a source system, in any version. Not a dashboard product; conversation is the primary surface, with provenance and calculation detail one tap away.
 
 ---
 
@@ -36,7 +69,7 @@ Not enterprise BI. Not text-to-SQL over raw tables. Not a write-back automation 
 1. Owner signs up, connects Lightspeed, Xero and Deputy via OAuth.
 2. Sync begins immediately, recent data first. A readiness panel shows each domain independently: `Sales: ready through 10:42 am. Workforce: ready through 10:38 am. Accounting: backfilling, 63%.`
 3. Albert drafts a business dossier from the data (locations, trading hours, seasonality, GST registration, cash or accrual basis from Xero settings) and asks only the blocking questions (section 16). Uncertain cross-system matches ("Is Jess C in Deputy the same person as Jessica Chen in Lightspeed?") appear as tap-to-confirm cards.
-4. The owner asks questions in chat. Every answer carries one of five states: **Verified** (governed metrics, checks passed), **Qualified** (governed but with a disclosed limitation), **Exploratory** (answered from documented source-specific fields not yet in the governed model), **Clarification** (one precise question, as tappable options), or **Unavailable** (an honest gap statement naming what is missing).
+4. The owner asks questions in chat. In V2 every answer carries one of six states: **Verified** (certified semantic metrics, validation passed), **Derived** (deterministic analytical computation over governed evidence), **Exploratory** (documented but uncertified source semantics), **Clarification** (one material ambiguity prevents safe interpretation), **No data** (the valid represented query returned no rows), or **Unavailable** (an honest gap statement naming what is missing).
 5. Every numerical answer shows its sources, time range, definitions used and data freshness, with "explain this number" walking the full lineage.
 
 ---
@@ -50,7 +83,7 @@ These are constitutional. Any implementation choice that contradicts them is wro
 3. **Identity, event linkage and source authority are first-class.** Tools are never joined on display names. Overlapping observations of one economic event are linked, not unioned, and authority is concept-scoped and effective-dated, never a single global source of truth.
 4. **Canonical facts contain business truth only.** One row per real economic event. Provenance and observation multiplicity live in bridge tables, not flags on fact rows.
 5. **Cross-fact analysis aggregates each fact independently, then aligns on shared dimensions.** Facts at different grains are never joined directly.
-6. **The LLM produces SQL against the canonical model; deterministic software validates its structure before execution, attests its claims against governed definitions after execution, and derives the answer state from the evidence tier of everything touched.** There is no agent-facing raw source data outside declared, tier-marked schemas. The semantic query service is the only analytical SQL path at question time, and software — not the model — remains accountable for correctness: the registry linter rejects known-fatal shapes, a runtime canary proves join trees preserved fact grain, and no answer is Verified except by matching a governed contract's own computation.
+6. **Semantic execution is the constitutional V2 question-time architecture.** The LLM owns intent interpretation, semantic-object and operator selection, inspectable hypotheses, and evidence-backed explanation. It never authors executable SQL, joins, physical identifiers, or expression fragments. Trusted code owns tenant scope, join paths, cardinality, grain, additivity, time, currency, deterministic relational planning, parameterized SQL lowering, budgets, read-only execution, validation, evidence lineage and terminal-state eligibility. The signed semantic query service executes compiler-produced plans only; no answer becomes Verified because the model says so. The earlier SQL-first design remains bounded to the V1 rollback window described by ADR 0077.
 7. **Tenant nuance lives in structured, versioned overlays** (parameters, synonyms, defaults) with selective human confirmation. Never per-tenant SQL, joins, security rules or forks.
 8. **Every fact has exactly one declared grain**, explicit additivity rules, and the compiler never infers either.
 
@@ -71,7 +104,7 @@ These are constitutional. Any implementation choice that contradicts them is wro
                   │ answer artefacts | identity review tasks | semantic    │
                   │ inbox | audit log | placement registry (cell 01)       │
                   └────────────────────────────────────────────────────────┘
-web app ─► conversation service ─► agent runtime ─► semantic query service ─► analytical Postgres (cell 01)
+Vercel web app ─► conversation service ─► agent runtime ─► semantic query service ─► analytical Postgres (cell 01)
                                                                               schemas: source_lightspeed |
                                                                               source_xero | source_deputy |
                                                                               core | mart | quality
@@ -81,11 +114,15 @@ webhook gateway ─► job queue (pg-boss, control plane) ─► sync workers
 ```
 
 - **Modular monolith plus background workers**, TypeScript throughout, one repository. The web/API app and the workers share modules and deploy as separate processes. The web app is the existing /dash application: every surface in this specification (chat, onboarding, readiness, identity review, and the admin console) is built inside it, from its established component library and design principles. Never introduce a second design system.
+- **Web deployment:** the Next.js web/API surface deploys through the pinned
+  Vercel project from protected `main`. Vercel system commit/deployment identity
+  is authoritative; a mutable environment value cannot relabel a deployment.
+  Fly remains the runtime for the separately built service processes.
 - **Control plane:** the existing Supabase project (Sydney). Supabase Auth for users. No substantial source or analytical data lives here.
 - **Analytical database:** a separate Postgres database from the control plane (a second Supabase project in Sydney is acceptable; any managed Postgres is; the requirement is workload separation plus the role model in section 8). Ingestion and analytical queries must never contend with login and chat.
 - **Raw payloads:** a Supabase Storage bucket (`raw-payloads`), S3-compatible, encrypted, immutable, accessed by workers via service credentials only. Keying: `tenant/{tenant_id}/connection/{connection_id}/stream/{stream}/date/{yyyy-mm-dd}/batch-{ulid}.jsonl.gz`.
 - **Jobs and scheduling: Supabase-native, no workflow engine.** A Postgres-backed job queue (pg-boss or pgmq) on the control-plane database, pg_cron for schedules, and an always-on Node sync worker service. Durability lives in the data model this spec already mandates: per-stream cursors, the sync ledger and idempotent upserts, so a killed or redeployed worker restarts and resumes from its cursors. Vendor rate budgets are enforced by re-enqueueing with a delay when a budget window is exhausted. Two hard constraints: Supabase Edge Functions are never the worker runtime (their execution time caps are wrong for multi-hour backfills, and self-chaining them is a hand-rolled state machine), and all orchestration sits behind a SyncOrchestrator interface exposing the three job types in section 17, so a workflow engine (Temporal) can swap in later at its named trigger: roughly connector five, or the first cross-stream backfill dependency that hurts.
-- **Models:** OpenAI through the official Agents SDK and Responses API behind a provider abstraction. The server-owned allowlist exposes the current Albert-supported `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` profiles, user-selectable reasoning effort, and the independent Fast processing tier. Production uses the approved AU data-residency endpoint, `store: false`, and never exposes private model reasoning; the sequential user-visible narrative is reconstructed only from audited tool, table, chart, validation, and provenance events (APP 8). See ADR 0001.
+- **Models:** OpenAI through the official Agents SDK and Responses API behind a provider abstraction, owner-selected Grok 4.6 through the official xAI Responses API (`https://api.x.ai/v1`, model `grok-4.6`), and owner-selected Claude Haiku 4.5 through Anthropic's native Messages API (pinned model `claude-haiku-4-5-20251001`). The server-owned allowlist exposes `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `grok-4.6`, and the pinned Haiku profile. GPT uses native reasoning effort; Grok exposes `low` / `medium` / `high` / `xhigh`; Haiku's six Albert levels map to reviewed manual `thinking.budget_tokens` values because Haiku does not support Anthropic effort. Fast is independent for GPT (`service_tier: "fast"`) and Grok (`service_tier: "priority"`) and unavailable for Haiku. Production GPT traffic uses the approved AU data-residency endpoint and `store: false`; Grok uses `store: false`; direct Haiku is globally routed and requires explicit APP 8 plus organisation-level ZDR approval. No provider's private reasoning appears in Albert's public trace. The sequential user-visible narrative is reconstructed only from audited tool, table, chart, validation, and provenance events (APP 8). See ADRs 0001, 0094 and 0105. Gemini 3.7 Flash was briefly on the Codex harness and was removed (ADR 0119).
 - **Protected capacity promotion:** a candidate cannot attest its own throughput. Production promotion is gated by the independently deployed, immutable-tooling, GitHub-OIDC-bound transform fleet attestor in ADR 0034 and `docs/independent-capacity-attestor.md`; it observes the exact 20,000-tenant Sydney capacity run across Fly, Prometheus, and both databases and supplies the measured Machine floor before any production mutation.
 
 ### 7. Storage conventions
@@ -236,55 +273,95 @@ tests:
 
 There is no context-free metric named revenue. "Sales" is a tenant-overlay pointer at one explicit lens.
 
-**Topics (8):** sales_performance, customers_retention, inventory_health, workforce_labour, profitability_cash, plus three composites: merchandising (order lines and stock balances aggregated independently, aligned on the product grain), workforce_sales (order lines and time entries aggregated independently, aligned on worker, day, location) and reconciliation (orders, payments, journals and bank transactions aligned on day and location; variances surface as findings). Each Topic declares its base fact or aggregated fact set, approved dimensions and joins, metrics, default filters, required capabilities, freshness requirements, role security, and ai_context with sample questions. The agent never sees the schema, only Topics.
+**Topics (8):** sales_performance, customers_retention, inventory_health, workforce_labour, profitability_cash, plus three composites: merchandising (order lines and stock balances aggregated independently, aligned on the product grain), workforce_sales (order lines and time entries aggregated independently, aligned on worker, day, location) and reconciliation (orders, payments, journals and bank transactions aligned on day and location; variances surface as findings). Each Topic declares its base fact or aggregated fact set, approved dimensions and joins, metrics, default filters, required capabilities, freshness requirements, role security, and ai_context with sample questions. Topics and metric contracts are the strongest semantic context, not a restrictive query language. The agent progressively discovers the declared schema, table grains, relationships, field definitions, evidence tiers and connector playbooks needed for the current question.
 
 **Catalogue:** every Topic, metric, field and synonym is embedded (pgvector, control plane) with keyword indexes; retrieval returns a small governed slice per question.
 
 **Tenant overlay** (structured, versioned, audited): timezone, trading-day cutoff, fiscal calendar, tax display default, default metric lenses, churn and active-customer windows, authority selections, location and channel mappings, vocabulary and synonyms, targets. Disallowed: SQL, security rules, joins, tenant filters, core metric changes.
 
-### 14. Semantic query service
+### 14. Semantic Execution V2 query service
 
-The LLM emits a typed IR, never SQL:
+The model proposes only registered semantic identifiers and typed workspace mutations. A server-owned, revisioned Query Workspace pins the tenant, semantic publication, overlay, blocks, Topics, measures, dimensions, filters, time semantics, comparisons, sort and limits. No model-provided string becomes an executable identifier, join condition, expression or SQL fragment.
 
-```json
-{
-  "topic": "sales_performance",
-  "metrics": ["net_sales_ex_gst", "gross_margin_pct"],
-  "dimensions": ["product.category"],
-  "filters": [{"field": "location", "op": "in", "values": ["..."]}],
-  "time": {"field": "business_date", "range": {"type": "month_to_date"},
-           "compare": "same_period_prior_month"},
-  "sort": [{"metric": "net_sales_ex_gst", "dir": "desc"}],
-  "limit": 20,
-  "parameters": {"category_mode": "as_currently_classified"}
-}
-```
+Trusted code validates the workspace, resolves a unique allowed join path, proves grain and fan-out safety, aggregates facts independently, aligns only on declared conformed dimensions, applies bounded calculation contracts, and produces a normalized relational plan. The compiler lowers that plan through Kysely's PostgreSQL dialect with bound parameters. The signed query service runs only compiler output inside a read-only transaction after static allowlist and `EXPLAIN (FORMAT JSON)` cost checks, statement timeout and row limits.
 
-Composite form adds `queries: [...]` and `align_on: ["worker"]`; each sub-query aggregates its own fact and results align via full outer joins on shared dimensions. There is no other cross-fact path.
+Every execution persists the pinned workspace revision, publication and overlay, normalized plan and compiler hashes, source watermarks, validation evidence and immutable result evidence. Cross-fact analysis always aggregates each fact independently before alignment. Documented but uncertified fields can support Exploratory results; unsupported or ambiguous semantics fail with typed reasons rather than falling back to model-authored SQL.
 
-Compiler steps, deterministic and in order: (1) resolve the tenant model and check role permission on Topic and metrics; (2) capability-gate every metric against connector manifests, returning a structured "unanswerable because X" on failure; (3) resolve time through the tenant calendar, annotating short windows so the agent caveats them; (4) plan: single-fact queries get one SELECT with many-to-one dimension joins only (join legality from the registry; anything else rejected), composites get one CTE per sub-aggregate; (5) inject tenant scope as a parameter, apply budgets (rows, time, cost); (6) execute as semantic_ro and emit results plus provenance: sources, watermarks, definitions applied, and the semantic bundle hash `hash(registry_version, overlay_version, pack_versions, source_watermarks, ir)`. Results cache on the bundle hash. Derived calculations happen here, never as model arithmetic.
-
-### 15. The answering model: four routes, five states
+### 15. The answering model: semantic execution and six terminal states
 
 ```
 question
-  ├─ governed Topic supports it          → run_semantic_query → Verified | Qualified
-  ├─ documented source field supports it → run_source_query   → Exploratory
-  ├─ meaning materially ambiguous        → one clarification chip → Clarification
-  └─ data cannot support it              → structured gap response → Unavailable
+  ├─ certified semantic result           → Verified
+  ├─ deterministic governed computation  → Derived
+  ├─ documented uncertified semantics    → Exploratory
+  ├─ one material ambiguity              → Clarification
+  ├─ valid represented query is empty    → No data
+  └─ cannot be represented safely        → Unavailable
 ```
 
-`run_source_query` is the controlled exploration tier: it queries an allowlisted catalogue of typed, documented source-native fields, generated from each pack's field coverage manifest (fields dispositioned as governed source-specific extensions). Hardenings, all mandatory: single source per query, never cross-source (identity and dedup live in canonical); an authority warning attaches when the queried source is non-authoritative for the concept; role permissions and the pack's PII classification gate the catalogue (payroll and customer-contact fields are unreachable by exploration); the same row, time and cost caps apply; and every use files a promotion candidate into the semantic inbox. Example: "How many sales used the discount reason staff purchase?" is a Lightspeed-specific field, answerable as Exploratory with the field interpretation disclosed.
-
-**There is no agent-facing SQL tool.** Unrestricted read-only SQL exists solely as diagnostic_ro for internal humans.
+Cross-source analysis must use declared composite Topics, source-authority and event-link rules, or independently aggregate each authoritative source before explicit alignment. The model may not improvise identity joins. Unrestricted read-only SQL remains solely `diagnostic_ro` for internal humans and is not an agent tool.
 
 ### 16. Agent runtime
 
-**Tools:** search_catalogue(question), get_definition(name), get_capabilities(topic), list_field_values(field, query), run_semantic_query(ir), run_source_query(spec), get_data_health(domain), ask_user(question, options), remember(preference), publish_observation(claim, next_step), make_chart(spec). remember writes to the tenant overlay only after explicit user confirmation. publish_observation renders only server-canonical prose from exact governed table-cell references and must clear the previous table's pending-observation gate before another query or chart. make_chart renders from returned tables only.
+**Tools:** semantic context retrieval; create, patch, validate, preview, execute, inspect and fork Query Workspaces; create and update bounded Investigation Plans; run deterministic analytical operators; inspect evidence; and record governed insight dispositions. Atomic workspace mutations remain available for repair, while batch patches are the normal path. No V2 tool accepts SQL or physical identifiers.
 
-**Loop:** interpret (intent, period, lens, ambiguity) → retrieve (dossier, Topic slice, capabilities, health) → plan (decompose into semantic queries) → clarify only when materially different readings change the answer → compile and execute → independent validation → publish a cell-grounded observation before the next analytical artifact → iterate if evidence requires → answer with provenance and one or two suggested follow-ups. Large result sets go to a summarisation sub-agent with its own context window. Store auditable artefacts per turn: interpreted plan, IR, compiled SQL, result digest, validation outcomes, and the server-grounded visible narrative. Never rely on hidden chain of thought as the record.
+**Loop:** classify the question as lookup, comparison, diagnosis, recommendation or open exploration → resolve one material ambiguity when required → create an inspectable hypothesis/evidence DAG with class-specific round, query, duration and cost budgets → execute independent semantic evidence nodes in parallel → adapt only within the bounded plan → run deterministic operators for analysis and opportunity sizing → construct claim-level evidence references → stop as sufficient, inconclusive, no data or unavailable → answer with one of the six terminal states. Persist inspectable analytical state, workspace revisions, immutable evidence, claims, business-context versions and insight identity; never use hidden chain of thought as the audit record.
 
-**Validator (independent of the planner):** fan-out detection, grain compatibility, additivity respected, totals versus marts, GST ratio sanity (collected GST near one eleventh of standard-rated gross), date coverage versus freshness, null and Uncategorised surfacing (never silently dropped), identity and attribution coverage thresholds. Outcomes map to the five states.
+**Validator (independent of the planner):** semantic-object existence, Topic eligibility, join-path uniqueness, cardinality, grain compatibility, additivity, snapshots, currency, time and source authority; result and claim evidence; competing-hypothesis support for causal language; and quantified opportunity, limitation and controllability evidence for recommendations. Validation derives terminal-state eligibility and the model cannot upgrade it.
+
+### 16.1 Approved Anthropic New Method runtime
+
+> **V2 scope note.** This separately approved runtime is not Semantic Execution
+> V2-certified and cannot be used for V2 release qualification or silently
+> receive a V2-routed turn. Its SQL-capable contract remains isolated from the
+> V2 trust boundary and is governed by its own activation decision.
+>
+> **V3 topology note (August 2026).** The isolated New Method service was
+> retired when V3 became the production source of truth. ADR 0105's selectable
+> Haiku model does not revive this SQL-capable runtime; it uses V3's existing
+> typed semantic tools and deterministic grounding.
+
+Albert supports a second, method-locked analytics runtime selected only by the
+chat action **New Method**. It is a net-new TypeScript system in
+`packages/anthropic-analytics`, `services/anthropic-analytics` and
+`evals/anthropic-analytics`. It uses the self-hosted Claude Agent SDK with
+Claude Opus 5 as primary and Claude Sonnet 5 as an explicitly disclosed
+infrastructure fallback. It may not import or adapt the OpenAI agent, planner,
+prompts, playbooks or conversation execution loop.
+
+The constitutional boundary is shared, not the agent implementation. The web
+route derives actor, tenant and role; the Anthropic service receives signed
+turn context; and Claude can reach data only through four typed, in-process MCP
+tools for semantic context, the allowlisted 90-table Lightspeed schema,
+read-only SQL execution through the signed semantic service, and bounded
+analysis checkpoints. It receives no database, Supabase, connector or payload
+credential and no filesystem, shell, web, task, subagent, skill, plugin or
+auto-memory authority.
+
+Anthropic turns are limited to 20 agent turns, US$3 and 180 seconds, use
+adaptive thinking at maximum effort, and return structured output. Every
+number must bind to an exact returned result cell. Host code validates cells,
+derives the confidence ceiling and converts all provider, validation, timeout,
+budget, cancellation and malformed-output failures into one terminal
+Unavailable result. Composite, multiple-result and staging analyses receive a
+restricted tool-less Opus evidence review; deterministic grounding remains
+authoritative. “Always returns a result” means exactly one Verified, Qualified,
+Exploratory, Clarification or Unavailable terminal disposition, never a guess.
+
+Agent SDK sessions are opaque, tenant-scoped Postgres mirrors with independent
+retention. They are not the public audit record. Ordered trace events and final
+artifacts persist synchronously through the existing immutable contracts, with
+a provider-discriminated v2 finalization request; OpenAI v1 finalization stays
+backward-compatible. Conversation runtime is immutable from the first turn, so
+restore, follow-up, retry and cancellation cannot cross methods.
+
+Production activation is separately gated. Direct Anthropic API inference is
+for local development only. Production must prove exact Opus 5 and Sonnet 5
+profiles on an approved regional Bedrock path in `ap-southeast-2`, approved
+APP 8/privacy and ZDR controls, load testing and provider preflight. Missing
+regional support fails closed; Australian data is never silently routed to a
+global or US endpoint. ADR 0076 records the complete trust and supersession
+decision.
 
 **Dossier and blocking questions.** After first sync, draft the dossier (industry, locations, trading hours from the sales histogram, seasonality, GST registration and cash or accrual basis from Xero organisation settings, channels), every inferred statement carrying provenance, confidence and confirmation state. Blocking questions for this stack, asked once at onboarding: does "sales" normally mean including or excluding GST; when does your trading day end; are these Deputy and Lightspeed staff the same people (batch of match cards); are these Deputy areas the same places as these Lightspeed shops; what should "best employee" mean by default; does your POS post daily summary journals into Xero, or line by line. Everything else arrives later as quick in-conversation choices and becomes a default only on explicit confirmation.
 
@@ -369,8 +446,8 @@ Build strictly in this order; each milestone has acceptance criteria that gate t
 | M2 | Ingestion framework: pack SDK interface, raw batch writer to the Storage bucket with manifests, the three sync job types, webhook gateway and queue, quarantine, sync ledger, admin console skeleton (fleet grid over connections, sync runs and batch manifests) | A stub connector syncs fixture data through raw to staging idempotently; a killed backfill resumes from its cursor; both are visible live in the admin console |
 | M3 | The three packs to staging: R-Series (after the R versus X verification), Xero, Deputy; recorded fixtures; contract tests | All streams land typed in source_* schemas from fixtures and from the live dogfood accounts; connector quality checks green; full-history backfill runs to completion for the dogfood tenant across every stream of all three connectors (backfill_complete marked per stream), reconciled against source totals where obtainable |
 | M4 | Canonical build: dimensions, facts, bridges, event_link, entity_source_link, source_authority defaults, transformation jobs as transform_rw, canonical and bridge quality checks, marts (sales_day_location, labour_day_location), pipeline_stats snapshots and the console tenant pipeline view with invariant status | Domain invariants green on dogfood data and visible in the console, including line_maths, journal_balances, observation_coverage; the Xero daily-posting bridge case works; identity suggestions generated for Deputy and Lightspeed staff |
-| M5 | Semantic registry and query service: the 47 contracts (ADRs 0013 and 0033), 7 Topics, IR schema, compiler, validator, caching and bundle hashes, capability gating, run_source_query with its allowlist and hardenings. **Test this layer independently of any chat**: a numeric golden suite drives IR directly | Golden numeric results deterministic against bundle hashes on fixtures and on dogfood data; composite (aggregate-then-align) queries correct; forbidden operations (fan-out joins, snapshot sums, cross-source exploration) rejected with structured errors |
-| M6 | Agent and surface: conversation service (streaming), agent loop and tools, clarification chips, answer states and provenance UI, calculation detail view, web chat inside the existing /dash application | The flagship employee question and the category question run end to end on dogfood data with correct states and provenance; no path from agent to SQL exists; all new UI uses /dash components and the conventions in docs/ui-conventions.md |
+| M5 | Semantic registry and deterministic query service: governed contracts, layered Topics, schema catalogue, Query Workspace V2, relational-plan compiler, grain and fan-out validation, claim attestation, evidence artifacts, caching and capability gating. **Test this layer independently of any chat** with typed workspace fixtures and governed numeric restatements | Golden numeric results deterministic against publication and plan hashes on fixtures and dogfood data; composite aggregate-then-align plans correct; forbidden operations (fan-out joins, snapshot sums, undeclared objects, unsafe cross-source joins) rejected with structured errors; terminal states derived correctly |
+| M6 | Agent and surface: conversation service (streaming), model-owned request interpretation, bounded investigation planner and semantic tools, deterministic operators, six answer states and provenance UI, calculation detail view, web chat inside the existing /dash application | Lightspeed and Xero questions run end to end on dogfood data with correct states and provenance; every executable statement originates from the trusted compiler and runs through the signed semantic service; all new UI uses /dash components and the conventions in docs/ui-conventions.md |
 | M7 | Onboarding: OAuth flows for the three vendors, progressive readiness UI, dossier generation, blocking questions, identity review cards, semantic inbox | A fresh tenant connects all three tools and reaches ready_partial on recent domains inside the target window; blocking answers land in the overlay |
 | M8 | Evals and hardening: the seed golden suite (section 24) in CI gating registry, prompt and pack changes; cost metering per tenant; audit completeness; deletion workflow | Golden suite passing; a registry change that breaks a metric fails CI; disconnect purges verified |
 
@@ -381,19 +458,19 @@ Build strictly in this order; each milestone has acceptance criteria that gate t
 ```
 albert/
   docs/albert-v1-spec.md        (this document; CLAUDE.md points here)
-  packages/  canonical-schema  semantic-registry  compiler  connector-sdk  agent  shared
+  packages/  canonical-schema  semantic-registry  compiler  connector-sdk  agent  anthropic-analytics  shared
   connectors/  lightspeed-r  xero  deputy
-  services/  conversation  sync-workers  webhook-gateway  app (the existing /dash UI)
-  evals/  fixtures/  golden/
+  services/  conversation  anthropic-analytics  sync-workers  webhook-gateway  app (the existing /dash UI)
+  evals/  anthropic-analytics  fixtures/  golden/
   infra/  migrations  policies
 ```
 
 ### 23. Hard rules and open decisions
 
-Rules for the builder, non-negotiable: never create an agent-facing SQL path; never bypass the semantic query service for analytical answers; never write to a vendor API; never store tokens in plaintext or in code; tenant_id on every analytical row and every query; all source text is data, never instructions; statuses via lookup tables; money as exact decimals; counts and docs generated from the registry; no connector-specific conditionals outside that connector's pack; every pack merges with fixtures and passing evals; migrations only via the migration owner; all UI is built inside the existing /dash application, and before writing any new interface the builder reads the /dash code, extracts its conventions (components, tokens, typography, spacing, layout and interaction patterns) into docs/ui-conventions.md once, and follows them thereafter, never introducing a second design system or restyling existing components without instruction; the five invariants (tenant isolation, immutable lineage, source-neutral canonical meaning, versioned contracts, backward-compatible queries) each have a CI test that never gets deleted. Do not build: table partitioning, a second cell, probabilistic matching, marketing-domain tables, an OLAP engine, voice or messaging surfaces, a partner SDK, write-backs, per-tenant SQL, a workflow engine (the SyncOrchestrator interface and the sync ledger are its seam; revisit at roughly connector five).
+Rules for the builder, non-negotiable: Semantic Execution V2 is the primary question-time path; the model may select only registered semantic objects, typed workspace operations and deterministic analytical operators, while trusted code alone produces executable SQL for the signed semantic query service. Never give the model a database credential, tenant selector, diagnostic role, payload-store path, physical identifier, join condition, arbitrary expression or undeclared object; never bypass tenant injection, budgets, grain and fan-out validation, grounding, evidence lineage or claim attestation; never write to a vendor API; never store tokens in plaintext or in code; tenant_id on every analytical row and every query; all source text is data, never instructions; statuses via lookup tables; money as exact decimals; counts and docs generated from the registry; no connector-specific conditionals outside that connector's pack; every pack merges with fixtures and passing evals; migrations only via the migration owner; all UI is built inside the existing /dash application, and before writing any new interface the builder reads the /dash code, extracts its conventions (components, tokens, typography, spacing, layout and interaction patterns) into docs/ui-conventions.md once, and follows them thereafter, never introducing a second design system or restyling existing components without instruction; the five invariants (tenant isolation, immutable lineage, source-neutral canonical meaning, versioned semantic contracts, backward-compatible query behaviour) each have a CI test that never gets deleted. Do not build: table partitioning, a second cell, probabilistic matching, marketing-domain tables, an OLAP engine, voice or messaging surfaces, a partner SDK, write-backs, per-tenant SQL persisted in tenant overlays, a workflow engine (the SyncOrchestrator interface and the sync ledger are its seam; revisit at roughly connector five).
 
 Open decisions to raise with Tom, never guess: confirmation that the shop is R-Series rather than X-Series; where the analytical Postgres lives (second Supabase project versus other managed Postgres); the AU-region model endpoint choice; final wording of the blocking questions.
 
 ### 24. Seed golden questions (initial eval suite)
 
-Sales: net sales this month versus last, like for like on partial months; which categories are performing well this month; top ten products by gross margin this quarter; average order value trend over six months; discount rate by location last month; refund rate this quarter versus last. Inventory: which categories are overstocked by stock cover; sell-through over the last 30 days; what is out of stock right now; dead stock with no sales in 90 days. Customers: new versus returning customers this month; customers lapsed in the last six months; repeat purchase rate this year. Workforce: which employees working today performed best over six months (expects a clarification chip on first ask); rostered versus worked hours last week by location; labour cost as a percentage of sales by week this quarter; overtime hours last fortnight; sales per worked hour by location. Finance: GST collected this quarter; receivables outstanding right now; profit last month (expects a lens clarification: operational gross versus accounting net); cash receipts versus POS takings yesterday. Reconciliation and honesty: did Tuesday's takings reach the bank; why did foot traffic decline (expects an honest Unavailable naming the missing data). Each question ships with its expected route, expected state, and, where numeric, the expected value on the fixture tenant.
+The original seed set remains useful as V1 regression material, but it is not the V2 release corpus. The authoritative V2 model-backed evaluation is the sealed 200-execution contract in ADR 0077: 80 Lightspeed, 80 Xero and 40 Lightspeed–Xero cases across all five question classes and all six terminal states. `evals/v2-evaluation-corpus.json` commits the reviewed allocations and 160 visible prompts, but only placeholders for the 40 hidden prompts; the runner binds the separately controlled holdout only after verifying every locked case identifier and allocation. The evaluation uses only `gpt-5.6-luna` with reasoning effort `max`, standard processing, Fast and Pro disabled, gives each execution an 800-second hard timeout and at most 64 model/tool turns, and excludes Deputy until real Deputy data is available. Deterministic qualification must pass before that one-shot budget can be reserved.

@@ -11,6 +11,7 @@ const authoritySha = "a".repeat(40);
 const candidateSha = "b".repeat(40);
 const imageDigest = `sha256:${"c".repeat(64)}`;
 const servicesImage = `ghcr.io/tomlidgett1/albert-services@${imageDigest}`;
+const cubeImage = `ghcr.io/tomlidgett1/albert-cube@sha256:${"d".repeat(64)}`;
 const authorityRef = "refs/tags/albert-release-authority-v1";
 const repository = "tomlidgett1/Albert";
 const authorityWorkflowRef = `${repository}/.github/workflows/release-authority.yml@${authorityRef}`;
@@ -25,7 +26,7 @@ function digest(value) {
 
 function plan() {
   const body = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "albert.production-release-plan",
     repository,
     authority: {
@@ -36,6 +37,7 @@ function plan() {
     candidate: {
       sha: candidateSha,
       servicesImage,
+      cubeImage,
       privilegedSurfaceDigest: "d".repeat(64),
       privilegedFileRecordCount: 10,
       privilegedByteCount: 100,
@@ -67,6 +69,7 @@ function expected(value) {
     authorityWorkflowRef,
     candidateSha,
     servicesImage,
+    cubeImage,
     planDigest: value.planDigest,
     workflowRunId: "56",
     workflowRunAttempt: 1,
@@ -149,6 +152,7 @@ test("signed release authorisation binds one plan, capacity result, and dogfood 
   );
   assert.equal(receipt.planDigest, value.planDigest);
   assert.equal(receipt.servicesImage, servicesImage);
+  assert.equal(receipt.cubeImage, cubeImage);
 });
 
 test("release authorisation rejects a different candidate image or plan", () => {
@@ -161,6 +165,22 @@ test("release authorisation rejects a different candidate image or plan", () => 
     githubAuthorityAuditDigest,
     encodedPrivateKey,
   }), /release-plan digest differs/u);
+});
+
+test("release authorisation cannot be verified for another Cube image", () => {
+  const value = plan();
+  const envelope = sealReleaseAuthorization({
+    plan: value,
+    capacityEnvelope: capacity(value),
+    dogfoodEnvelope: dogfood(),
+    approvalRecord: approval(),
+    githubAuthorityAuditDigest,
+    encodedPrivateKey,
+  });
+  assert.throws(() => verifyReleaseAuthorization(envelope, {
+    ...expected(value),
+    cubeImage: `ghcr.io/tomlidgett1/albert-cube@sha256:${"1".repeat(64)}`,
+  }), /Cube image differs/u);
 });
 
 test("release authorisation signature cannot be replayed for another workflow run", () => {

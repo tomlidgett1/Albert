@@ -202,6 +202,14 @@ test("suppression skips the enqueue entirely rather than queueing paused work", 
     source.slice(0, enqueue),
     /if \(!suppressInitialBackfill\) \{[\s\S]*$/u,
   );
+  assert.match(
+    source,
+    /effectiveInitialStart = input\.context\.provider === "shopify"[\s\S]{0,240}input\.context\.provider === "momence"[\s\S]{0,240}\? "manual"/u,
+  );
+  assert.match(
+    source,
+    /suppressInitialBackfill = input\.context\.provider === "shopify"[\s\S]{0,240}input\.context\.provider === "momence"[\s\S]{0,240}\|\| operationallySuppressed/u,
+  );
   // An unsuppressed completion must keep the exact four-key shape that
   // control_plane.protected_dogfood_m7_journey_evidence compares against.
   assert.match(
@@ -281,14 +289,14 @@ test("OAuth callbacks never fall back to an insecure production redirect origin"
   assert.match(webFlow, /origin\.username \|\| origin\.password \|\| origin\.pathname !== "\/" \|\| origin\.search \|\| origin\.hash/u);
   assert.match(callbackRoute, /OAuth callback routing is not configured[\s\S]*status: 503/u);
   assert.match(callbackRoute, /candidate\.protocol !== "https:" && !localHttp/u);
-  assert.match(webFlow, /scopes: result\.scopes/u);
+  assert.match(webFlow, /scopes: xeroAuthorizeScopes\(result\.scopes\)/u);
   assert.doesNotMatch(webFlow, /XERO_ENABLE_ADVANCED_JOURNALS/u);
 });
 
 test("Lightspeed browser authorization uses the confidential-client shape without PKCE", () => {
   const source = readFileSync("services/oauth/src/web-flow.ts", "utf8");
-  const lightspeedStart = source.indexOf('if (input.provider === "lightspeed")');
-  const xeroStart = source.indexOf('if (input.provider === "xero")', lightspeedStart);
+  const lightspeedStart = source.indexOf('if (nativeProvider === "lightspeed")');
+  const xeroStart = source.indexOf('if (nativeProvider === "xero")', lightspeedStart);
   const lightspeedBlock = source.slice(lightspeedStart, xeroStart);
   assert.match(
     lightspeedBlock,

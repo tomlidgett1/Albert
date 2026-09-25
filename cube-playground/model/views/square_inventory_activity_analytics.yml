@@ -1,0 +1,31 @@
+views:
+  - name: square_inventory_activity_analytics
+    title: Square inventory activity analytics
+    description: Square inventory adjustments and physical-count events by item, store, state transition and reason.
+    meta:
+      ai_context: >
+        Use for stock movement history, adjustments, waste and physical counts.
+        units_affected is absolute event quantity and is not a signed net stock
+        measure; direction comes from from_state and to_state.
+    cubes:
+      - join_path: square_inventory_changes
+        includes:
+          - tenant_id
+          - change_type
+          - from_state
+          - to_state
+          - reference_id
+          - change_reason
+          - quantity
+          - occurred_at
+          - inventory_changes
+          - units_affected
+          - physical_counts
+          - adjustments
+      - join_path: square_inventory_changes.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]
+      - join_path: square_inventory_changes.square_catalog_objects
+        prefix: true
+        includes: [object_type, object_name, sku, upc, product_type]
+

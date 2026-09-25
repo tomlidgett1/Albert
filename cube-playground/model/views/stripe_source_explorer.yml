@@ -1,0 +1,21 @@
+views:
+  - name: stripe_source_explorer
+    title: Stripe source explorer
+    description: >
+      Catalogue of every official Fivetran Stripe ERD table and whether it has
+      landed for this tenant. Fallback when a curated Stripe view lacks the object.
+    meta:
+      ai_context: >
+        Use only when curated Stripe views lack the concept. Filter table_name
+        exactly. landed means source_stripe_fivetran.<table> exists. Then prefer
+        the named official_view. Do not invent official API objects that are
+        not on this ERD.
+    cubes:
+      - join_path: stripe_source_tables
+        includes:
+          - tenant_id
+          - table_name
+          - official_view
+          - landed
+          - table_count
+          - landed_tables

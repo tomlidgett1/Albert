@@ -11,9 +11,12 @@ test("worker failure SQL accepts exact allowlisted code-only documents",async()=
   const migration=await source(
     "infra/migrations/control-plane/0058_m2_code_only_worker_failure_evidence.sql",
   );
+  const vocabulary=await source(
+    "infra/migrations/control-plane/0102_m2_database_lock_timeout_failure_code.sql",
+  );
 
   for(const code of SYNC_FAILURE_CODES){
-    assert.match(migration,new RegExp(`'${code}'`,"u"),`SQL allowlist is missing ${code}`);
+    assert.match(`${migration}\n${vocabulary}`,new RegExp(`'${code}'`,"u"),`SQL allowlist is missing ${code}`);
   }
   for(const code of [
     "canonical_mapping_version_mismatch",
@@ -36,6 +39,8 @@ test("worker failure SQL accepts exact allowlisted code-only documents",async()=
   assert.match(migration,/block_reconciliation_phase[\s\S]*NOT IN \('code','retryable','optional','attempt'\)[\s\S]*jsonb_typeof\(p_error->'attempt'\)<>'number'/iu);
   assert.match(migration,/mark_sync_stream_phase_unavailable[\s\S]*ARRAY\['code','retryable'\][\s\S]*capability_unavailable/iu);
   assert.doesNotMatch(migration,/p_(?:error|reason)->>'(?:detail|message|stack)'/iu);
+  assert.match(vocabulary,/CREATE OR REPLACE FUNCTION control_plane\.sync_failure_code_valid_0058/u);
+  assert.doesNotMatch(vocabulary,/message|detail|stack/iu);
 });
 
 test("validated wrappers preserve grants while implementations stay private",async()=>{

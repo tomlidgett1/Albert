@@ -8,7 +8,7 @@
  */
 
 import { sanitizeTraceText, type TraceProvenance } from "../../../packages/shared/src/index.js";
-import type { GovernedResult } from "../../../packages/agent/src/semantic-tools.js";
+import type { GovernedResult } from "../../../packages/agent/src/v3-contracts.js";
 import { governedTerm, governedTermList } from "./live-terms.js";
 
 const MONTHS_LONG = [
@@ -406,7 +406,13 @@ export function ensureAnswerIncludesTable(
   answerText: string,
   results: readonly GovernedResult[],
 ): string {
-  const focus = pickAnswerResult(results.filter((result) => result.rows.length > 0));
+  const usable = results.filter((result) => result.rows.length > 0);
+  // In a multi-section review there is no universally correct "last table".
+  // Appending one arbitrary section after a complete cross-result narrative
+  // misrepresents its importance. The model may still author a useful summary
+  // table; the server only forces tabular detail for a single-result answer.
+  if (usable.length > 1) return answerText;
+  const focus = pickAnswerResult(usable);
   if (!focus || !evidenceWantsMarkdownTable(focus)) return answerText;
   if (answerContainsMarkdownTable(answerText)) return answerText;
   const table = formatResultsAsMarkdownTable(focus, { includeIntro: false, maxRows: 36 });
@@ -557,12 +563,15 @@ export function unavailableEvidenceExplanation(
     capabilities?: { missing?: readonly string[] };
     validation: {
       warnings: readonly string[];
-      checks: readonly Readonly<{ status: string; checkId?: string }>[];
+      checks: readonly Readonly<Record<string, unknown>>[];
     };
   }>[],
   readableCheckName: (checkId: string) => string,
 ): string {
   const missing = [...new Set(evidence.flatMap((item) => item.capabilities?.missing ?? []))];
+  if (missing.some((item) => /semantic_service|fly_semantic/iu.test(item))) {
+    return "Fly is not connected. The semantic query service could not be reached, so no figures are available.";
+  }
   if (missing.length > 0) {
     return `I can't answer this from the sources connected today. It needs ${governedTermList(missing, 4)}, which no connected source currently provides. Connecting a source that supplies it would unlock this answer.`;
   }
@@ -590,17 +599,17 @@ export function unavailableEvidenceExplanation(
  * States the part of the analysis that could not run, in owner English.
  * Omits the note entirely when we have nothing useful to say.
  */
-export function supersededBlockDisclosure(
-  evidence: readonly Readonly<{
+export function supersededBlockDisclosure<Evidence extends Readonly<{
     state?: string;
     capabilities?: { missing?: readonly string[] };
     validation: {
       status?: string;
       warnings: readonly string[];
-      checks: readonly Readonly<{ status: string }>[];
+      checks: readonly Readonly<Record<string, unknown>>[];
     };
-  }>[],
-  isBlocked: (item: (typeof evidence)[number]) => boolean,
+  }>>(
+  evidence: readonly Evidence[],
+  isBlocked: (item: Evidence) => boolean,
 ): string {
   const blocked = evidence.filter(isBlocked);
   if (blocked.length === 0) return "";

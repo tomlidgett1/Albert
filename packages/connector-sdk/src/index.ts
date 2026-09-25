@@ -1,6 +1,6 @@
 /** Stable IDs for the first connector set. Connector-specific logic stays in its pack. */
 export const CONNECTOR_IDS = [
-  "lightspeed-r", "xero", "deputy", "square",
+  "lightspeed-r", "lightspeed-x", "xero", "deputy", "square",
   "shopify", "stripe", "momence", "meta-ads", "google-ads",
 ] as const;
 
@@ -114,7 +114,10 @@ export type RawSourceRecord = Readonly<{
    * preserves prior source fields while applying this newer deletion state.
    */
   deletionSignal?: Readonly<{
-    kind: "verified_webhook_tombstone" | "reconciliation_tombstone";
+    kind:
+      | "verified_webhook_tombstone"
+      | "verified_vendor_delete_feed"
+      | "reconciliation_tombstone";
     webhookReceiptId?: string;
     reconciliationSweepId?: string;
     evidenceBatchIds?: readonly string[];
@@ -231,6 +234,15 @@ export interface ConnectorPack {
   readonly version: string;
   readonly apiVersion: string;
   readonly manifest: import("./contract.js").ConnectorManifest;
+
+  /**
+   * Derive connector-owned rate-limit inputs from already-attested account
+   * metadata. Generic workers merge these opaque options into the manifest's
+   * declarative reservation policy and never branch on a connector id.
+   */
+  rate_limit_options?(
+    accountMetadata: Readonly<Record<string, unknown>>,
+  ): Readonly<Record<string, number | undefined>>;
 
   authorize(request: AuthorizationRequest): Promise<AuthorizationRedirect>;
   check_connection(context: ConnectorContext): Promise<ConnectionHealth>;

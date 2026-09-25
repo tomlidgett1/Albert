@@ -1,4 +1,4 @@
-import type { TraceCell, TraceTableColumn } from "@/packages/shared/src";
+import { PIVOT_CHANGE_COLUMN_KEY, type TraceCell, type TraceRowFormat, type TraceTableColumn } from "@/packages/shared/src";
 
 const exactDecimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/u;
 const numericColumnTypes = new Set<TraceTableColumn["type"]>(["number", "currency", "percent"]);
@@ -13,15 +13,66 @@ function formatExactDecimal(formatter: Intl.NumberFormat, value: string | number
 
 function formatDate(value: string, includeTime: boolean): string {
   const dateOnly = /^\d{4}-\d{2}-\d{2}$/u.test(value);
-  const parsed = new Date(dateOnly ? `${value}T00:00:00.000Z` : value);
+  const bucketMidnight = /^\d{4}-\d{2}-\d{2}[T ]00:00(?::00)?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/u.test(value);
+  // A semantic date bucket is a calendar label, not an instant to shift into
+  // the browser timezone. Preserve its YYYY-MM-DD even when Cube adds `Z`.
+  const calendarDate = dateOnly || bucketMidnight;
+  const parsed = new Date(calendarDate ? `${value.slice(0, 10)}T00:00:00.000Z` : value);
   if (Number.isNaN(parsed.getTime())) return value;
+  // Cube time buckets arrive as naive midnight timestamps; showing "12:00 am"
+  // on every monthly or daily bucket is noise, so midnight drops the time.
+  const midnight = calendarDate || (parsed.getHours() === 0 && parsed.getMinutes() === 0);
   return new Intl.DateTimeFormat("en-AU", {
     day: "numeric",
     month: "short",
     year: "numeric",
-    ...(includeTime ? { hour: "numeric", minute: "2-digit" } : {}),
-    ...(dateOnly ? { timeZone: "UTC" } : {}),
+    ...(includeTime && !midnight ? { hour: "numeric", minute: "2-digit" } : {}),
+    ...(calendarDate ? { timeZone: "UTC" } : {}),
   }).format(parsed);
+}
+
+const CHART_DATE_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?$/u;
+
+/**
+ * Formats an ISO-like axis value for charts, sized to the Cube granularity
+ * carried in the member key ("ls_sales.sold_at.month" formats as "Feb 2026").
+ * Returns null when the value is not date-shaped so callers can fall back.
+ */
+export function formatChartDateLabel(value: TraceCell, memberKey: string): string | null {
+  if (typeof value !== "string") return null;
+  // Nivo's truncateTickAt shortens the raw tick *before* format runs, so a
+  // truncated ISO like "2026-06-01T00:00:0..." must still parse.
+  const trimmed = value.trim().replace(/\.{2,}$/u, "");
+  const match = CHART_DATE_PATTERN.exec(trimmed)
+    ?? /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2})(?::(\d{2}))?)?/u.exec(trimmed);
+  if (!match) return null;
+  const [, year, month, day, hour = "00", minute = "00"] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)));
+  if (Number.isNaN(date.getTime())) return null;
+  const granularity = memberKey.split(".").at(-1)?.toLowerCase() ?? "";
+  if (granularity === "year") return year!;
+  if (granularity === "quarter") return `Q${Math.floor((Number(month) - 1) / 3) + 1} ${year}`;
+  if (granularity === "month") {
+    return new Intl.DateTimeFormat("en-AU", { month: "short", year: "numeric", timeZone: "UTC" }).format(date);
+  }
+  // Week / day buckets: short calendar label (e.g. "1 Jun 2026").
+  if (granularity === "week" || granularity === "day" || granularity === "date") {
+    return new Intl.DateTimeFormat("en-AU", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(date);
+  }
+  const midnight = hour === "00" && minute === "00";
+  return new Intl.DateTimeFormat("en-AU", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    ...(midnight ? {} : { hour: "numeric", minute: "2-digit" }),
+    timeZone: "UTC",
+  }).format(date);
 }
 
 export function traceCellNumber(value: TraceCell): number | null {
@@ -35,7 +86,29 @@ export function isExplainableTraceCell(value: TraceCell, column: TraceTableColum
   return numericColumnTypes.has(column.type) && traceCellNumber(value) !== null;
 }
 
-export function formatTraceCell(value: TraceCell, column: TraceTableColumn): string {
+/**
+ * A composed pivot's change keeps its own unit whatever its row's format: a
+ * signed percent change on an amount or a count, percentage points on a rate
+ * ("+12.4%", "-3.1 pts"), as the answer composer writes it.
+ */
+function formatPivotChange(value: TraceCell, rowFormat: TraceRowFormat): string {
+  const numericValue = traceCellNumber(value);
+  if (numericValue === null) return value === null ? "—" : String(value);
+  const rate = rowFormat.type === "percent";
+  const shown = rate && rowFormat.percentScale === "ratio" ? numericValue * 100 : numericValue;
+  const places = Math.abs(shown) >= 100 ? 0 : 1;
+  const rounded = Number(shown.toFixed(places));
+  const text = new Intl.NumberFormat("en-AU", { minimumFractionDigits: places, maximumFractionDigits: places }).format(Math.abs(rounded));
+  return `${rounded > 0 ? "+" : rounded < 0 ? "-" : ""}${text}${rate ? " pts" : "%"}`;
+}
+
+export function formatTraceCell(value: TraceCell, column: TraceTableColumn, rowFormat?: TraceRowFormat | null): string {
+  if (rowFormat && column.key === PIVOT_CHANGE_COLUMN_KEY && column.type === "percent") return formatPivotChange(value, rowFormat);
+  // A pivoted table stacks measures with different units in the same column,
+  // so the row's own format outranks the column type for its numeric cells.
+  if (rowFormat && numericColumnTypes.has(column.type)) {
+    column = { ...column, type: rowFormat.type, currency: rowFormat.currency, percentScale: rowFormat.percentScale };
+  }
   if (value === null) return "—";
   if (typeof value === "string" && column.type === "date") return formatDate(value, false);
   if (typeof value === "string" && column.type === "datetime") return formatDate(value, true);
@@ -60,7 +133,9 @@ export function formatTraceCell(value: TraceCell, column: TraceTableColumn): str
   }
 
   if (column.type === "percent") {
-    const normalized = Math.abs(numericValue) <= 1 ? numericValue : numericValue / 100;
+    const normalized = column.percentScale === "percent" ? numericValue / 100
+      : column.percentScale === "ratio" ? numericValue
+        : Math.abs(numericValue) <= 1 ? numericValue : numericValue / 100;
     return new Intl.NumberFormat("en-AU", {
       style: "percent",
       maximumFractionDigits: 2,

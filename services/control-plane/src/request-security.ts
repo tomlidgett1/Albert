@@ -1,3 +1,4 @@
+import { bearerAccessToken } from "../../../utils/supabase/bearer.js";
 import type { AlbertRateLimitDecision } from "./web-repository.js";
 import { ControlPlaneError } from "./web-repository.js";
 
@@ -78,16 +79,41 @@ export function localHttpsOAuthBootstrapTarget(request: Request): string | null 
   }
 }
 
-/** Rejects cookie-authenticated cross-site mutations before any body is read. */
-export function assertSameOriginMutation(request: Request): void {
+/**
+ * True when an API client (ADR 0144) authenticates with an explicit bearer
+ * access token. Such a request carries no ambient browser credential — the
+ * server reads only the token and never its cookies — and a browser cannot
+ * attach an Authorization header cross-site without a CORS preflight this app
+ * never grants. It therefore cannot be a cross-site request forgery.
+ */
+function isBearerAuthenticated(request: Request): boolean {
+  return bearerAccessToken(request.headers.get("authorization")) !== null;
+}
+
+function assertSameOriginOrBearer(request: Request): void {
+  if (isBearerAuthenticated(request)) return;
   const expected = configuredOrigin(request);
   const origin = requestHeaderOrigin(request.headers.get("origin"));
   if (!origin || origin !== expected) {
     throw new ControlPlaneError("Cross-site request rejected.", 403);
   }
+}
+
+/** Rejects cookie-authenticated cross-site mutations before any body is read. */
+export function assertSameOriginMutation(request: Request): void {
+  assertSameOriginOrBearer(request);
   const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (contentType !== "application/json") {
     throw new ControlPlaneError("Content-Type must be application/json.", 415);
+  }
+}
+
+/** Same-origin guard for multipart uploads (dictation audio, attachments). */
+export function assertSameOriginFormMutation(request: Request): void {
+  assertSameOriginOrBearer(request);
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType !== "multipart/form-data") {
+    throw new ControlPlaneError("Content-Type must be multipart/form-data.", 415);
   }
 }
 

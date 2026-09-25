@@ -8,6 +8,7 @@ import {
   getThemePreference,
   subscribeToThemePreference,
 } from "@/app/theme-preference";
+import { LoginFrame } from "../login/login-chrome";
 import styles from "../login/login.module.css";
 
 export default function ResetPasswordForm({ updateMode }: Readonly<{ updateMode: boolean }>) {
@@ -60,11 +61,10 @@ export default function ResetPasswordForm({ updateMode }: Readonly<{ updateMode:
   };
 
   return (
-    <main className={styles.loginPage} data-theme={theme}>
+    <LoginFrame theme={theme}>
       <section className={styles.loginCard} aria-labelledby="reset-title">
-        <div className={styles.brand} aria-label="Albert"><span>Albert</span></div>
         <div className={styles.intro}>
-          <h1 id="reset-title">{updateMode ? "Choose a new password" : "Reset your password"}</h1>
+          <h2 id="reset-title">{updateMode ? "Choose a new password" : "Reset your password"}</h2>
           <p>{updateMode ? "Use a unique password for your Albert account." : "We’ll send a short-lived recovery link."}</p>
         </div>
         {status ? (
@@ -101,6 +101,6 @@ export default function ResetPasswordForm({ updateMode }: Readonly<{ updateMode:
         )}
         {!status ? <p className={styles.modeSwitch}><a href="/login">Back to sign in</a></p> : null}
       </section>
-    </main>
+    </LoginFrame>
   );
 }

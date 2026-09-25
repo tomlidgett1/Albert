@@ -1,0 +1,135 @@
+import type { EvalQuestion } from "./questions.js";
+
+/**
+ * Omni answer-style battery: twelve turns chosen to exercise how an answer
+ * READS rather than whether its figures are right (omni20/hard30/daily60 cover
+ * that). Five are the owner's own production questions from 2026-09-18, typed
+ * exactly as they were asked — casual register, typos and all — because the
+ * complaint was that a throwaway question got a thousand-word report back.
+ * The rest cover the presentation shapes: single figure, ranking, trend,
+ * statement, and a multi-source open-ended review.
+ *
+ * Score a run with scripts/albert-eval/style-metrics.mts.
+ */
+export const OMNI_STYLE_QUESTIONS: readonly EvalQuestion[] = [
+  {
+    id: "ST-01",
+    tier: "easy",
+    scope: "lightspeed",
+    surface: "sales",
+    pattern: "cold",
+    question: "How were sales last week?",
+    expect: "One or two sentences: the figure, its anchor, one supporting number. No table, no headings.",
+    format: "prose",
+  },
+  {
+    id: "ST-02",
+    tier: "easy",
+    scope: "lightspeed",
+    surface: "sales",
+    pattern: "cold",
+    question: "I need to see sales this month please compared to same month last year",
+    expect: "Month to date against the same days last year, stated once. The partial-month caveat appears once, not three times.",
+    format: "prose",
+  },
+  {
+    id: "ST-03",
+    tier: "easy",
+    scope: "lightspeed",
+    surface: "sales",
+    pattern: "cold",
+    question: "most proftiable day last 90 days?",
+    expect: "The day and its gross profit in the first sentence; at most a short runner-up line. The gross-profit basis is named once.",
+    format: "prose",
+  },
+  {
+    id: "ST-04",
+    tier: "medium",
+    scope: "multi",
+    surface: "sales",
+    pattern: "cold",
+    question: "when was the store last closed - best guess",
+    expect: "Names the actual calendar date in the first sentence. No long daily table; a best guess is short.",
+    format: "prose",
+  },
+  {
+    id: "ST-05",
+    tier: "hard",
+    scope: "lightspeed",
+    surface: "suppliers_inventory",
+    pattern: "cold",
+    question: "yooooo what should we discount",
+    expect: "A verdict, one tight table of named items, a few one-line bullets. Matches the casual register; not a report.",
+    format: "table",
+  },
+  {
+    id: "ST-06",
+    tier: "medium",
+    scope: "lightspeed",
+    surface: "products",
+    pattern: "cold",
+    question: "What were my top 10 products by revenue this quarter?",
+    expect: "A ten-row table with short headers and one line of so-what. The prose does not re-read the table.",
+    format: "table",
+  },
+  {
+    id: "ST-07",
+    tier: "medium",
+    scope: "xero",
+    surface: "pnl",
+    pattern: "cold",
+    question: "What were my biggest expense accounts last month?",
+    expect: "Ranked accounts table without account codes; movers called out in one or two lines.",
+    format: "table",
+  },
+  {
+    id: "ST-08",
+    tier: "medium",
+    scope: "xero",
+    surface: "pnl",
+    pattern: "cold",
+    question: "Show me a profit and loss summary for last month.",
+    expect: "One statement table with month-named columns, then two or three lines on what moved.",
+    format: "table",
+  },
+  {
+    id: "ST-09",
+    tier: "medium",
+    scope: "deputy",
+    surface: "staff_labour",
+    pattern: "cold",
+    question: "What did my wage costs look like week by week over the last 8 weeks?",
+    expect: "Eight-row weekly table with week labels, plus the range and direction in a sentence.",
+    format: "chart_or_table",
+  },
+  {
+    id: "ST-10",
+    tier: "hard",
+    scope: "multi",
+    surface: "cross",
+    pattern: "cold",
+    question: "Give me a health check of the business for the last complete month: sales, profit, cash and labour.",
+    expect: "Verdict, one scorecard, a short read per area, a few actions. Figures in the scorecard are not repeated in the prose.",
+    format: "table",
+  },
+  {
+    id: "ST-11",
+    tier: "medium",
+    scope: "lightspeed",
+    surface: "staff_labour",
+    pattern: "cold",
+    question: "who's my best salesperson this month",
+    expect: "Names the person and their figure first; a short ranking table; no methodology paragraph.",
+    format: "table",
+  },
+  {
+    id: "ST-12",
+    tier: "easy",
+    scope: "xero",
+    surface: "cash_ar_ap",
+    pattern: "cold",
+    question: "whats in the bank",
+    expect: "The balance in one sentence, accounts listed only if there are several. One short as-at note.",
+    format: "prose",
+  },
+];

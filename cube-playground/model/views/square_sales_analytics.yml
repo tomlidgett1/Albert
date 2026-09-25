@@ -1,0 +1,56 @@
+views:
+  - name: square_sales_analytics
+    title: Square sales analytics
+    description: >
+      Whole-order Square sales: completed order value, returns, tax, discounts,
+      tips, service charges, open/canceled orders, locations and attached customers.
+    meta:
+      ai_context: >
+        Headline Square sales use net_order_value over closed_at. It is
+        tax-inclusive and includes tips/service charges but subtracts order
+        returns. Only COMPLETED orders contribute. For product/category questions
+        use square_product_sales_analytics; for actual collected tenders use
+        square_payments_analytics. Square source_name is last-touch, not origin.
+    cubes:
+      - join_path: square_orders
+        includes:
+          - tenant_id
+          - reference_id
+          - source_name
+          - state
+          - ticket_name
+          - currency
+          - created_at
+          - updated_at
+          - closed_at
+          - has_customer
+          - is_completed
+          - is_open
+          - is_canceled
+          - orders
+          - completed_orders
+          - open_orders
+          - canceled_orders
+          - purchasing_customers
+          - total_order_value
+          - net_order_value
+          - returns_value
+          - tax_collected
+          - discounts_given
+          - tips_collected
+          - service_charges
+          - outstanding_amount
+          - average_completed_order_value
+      - join_path: square_orders.square_locations
+        prefix: true
+        includes: [name, business_name, status, location_type, timezone, currency, country, locality, region, postcode]
+      - join_path: square_orders.square_customers
+        prefix: true
+        includes: [display_name, company_name, creation_source, locality, region, postcode, country]
+    folders:
+      - { name: Sales, includes: [net_order_value, total_order_value, completed_orders, average_completed_order_value, purchasing_customers] }
+      - { name: Adjustments and tax, includes: [returns_value, discounts_given, tax_collected, tips_collected, service_charges] }
+      - { name: Order lifecycle, includes: [state, created_at, updated_at, closed_at, open_orders, canceled_orders, outstanding_amount] }
+      - { name: Store, includes: [square_locations_name, square_locations_business_name, square_locations_timezone, square_locations_country, square_locations_region] }
+      - { name: Customer, includes: [has_customer, square_customers_display_name, square_customers_company_name, square_customers_creation_source] }
+

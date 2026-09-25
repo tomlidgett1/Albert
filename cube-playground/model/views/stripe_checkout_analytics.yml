@@ -1,0 +1,23 @@
+views:
+  - name: stripe_checkout_analytics
+    title: Stripe checkout analytics
+    description: Stripe Checkout Sessions by mode, payment status and completed amount.
+    meta:
+      ai_context: >
+        Session grain. complete_sessions and checkout_amount use status
+        complete. This is not the same as Charge collections.
+    cubes:
+      - join_path: stripe_checkout_sessions
+        includes:
+          - tenant_id
+          - status
+          - mode
+          - payment_status
+          - currency
+          - created
+          - session_count
+          - complete_sessions
+          - checkout_amount
+      - join_path: stripe_checkout_sessions.stripe_customers
+        prefix: true
+        includes: [name, email]

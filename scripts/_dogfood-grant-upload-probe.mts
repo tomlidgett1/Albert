@@ -2,8 +2,8 @@ import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { gzipSync } from "node:zlib";
 import pg from "pg";
 
-import { loadRawStorageS3Config } from "../packages/storage/src/s3.ts";
-import { SupabaseMachineSessionPool } from "../packages/storage/src/session-credentials.ts";
+import { loadRawStorageS3Config } from "../packages/storage/src/s3.js";
+import { SupabaseMachineSessionPool } from "../packages/storage/src/session-credentials.js";
 
 const config = loadRawStorageS3Config(process.env as Record<string, string | undefined>, {
   machinePurpose: "sync",

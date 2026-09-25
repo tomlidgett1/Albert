@@ -11,6 +11,7 @@ import {
 } from "./src/deputy.js";
 import { WebhookGatewayHandler } from "./src/handler.js";
 import type { WebhookStore } from "./src/store.js";
+import { ShopifyComplianceWebhookIngress } from "./src/shopify-compliance.js";
 
 const ids = {
   tenantId: "01J00000000000000000000001",
@@ -33,6 +34,7 @@ const config: WebhookGatewayConfig = {
     bucket:"raw-payloads",
   },
   xeroWebhookSigningKey: "xero-webhook-key",
+  shopifyClientSecret: "shopify-client-secret-for-tests",
   xeroWebhookInboxKeyring: {
     currentKeyId: "xero-inbox-v1",
     currentKey: new Uint8Array(Buffer.alloc(32, 7)),
@@ -92,6 +94,14 @@ function dependencies(options: Readonly<{
       intentToReceive: boolean;
     }>>;
   }>;
+  shopify?: Readonly<{
+    accept(body: Uint8Array, headers: Headers, receivedAt: string): Promise<Readonly<{
+      inboxId: string;
+      status: "dispatched" | "unresolved";
+      duplicate: boolean;
+      targetCount: number;
+    }>>;
+  }>;
   deputy?: Readonly<{
     resolve(connectionId: string, materialId: string): Promise<ResolvedDeputyWebhook | null>;
     verify: DeputyWebhookVerifier["verify"];
@@ -145,6 +155,11 @@ function dependencies(options: Readonly<{
           };
         },
       },
+      shopify: options.shopify ?? {
+        async accept() {
+          throw new Error("shopify_compliance_not_configured");
+        },
+      },
       deputy: options.deputy ? {
         resolver: { resolve: options.deputy.resolve },
         verifier: { verify: options.deputy.verify },
@@ -192,6 +207,86 @@ test("gateway rejects an invalid Xero signature before tenant resolution", async
     body: xeroBody(),
   }));
   assert.equal(response.status, 401);
+  assert.deepEqual(fixture.calls, []);
+});
+
+test("gateway durably acknowledges an authenticated Shopify compliance delivery without raw storage", async () => {
+  let acceptedBody: Uint8Array | undefined;
+  const fixture = dependencies({
+    shopify: {
+      async accept(body) {
+        acceptedBody = body;
+        return {
+          inboxId: ids.receiptId,
+          status: "dispatched",
+          duplicate: false,
+          targetCount: 1,
+        };
+      },
+    },
+  });
+  const body = JSON.stringify({ shop_id: 954889, shop_domain: "demo.myshopify.com" });
+  const response = await fixture.handler.handle(new Request(
+    "https://hooks.example/v1/webhooks/shopify/compliance",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-shopify-topic": "shop/redact",
+        "x-shopify-api-version": "2026-07",
+        "x-shopify-shop-domain": "demo.myshopify.com",
+        "x-shopify-webhook-id": "delivery-1",
+        "x-shopify-hmac-sha256": "verified-by-ingress",
+      },
+      body,
+    },
+  ));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    accepted: true,
+    duplicate: false,
+    status: "dispatched",
+  });
+  assert.equal(new TextDecoder().decode(acceptedBody), body);
+  assert.deepEqual(fixture.calls, []);
+});
+
+test("gateway returns 401 for an invalid Shopify HMAC before durable receipt or raw storage", async () => {
+  let durableCalls = 0;
+  const shopify = new ShopifyComplianceWebhookIngress({
+    clientSecret: config.shopifyClientSecret,
+    store: {
+      async accept() {
+        durableCalls += 1;
+        return {
+          inboxId: ids.receiptId,
+          status: "dispatched" as const,
+          duplicate: false,
+          targetCount: 1,
+        };
+      },
+    },
+  });
+  const fixture = dependencies({ shopify });
+  const body = JSON.stringify({ shop_id: 954889, shop_domain: "demo.myshopify.com" });
+  const response = await fixture.handler.handle(new Request(
+    "https://hooks.example/v1/webhooks/shopify/compliance",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-shopify-topic": "shop/redact",
+        "x-shopify-api-version": "2026-07",
+        "x-shopify-shop-domain": "demo.myshopify.com",
+        "x-shopify-webhook-id": "delivery-invalid-hmac",
+        "x-shopify-hmac-sha256": Buffer.alloc(32, 9).toString("base64"),
+      },
+      body,
+    },
+  ));
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: "invalid_signature" });
+  assert.equal(durableCalls, 0);
   assert.deepEqual(fixture.calls, []);
 });
 
@@ -390,6 +485,7 @@ test("gateway configuration fails closed without the Deputy webhook-only encrypt
     SUPABASE_STORAGE_S3_LEGACY_ANON_KEY: config.rawStorage.legacyAnonKey,
     ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD: config.rawStorage.machinePassword,
     XERO_WEBHOOK_SIGNING_KEY: config.xeroWebhookSigningKey,
+    SHOPIFY_CLIENT_SECRET: config.shopifyClientSecret,
     WEBHOOK_INBOX_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64url"),
     WEBHOOK_INBOX_ENCRYPTION_KEY_ID: "xero-inbox-v1",
     WEBHOOK_ATTESTATION_KEY_ID: config.webhookAttestationKeyId,

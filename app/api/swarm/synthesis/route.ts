@@ -1,0 +1,368 @@
+/**
+ * Synthesise the parent Swarm answer (ADR 0120).
+ *
+ * POST { runId }. Reads only persisted findings — and re-reads each child's
+ * own persisted answer by its stored conversation/turn ids, so a finding
+ * whose browser relay never landed is recovered rather than lost. Appends
+ * the answer to the parent turn and completes it from the stored synthesis.
+ */
+import { createHash } from "node:crypto";
+import { ulid } from "ulid";
+import { z } from "zod";
+import { buildSwarmSynthesis, governedSwarmAnswerState } from "@/services/swarm/src/synthesis";
+import { swarmParentAnswerEvent, swarmPlanSteps } from "@/services/swarm/src/parent-events";
+import {
+  swarmChildAnswerFromHistory,
+  swarmChildTurnStatusFromHistory,
+  type SwarmChildAnswer,
+} from "@/services/swarm/src/child-answers";
+import { distillProactiveAnswer } from "@/services/proactive/src/distill";
+import { writeSalesBriefingFile } from "@/services/swarm/src/sales-deep-store";
+import {
+  SALES_DEEP_BRIEFING_PATH,
+  SALES_DEEP_KIND,
+  buildSalesBriefingMarkdown,
+} from "@/services/swarm/src/sales-deep";
+import {
+  completeSwarmParentTurn,
+  loadSwarmRun,
+  recordSwarmAgentCompleted,
+  recordSwarmSynthesis,
+  saveSwarmBriefing,
+  swarmAnswerStateSchema,
+  type SwarmRun,
+} from "@/services/control-plane/src/swarm-repository";
+import {
+  ControlPlaneError,
+  currentTenantContext,
+  requireUser,
+} from "@/services/control-plane/src/web-repository";
+import {
+  appendConversationEvent,
+  failConversationTurn,
+  type ConversationSupabase,
+} from "@/services/conversation/src/artifact-store";
+import {
+  assertSameOriginMutation,
+  readBoundedJsonBody,
+} from "@/services/control-plane/src/request-security";
+import { correlationIdFromHeader, createServiceLogger, safeErrorEvidence } from "@/packages/observability/src";
+
+export const maxDuration = 800;
+const SYNTHESIS_ROUTE_DEADLINE_MS = 720_000;
+
+const logger = createServiceLogger("albert-swarm-web");
+
+const bodySchema = z.object({
+  runId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+}).strict();
+
+function jsonError(message: string, status: number, correlationId: string): Response {
+  return Response.json({ error: message }, {
+    status,
+    headers: { "Cache-Control": "no-store", "x-request-id": correlationId },
+  });
+}
+
+async function loadChildAnswer(
+  supabase: ConversationSupabase,
+  conversationId: string,
+  turnId: string,
+): Promise<Readonly<{ answer: SwarmChildAnswer | null; turnRunning: boolean }>> {
+  const { data, error } = await supabase.rpc("albert_conversation_history", {
+    p_conversation_id: conversationId,
+    p_after_sequence: 0,
+  });
+  if (error) return { answer: null, turnRunning: false };
+  const history = Array.isArray(data) ? data[0] ?? null : data;
+  return {
+    answer: swarmChildAnswerFromHistory(history, turnId),
+    turnRunning: swarmChildTurnStatusFromHistory(history, turnId) === "running",
+  };
+}
+
+/** One bounded wait for children finishing their final write: a stream that
+ * broke in the browser settles server-side seconds later, and synthesis must
+ * not read the transcript in that gap and count the child as failed. */
+const CHILD_SETTLE_RETRY_DELAY_MS = 8_000;
+
+/**
+ * Re-read every child's persisted answer. The browser-relayed copy in
+ * swarm_agents can be missing (the record POST failed, or the run was
+ * reconciled after a disconnect) even though the child turn finished and
+ * persisted its answer — those agents are recovered to completed here.
+ * Returns the refreshed run plus each recovered/pulled answer by agent key.
+ */
+async function recoverChildAnswers(
+  run: SwarmRun,
+  supabase: ConversationSupabase,
+  correlationId: string,
+): Promise<Readonly<{ run: SwarmRun; answers: ReadonlyMap<string, SwarmChildAnswer> }>> {
+  const answers = new Map<string, SwarmChildAnswer>();
+  let recovered = false;
+  const recoverAgent = async (
+    agent: SwarmRun["agents"][number],
+  ): Promise<Readonly<{ turnRunning: boolean }>> => {
+    if (!agent.conversationId || !agent.turnId) return { turnRunning: false };
+    if (agent.status === "stopped") return { turnRunning: false };
+    const child = await loadChildAnswer(supabase, agent.conversationId, agent.turnId);
+    if (!child.answer) return { turnRunning: child.turnRunning };
+    answers.set(agent.agentKey, child.answer);
+    if (agent.status === "completed") return { turnRunning: false };
+    const answer = child.answer;
+    const distilled = distillProactiveAnswer(answer.text);
+    const parsedState = swarmAnswerStateSchema.safeParse(answer.answerState);
+    await recordSwarmAgentCompleted({
+      runId: run.runId,
+      agentKey: agent.agentKey,
+      answerState: parsedState.success ? parsedState.data : "Exploratory",
+      headline: distilled.headline,
+      summary: answer.text.slice(0, 8_000),
+      keyNumbers: distilled.keyNumbers,
+      questions: answer.followUps.map((question) => question.slice(0, 200)),
+    }).then(() => {
+      recovered = true;
+      logger.info("swarm.agent_recovered", {
+        runId: run.runId,
+        agentKey: agent.agentKey,
+        priorStatus: agent.status,
+      }, correlationId);
+    }).catch(() => undefined);
+    return { turnRunning: false };
+  };
+  const settling: SwarmRun["agents"][number][] = [];
+  for (const agent of run.agents) {
+    const outcome = await recoverAgent(agent);
+    if (outcome.turnRunning && agent.status !== "completed") settling.push(agent);
+  }
+  if (settling.length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, CHILD_SETTLE_RETRY_DELAY_MS));
+    for (const agent of settling) await recoverAgent(agent);
+  }
+  return {
+    run: recovered ? await loadSwarmRun(run.runId) : run,
+    answers,
+  };
+}
+
+export async function POST(request: Request): Promise<Response> {
+  const correlationId = correlationIdFromHeader(request.headers.get("x-request-id"));
+  try {
+    assertSameOriginMutation(request);
+    const auth = await requireUser();
+    const tenant = await currentTenantContext();
+    if (!tenant) return jsonError("Create your organisation before using Swarm.", 409, correlationId);
+    const parsed = bodySchema.parse(await readBoundedJsonBody(request));
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) return jsonError("Swarm is not configured on this environment.", 503, correlationId);
+
+    const loaded = await loadSwarmRun(parsed.runId);
+    if (loaded.synthesis) {
+      return Response.json({
+        synthesis: loaded.synthesis,
+        conversationId: loaded.parentConversationId,
+        turnId: loaded.parentTurnId,
+      }, { headers: { "Cache-Control": "no-store", "x-request-id": correlationId } });
+    }
+
+    const recovery = await recoverChildAnswers(loaded, auth.supabase, correlationId);
+    const run = recovery.run;
+    const childAnswers = recovery.answers;
+
+    const stillOpen = run.agents.some((agent) => (
+      agent.status === "pending" || agent.status === "running"
+    ));
+    if (stillOpen) {
+      return jsonError("Specialists are still working.", 409, correlationId);
+    }
+
+    const completed = run.agents.filter((agent) => agent.status === "completed");
+    if (completed.length === 0) {
+      await failConversationTurn({
+        conversationId: run.parentConversationId,
+        turnId: run.parentTurnId,
+        failureCode: "albert_swarm_failed",
+        supabase: auth.supabase,
+      }).catch(() => undefined);
+      return jsonError("No specialist finished, so there is nothing to combine.", 409, correlationId);
+    }
+
+    // Prefer the child's own persisted answer over the browser-relayed copy.
+    const findings = run.agents.map((agent) => ({
+      agentKey: agent.agentKey,
+      title: agent.title,
+      role: agent.role,
+      answerState: agent.answerState,
+      headline: agent.headline,
+      keyNumbers: agent.keyNumbers,
+      summaryExcerpt: childAnswers.get(agent.agentKey)?.text.slice(0, 8_000)
+        ?? agent.summary
+        ?? "",
+      failed: agent.status === "failed" || agent.status === "stopped",
+      failureNote: agent.failureNote,
+    }));
+    const period = run.plan.period
+      ? {
+          start: run.plan.period.start,
+          end: run.plan.period.end,
+          compareStart: run.plan.period.compareStart,
+          compareEnd: run.plan.period.compareEnd,
+        }
+      : null;
+    const synthesisSignal = AbortSignal.any([
+      request.signal,
+      AbortSignal.timeout(SYNTHESIS_ROUTE_DEADLINE_MS),
+    ]);
+    const result = await buildSwarmSynthesis({
+      question: run.question,
+      periodLabel: run.plan.periodLabel,
+      period,
+      businessName: tenant.tenant_name ?? "the business",
+      findings,
+      ...(run.plan.reasoningMode === "pro" ? {
+        model: run.model,
+        reasoningEffort: run.reasoningEffort,
+        proMode: true,
+      } : {}),
+      apiKey,
+      baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+      safetyIdentifier: createHash("sha256")
+        .update(`${tenant.tenant_id}:${auth.user.id}`)
+        .digest("hex"),
+      signal: synthesisSignal,
+    });
+    const synthesis = result.synthesis;
+    const answerState = governedSwarmAnswerState(findings, result.unsupportedFigures);
+    const stored = await recordSwarmSynthesis({
+      runId: run.runId,
+      synthesis: {
+        headline: synthesis.headline,
+        answer: synthesis.answer,
+        answerState,
+        followUps: synthesis.followUps,
+        disagreements: synthesis.disagreements,
+        source: result.source,
+        recovery: result.recovery,
+        unsupportedFigures: [...result.unsupportedFigures],
+      },
+    });
+
+    await appendConversationEvent({
+      conversationId: run.parentConversationId,
+      turnId: run.parentTurnId,
+      supabase: auth.supabase,
+      event: {
+        id: ulid(),
+        sequence: 3,
+        occurredAt: new Date().toISOString(),
+        type: "plan",
+        steps: swarmPlanSteps({
+          agents: run.agents.map((agent) => ({
+            key: agent.agentKey,
+            title: agent.title,
+            status: agent.status,
+          })),
+          synthesised: true,
+        }),
+      },
+    }).catch(() => undefined);
+    await appendConversationEvent({
+      conversationId: run.parentConversationId,
+      turnId: run.parentTurnId,
+      supabase: auth.supabase,
+      event: swarmParentAnswerEvent({
+        id: ulid(),
+        sequence: 4,
+        occurredAt: new Date().toISOString(),
+        answer: synthesis.answer,
+        answerState,
+        followUps: synthesis.followUps,
+        timezone: tenant.timezone,
+        period: period ? { label: run.plan.periodLabel, start: period.start, end: period.end } : null,
+      }),
+    }).catch(() => undefined);
+    if (answerState === "Unavailable") {
+      await failConversationTurn({
+        conversationId: run.parentConversationId,
+        turnId: run.parentTurnId,
+        failureCode: "albert_swarm_unavailable",
+        supabase: auth.supabase,
+      }).catch(() => undefined);
+    } else {
+      // A synthesised swarm turn is a success: complete it from the persisted
+      // synthesis. If this environment has not applied migration 0175 yet,
+      // fall back to the legacy failure-code release so the parent lease is
+      // never left held.
+      await completeSwarmParentTurn(run.runId).catch(async () => {
+        await failConversationTurn({
+          conversationId: run.parentConversationId,
+          turnId: run.parentTurnId,
+          failureCode: "albert_swarm_answered",
+          supabase: auth.supabase,
+        }).catch(() => undefined);
+      });
+    }
+
+    let briefingMarkdown: string | null = null;
+    if (run.plan.kind === SALES_DEEP_KIND) {
+      briefingMarkdown = buildSalesBriefingMarkdown({
+        generatedAt: new Date().toISOString(),
+        businessName: tenant.tenant_name ?? "the business",
+        question: run.question,
+        periodLabel: run.plan.periodLabel,
+        period,
+        headline: synthesis.headline,
+        answer: synthesis.answer,
+        answerState,
+        followUps: synthesis.followUps,
+        disagreements: synthesis.disagreements,
+        findings,
+      });
+      await saveSwarmBriefing({
+        runId: run.runId,
+        briefing: briefingMarkdown,
+      }).catch((error) => {
+        logger.warn("swarm.briefing_save_failed", safeErrorEvidence(error), correlationId);
+      });
+      await writeSalesBriefingFile(briefingMarkdown).catch((error) => {
+        logger.warn("swarm.briefing_file_failed", safeErrorEvidence(error), correlationId);
+      });
+    }
+
+    const logSynthesis = result.source === "fallback" ? logger.warn : logger.info;
+    logSynthesis("swarm.synthesis_recorded", {
+      tenantId: tenant.tenant_id,
+      runId: run.runId,
+      answerState,
+      completedAgents: completed.length,
+      source: result.source,
+      recovery: result.recovery,
+      unsupportedFigureCount: result.unsupportedFigures.length,
+      failure: result.failure,
+    }, correlationId);
+
+    return Response.json({
+      synthesis: stored.synthesis ?? {
+        headline: synthesis.headline,
+        answer: synthesis.answer,
+        answerState,
+        followUps: synthesis.followUps,
+        disagreements: synthesis.disagreements,
+        source: result.source,
+        recovery: result.recovery,
+      },
+      conversationId: run.parentConversationId,
+      turnId: run.parentTurnId,
+      briefingPath: briefingMarkdown ? SALES_DEEP_BRIEFING_PATH : undefined,
+    }, { headers: { "Cache-Control": "no-store", "x-request-id": correlationId } });
+  } catch (error) {
+    if (error instanceof z.ZodError) return jsonError("Invalid swarm synthesis request.", 400, correlationId);
+    logger.error("swarm.synthesis_failed", safeErrorEvidence(error), correlationId);
+    const status = error instanceof ControlPlaneError ? error.status : 503;
+    return jsonError(
+      error instanceof ControlPlaneError ? error.message : "The swarm answer could not be written.",
+      status,
+      correlationId,
+    );
+  }
+}

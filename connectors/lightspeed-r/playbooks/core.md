@@ -1,4 +1,4 @@
-# Lightspeed Retail (R-Series) — how this shop's data actually reads
+# Lightspeed Retail (R-Series) — semantic analysis guide
 
 You are answering a shop owner. They speak shop. Lightspeed speaks sales, sale lines,
 items, categories, workorders, orders. This page is the bridge: what the owner's words
@@ -11,9 +11,9 @@ the workshop board, who bought it. Xero is **financial truth**: invoices, bills,
 bank. They share no ids. Never join across them; answer from one and say which.
 
 Everything lives in `source_lightspeed.*` and every queryable table starts with `ls_`.
-The schema also contains retired unprefixed tables (`sales`, `items`, `customers`, …)
-from an earlier pipeline — they are **empty** and the SQL service rejects them. Ninety
-`ls_` tables, one shop's whole operation. Most questions land on about eight of them.
+Use the injected table index and dictionaries as the source of truth for what the
+current connector exposes; never assume a merchant's table population, location,
+timezone, catalogue, staff, or trading history from an example tenant.
 
 ---
 
@@ -21,11 +21,9 @@ from an earlier pipeline — they are **empty** and the SQL service rejects them
 
 **Gate 1 — `tombstone = false`.** Always, unless the owner asked about deleted records.
 
-**Gate 2 — one pack generation only.** Staging holds rows from two connector pack
-generations side by side (`mapping_version`). Where they overlap, every record is
-present **twice**, and a plain `COUNT(*)` or `SUM()` silently doubles it. Verified live:
-`ls_categories` holds 158 rows for 79 real categories; `ls_item_shops` holds 64,010 rows
-for 34,010 real stock records.
+**Gate 2 — one pack generation only.** Staging can hold more than one connector pack
+generation side by side (`mapping_version`). Where generations overlap, a plain
+`COUNT(*)` or `SUM()` can silently duplicate records.
 
 Resolve the current generation **by ingest recency**, once, and reuse it:
 
@@ -37,10 +35,8 @@ WITH pack AS (
 )
 ```
 
-Today that resolves to `'2.0.0'`; the retired one is `'m2-v1'`. **Do not use
-`max(mapping_version)`** — these are text, and `'m2-v1'` sorts above `'2.0.0'`, so the
-lexical maximum silently pins the *old, partial* generation and every figure comes back
-too small while looking entirely plausible.
+**Do not use `max(mapping_version)`** — versions are text, so lexical ordering is not
+recency ordering and can silently select an old or partial generation.
 
 Apply the pin on **every** `source_lightspeed` table in the query, including lookup
 joins — an un-pinned join to `ls_categories` fans every product row out twofold. If a
@@ -61,10 +57,10 @@ keep it.
 |---|---|---|
 | "how did we go last month", "takings", "turnover" | ticket-level revenue | `ls_sales`, `SUM(calc_total)` |
 | "did we sell any X", "how are X going" | a **product type**, not one SKU | category tree → `ls_sale_lines` |
-| "how many of the *Marathon Plus*" | one SKU | resolve to `item_id`, then `ls_sale_lines` |
+| "how many of *[named product]*" | one SKU | resolve to `item_id`, then `ls_sale_lines` |
 | "gen services", "brake bleeds" | one named service item | resolve to `item_id` (service items, §4) |
 | "how's the workshop going" | service revenue, not the job board | `ls_sale_lines.is_workorder = true` |
-| "what's on the board", "how many jobs open" | the job board | `ls_workorders` — **but see §5, it is near-empty** |
+| "what's on the board", "how many jobs open" | the job board | `ls_workorders`; first verify header coverage |
 | "what's the cash", "did the till balance" | tenders and drawer | `ls_sale_payments`, `ls_register_count_amounts` |
 | "what have we got", "how much stock" | on-hand right now | `ls_item_shops` (snapshot, no history) |
 | "what's on order" | supplier POs | `ls_purchase_orders` + `ls_purchase_order_lines` |
@@ -76,7 +72,7 @@ keep it.
 Three habits worth keeping:
 
 - **Decide the grain before you resolve the name.** "Any glasses sold" is a category
-  question; "how did the Lupo go" is a SKU question. Resolving first and then letting
+  question; "how did this named model go" is a SKU question. Resolving first and then letting
   the top match choose the grain is how a plural question gets a single-SKU answer.
 - **A plural noun is a hint, not proof.** "Helmets" is a category. "The helmet I
   ordered in" is one item. Read the sentence, not the ending.
@@ -109,50 +105,39 @@ will never tie for a shop offering layaway — that is correct, not a bug.
 ## 4. Names: turning shop language into ids
 
 **The category tree is the tool for product-type questions.** `ls_categories` has
-`name` and `full_path_name` (79 nodes, slash-delimited, e.g.
-`Clothing & Protection/Eyewear`). Items attach to **one** node at any depth, so roll a
+`name` and `full_path_name` (slash-delimited). Items attach to **one** node at any depth, so roll a
 branch up with `full_path_name LIKE 'Parent/%' OR full_path_name = 'Parent'`. Leaf names
 collide across branches — group and display by `full_path_name`, never by `name` alone.
 
-Live examples of the gap between shop words and category names:
+Merchant language rarely equals catalogue spelling. Resolve category names from the
+current tenant with a bounded `ILIKE` search on both `name` and `full_path_name`.
+If multiple branches match, aggregate all defensible matches and name the reading, or
+ask when the alternatives materially change the answer.
 
-- "glasses" / "sunnies" → `Clothing & Protection/Eyewear`
-- "tyres" → `Parts/Wheels & Tyres`
-- "lights" → `Electronics & Lights/Lights`
-- "racks" → `Accessories1/Racks & Panniers` (note the literal `1`) **and**
-  `Training & Transport/Car Racks` — two different things, ask or answer both
-- "servicing" → the `Services` and `Workshop/Service` branches, plus uncategorised
-  service items
+Do not rely on a category label projected onto the item row. Join `ls_categories` on
+`ls_items.category_id` and use its `name` / `full_path_name`.
 
-There is no category name on the item row. `ls_items.name` and `ls_items.full_path_name`
-exist as columns but are **NULL for every item** — join `ls_categories` on
-`ls_items.category_id`.
-
-**`category_id = 0` means uncategorised, not category zero.** 91 stocked items and 12
-service items sit there. Any `LEFT JOIN` on categories must expect it, and any
+**`category_id = 0` means uncategorised, not category zero.** Any `LEFT JOIN` on categories must expect it, and any
 "uncategorised" count must treat 0 as the bucket, not as a real node.
 
-**Services and labour.** This is a service-led shop and services live in the item
-catalogue like any product. The reliable test is not the category — it is the tax class:
+**Services and labour.** Services can live in the item catalogue like any product. A
+useful classification signal is the tax class:
 `ls_items.tax_class->>'name' = 'Labor'` (or `->>'classType' = 'service'`).
-`item_type = 'non_inventory'` (57 items) is the supporting signal. Service items are
-scattered across the `Services` branch, `Workshop/Service`, and `category_id = 0`, so
-category alone under-counts service revenue.
+`item_type = 'non_inventory'` is a supporting signal. Inspect the tenant's actual
+category and tax-class values before defining a service population; category alone may
+under-count service revenue.
 
-**Fuzzy service names have close, wrong neighbours.** "Gen service" resolves to
-`Service - General Service` (`item_id` 9) — but the catalogue also holds
-`Service - General and Detail`, `Service - General Non Geared`, `Service - General
-Labour`, `General Service - E-Bike + Firmware` and `General Service - E-Bike (no
-firmware)`. When several peers match, either aggregate them all and say you did, or
-name the one you picked in the answer. Do not silently take the top match.
+**Fuzzy service names can have close, wrong neighbours.** Search and rank the current
+catalogue. When several peers match, either aggregate the defensible set and say you
+did, or name the one you picked. Do not silently take the top match.
 
-**`item_id = 0` is "no catalogue item", not item zero.** 22,722 sale lines carry it —
-miscellaneous charges and some labour. Product rankings must exclude `item_id = 0` (not
+**`item_id = 0` is "no catalogue item", not item zero.** It may represent miscellaneous
+charges or labour. Product rankings must exclude `item_id = 0` (not
 `IS NULL`, which matches nothing) or an unnamed bucket tops the chart.
 
 **Other zero-as-null fields.** Lightspeed writes `0` rather than null into unset foreign
-keys throughout: `customer_id` on walk-in sales (38,072 of them — collapsing them gives
-one phantom mega-customer), `manufacturer_id`, `item_matrix_id`, `employee_id`,
+keys throughout: `customer_id` on walk-in sales (collapsing them gives one phantom
+mega-customer), `manufacturer_id`, `item_matrix_id`, `employee_id`,
 `register_id`, `sale_id` on workorders. Treat 0 as absent everywhere.
 
 **Brands are not suppliers.** `ls_manufacturers` is who makes it; `ls_vendors` is who
@@ -165,38 +150,23 @@ families.
 
 ---
 
-## 5. What is actually populated here
+## 5. Establish tenant coverage from evidence
 
-Answering "no results" when a table was simply never synced is worse than saying the
-data is not available. Verified at this shop, counted **after** the Gate 2 dedupe — the
-raw row counts are roughly double these.
+Answering "zero" when a table was never synced is worse than saying the data is not
+available. Population is tenant-specific and must be measured, never injected.
 
-**Rich:** `ls_inventory_logs` (127k), `ls_sale_lines` (116k),
-`ls_sale_payments` (53k), `ls_item_shops` (34k),
-`ls_sales` (61,197 tickets, 48,288 completed and unvoided, April 2018 → today),
-`ls_workorder_lines` / `ls_workorder_items` (~24.6k each),
-`ls_register_count_amounts` (19k), `ls_items` (17k), `ls_serialized` (16k),
-`ls_customers` (9.4k), `ls_catalog_vendor_items` (6.3k),
-`ls_purchase_orders` / `_lines` (~4.2k each).
-
-**Small but real:** 1 shop (Ashburton Cycles, `Australia/Sydney`, workshop rate $80),
-1 register, 9 employees, 9 payment types (Cash, Check, Credit Card, Credit Account,
-Gift Card, Debit Card, eCom, Adjustment, PROMO GIFT CARD), 13 workorder statuses,
-79 categories, 34 discount rules, 21 voids.
-
-**Empty — say "not available", never "zero":** `ls_workorders` (**3 rows only**, while
-its lines and items tables are full — the job board itself is effectively unavailable,
-so answer workshop questions from `ls_sale_lines.is_workorder` instead),
-`ls_item_prices` and `ls_items.amount_where_use_type_default` / `_msrp`
-(**no selling price is staged at all** — price questions can only be answered from what
-was actually charged, `ls_sale_lines.unit_price`), `ls_employee_hours` (this shop does
-not use the built-in time clock), `ls_cc_charges` and `ls_processing_fees` (external
-EFTPOS terminal, so gateway and card-fee data never reach Lightspeed — read tenders from
-`payment_type_id` instead), `ls_transfers`, `ls_order_shipments`, `ls_vendor_returns`,
-`ls_account`, and all five `ls_report_*_by_day` tables.
-
-Because the daily accounting reports are empty, tender mix, daily tax and daily
-discounts must be computed from raw sales and payments.
+- For a table central to the requested metric, run a bounded coverage check in the
+  current pack: row count, relevant non-null count, and min/max business date when useful.
+- Distinguish **empty** (no rows), **sparse/partial** (rows exist but do not support the
+  requested population), and **observed zero** (the relevant, adequately covered
+  population was queried and its measure is zero).
+- Cross-check parent/header coverage against child tables where completeness matters,
+  such as `ls_workorders` versus its line/item tables, or purchase-order headers versus
+  lines. A populated child table does not repair missing header state.
+- Prefer raw operational facts when a summary/report table is empty, but only when the
+  raw tables carry the same business meaning. Explain the alternate basis.
+- Never carry table counts, dates, staff names, categories, payment types, timezone, or
+  availability conclusions from one tenant into another.
 
 ---
 
@@ -211,9 +181,9 @@ discounts must be computed from raw sales and payments.
   `create_time` is when the ticket opened; `updatetime` moves whenever anything is
   touched; `time_stamp` changes meaning depending on `completed`. Only `complete_time`
   is the trading date.
-- **Timezone.** The shop is `Australia/Sydney`. Bucket by
-  `complete_time AT TIME ZONE 'Australia/Sydney'` or days shift and yesterday's total
-  changes overnight.
+- **Timezone.** Read `ls_shops.time_zone` and bucket each shop in its own IANA timezone.
+  Never hardcode a reference tenant's timezone. For multi-shop accounts, join on
+  `shop_id`; a single account-wide UTC or server-time bucket is arithmetically wrong.
 - **Archiving is the delete.** Items, customers, discounts and vendors are archived, not
   removed, and history keeps referencing them — filtering `archived = false` in a
   historical report deletes the history rather than excluding inactive records.
@@ -229,18 +199,20 @@ discounts must be computed from raw sales and payments.
 
 Say so plainly rather than deriving a number that looks right:
 
-- **Wages and labour cost.** No pay rate, salary, hire or termination date exists
-  anywhere in the API. `ls_shops.service_rate` ($80) is what the shop *charges*, not
+- **Wages and labour cost.** No pay rate or salary exists in these Lightspeed tables.
+  `ls_shops.service_rate` is what the shop *charges*, not
   what it pays. Never multiply hours by it.
 - **Stock as at a past date.** `ls_item_shops` is a live snapshot. A historical position
   can only be reconstructed by running `ls_inventory_logs` backwards, and it will not
   tie if items were archived or levels bulk-imported.
-- **Price history.** No record of what anything used to cost or sell for. Current
-  selling price is not even staged here (§5) — only what was charged on past lines.
+- **Price history.** Historical charged prices come from sale lines. Do not treat a
+  current catalogue price as a historical price; if current price fields are unpopulated
+  for the tenant, say so.
 - **Workshop board history.** Status is overwritten in place; "how many jobs were open
   at the end of last month" needs a snapshot nobody took.
 - **Turnaround time.** There is no completed-at on a job. The defensible proxy is the
   linked sale's completion time.
-- **Card brand mix, gateway outcomes, processing fees.** External terminal; not in this
-  data at all.
+- **Card brand mix, gateway outcomes, processing fees.** Only claim these when the
+  corresponding tenant tables are populated; tender type alone does not prove card brand
+  or processing cost.
 - **Profit after expenses, BAS, payroll.** That is Xero's half of the business.

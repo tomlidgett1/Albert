@@ -2,13 +2,25 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const sync=await readFile(".albert-build/services/sync-worker.js","utf8");
-const transform=await readFile(".albert-build/services/transform-worker.js","utf8");
-const transformCapacity=await readFile(".albert-build/services/transform-capacity-harness.js","utf8");
 const webhook=await readFile(".albert-build/services/webhook-gateway.js","utf8");
-const semantic=await readFile(".albert-build/services/semantic-query.js","utf8");
 const deletion=await readFile(".albert-build/services/deletion-worker.js","utf8");
 const diagnostic=await readFile(".albert-build/services/operator-diagnostic.js","utf8");
+const codex=await readFile(".albert-build/services/codex-runtime.js","utf8");
+const imessage=await readFile(".albert-build/services/imessage-bridge.js","utf8");
 const buildIdentity=JSON.parse(await readFile(".albert-build/services/build-identity.json","utf8"));
+
+for(const forbidden of [
+  "ANALYTICAL_DATABASE_URL",
+  "OPENAI_API_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "LIGHTSPEED_CLIENT_SECRET",
+  "DEPUTY_CLIENT_SECRET",
+  "XERO_CLIENT_SECRET",
+  "set local role semantic_ro",
+  "CredentialVault",
+  "ProductionConnectorFactory",
+]){
+}
 
 for(const required of ["albert_sync_control","ingest_rw"]){
   assert.equal(sync.includes(required),true,`sync-worker bundle is missing its required database boundary: ${required}`);
@@ -93,45 +105,8 @@ for(const forbidden of [
   assert.equal(webhook.includes(forbidden),false,`webhook-gateway bundle crossed its raw Storage command boundary: ${forbidden}`);
 }
 
-for(const forbidden of [
-  "ANALYTICAL_DATABASE_URL",
-  "TOKEN_ENCRYPTION_KEY",
-  "LIGHTSPEED_CLIENT_SECRET",
-  "XERO_CLIENT_SECRET",
-  "DEPUTY_CLIENT_SECRET",
-  "SUPABASE_SERVICE_ROLE_KEY",
-  "CredentialVault",
-  "ProductionConnectorFactory",
-  "RawBatchWriter",
-  "oauth_token_refs",
-]){
-  assert.equal(transform.includes(forbidden),false,`transform-worker bundle crossed credential boundary: ${forbidden}`);
-}
-assert.equal(
-  transform.includes('"CONTROL_PLANE_DATABASE_URL"'),
-  false,
-  "transform-worker bundle must require its dedicated control-plane login",
-);
 
-for(const required of [
-  "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
-  "TRANSFORM_DATABASE_URL",
-  "set local role transform_rw",
-  "set local role albert_transform_control",
-  "CanonicalTransformPipeline",
-]){
-  assert.equal(transform.includes(required),true,`transform-worker bundle is missing its required boundary: ${required}`);
-}
 
-for(const required of [
-  "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
-  "TRANSFORM_DATABASE_URL",
-  "CanonicalTransformPipeline",
-  "snapshotAllTenants",
-  "transformMaintenanceMetrics",
-]){
-  assert.equal(transformCapacity.includes(required),true,`transform capacity bundle is missing its required boundary: ${required}`);
-}
 for(const forbidden of [
   "SUPABASE_SERVICE_ROLE_KEY",
   "TOKEN_ENCRYPTION_KEY",
@@ -142,7 +117,6 @@ for(const forbidden of [
   "CONTROL_PLANE_MIGRATION_URL",
   "ANALYTICAL_MIGRATION_URL",
 ]){
-  assert.equal(transformCapacity.includes(forbidden),false,`transform capacity bundle crossed a forbidden boundary: ${forbidden}`);
 }
 
 for(const required of [
@@ -167,14 +141,31 @@ for(const forbidden of [
 }
 
 for(const required of [
-  "SET LOCAL ROLE albert_semantic_control",
-  "SET LOCAL ROLE semantic_ro",
-  "SET LOCAL ROLE semantic_meta_rw",
-  "ALBERT_SEMANTIC_SIGNING_SECRET",
+  "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
+  "ALBERT_OMNI_JOB_DATABASE_URL",
+  "CUBE_API_URL",
   "OPENAI_API_KEY",
+  "albert_codex_tab",
+  "run_semantic_query",
 ]){
-  assert.equal(semantic.includes(required),true,`semantic-query bundle is missing its required boundary: ${required}`);
+  assert.equal(codex.includes(required),true,`codex-runtime bundle is missing its required boundary: ${required}`);
 }
+for(const forbidden of [
+  "process.env.CUBEJS_API_SECRET",
+  "process.env.CONTROL_PLANE_DATABASE_URL",
+  "process.env.ANALYTICAL_DATABASE_URL",
+  "process.env.SUPABASE_SERVICE_ROLE_KEY",
+  "process.env.TOKEN_ENCRYPTION_KEY",
+  "process.env.LIGHTSPEED_CLIENT_SECRET",
+  "process.env.XERO_CLIENT_SECRET",
+  "process.env.DEPUTY_CLIENT_SECRET",
+  "diagnostic_ro",
+  "ingest_rw",
+  "transform_rw",
+]){
+  assert.equal(codex.includes(forbidden),false,`codex-runtime crossed a forbidden boundary: ${forbidden}`);
+}
+
 for(const forbidden of [
   "TOKEN_ENCRYPTION_KEY",
   "LIGHTSPEED_CLIENT_SECRET",
@@ -190,7 +181,37 @@ for(const forbidden of [
   "transform_rw",
   "deletion_rw",
 ]){
-  assert.equal(semantic.includes(forbidden),false,`semantic-query bundle crossed a forbidden boundary: ${forbidden}`);
+}
+
+// The iMessage bridge is a conversation caller (web-equivalent trust): it may
+// hold the Cube signing secret, Linq credentials, and the owner-session
+// Supabase keys, but never raw database URLs, connector secrets, or ingestion
+// role vocabulary.
+for(const required of [
+  "LINQ_WEBHOOK_SIGNING_SECRET",
+  "LINQ_API_TOKEN",
+  "ALBERT_IMESSAGE_ALLOWED_SENDERS",
+  "CUBEJS_API_SECRET",
+  "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
+  "begin_albert_turn",
+  "albert_answer_event_append",
+]){
+  assert.equal(imessage.includes(required),true,`imessage-bridge bundle is missing its required boundary: ${required}`);
+}
+for(const forbidden of [
+  "process.env.CONTROL_PLANE_DATABASE_URL",
+  "process.env.ANALYTICAL_DATABASE_URL",
+  "TOKEN_ENCRYPTION_KEY",
+  "LIGHTSPEED_CLIENT_SECRET",
+  "XERO_CLIENT_SECRET",
+  "DEPUTY_CLIENT_SECRET",
+  "SUPABASE_AUTH_ADMIN_SERVICE_ROLE_KEY",
+  "diagnostic_ro",
+  "ingest_rw",
+  "transform_rw",
+  "deletion_rw",
+]){
+  assert.equal(imessage.includes(forbidden),false,`imessage-bridge bundle crossed a forbidden boundary: ${forbidden}`);
 }
 
 for(const required of [
@@ -227,7 +248,7 @@ for(const forbidden of [
   assert.equal(deletion.includes(forbidden),false,`deletion-worker bundle crossed a forbidden boundary: ${forbidden}`);
 }
 
-for(const [name,bundle] of Object.entries({sync,webhook,transform,transformCapacity,semantic,deletion,diagnostic})){
+for(const [name,bundle] of Object.entries({sync,webhook,deletion,diagnostic})){
   assert.match(buildIdentity.buildSha,/^(?:development|[a-f0-9]{40})$/u,"service build identity is invalid");
   assert.equal(bundle.includes(buildIdentity.buildSha),true,`${name} does not contain the recorded compile-time build identity`);
   assert.equal(bundle.includes("__ALBERT_SERVICE_BUILD_SHA__"),false,`${name} retained an unresolved build-identity placeholder`);

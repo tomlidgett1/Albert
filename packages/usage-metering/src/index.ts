@@ -1,4 +1,5 @@
 import type { AlbertModelId } from "../../shared/src/index.js";
+import { modelSupportsFastMode } from "../../shared/src/agent-runtime.js";
 
 /**
  * Versioned public OpenAI rate card used for tenant cost attribution.
@@ -27,6 +28,122 @@ export const OPENAI_GPT_5_6_RATE_CARD = Object.freeze({
   longContextOutputDenominator: 2n,
   regionalProcessingNumerator: 11n,
   regionalProcessingDenominator: 10n,
+} as const);
+
+/**
+ * OpenAI GPT-6 standard rates (2026-09-23). GPT-6 is served only from
+ * OpenAI's global host (ADR 0145), so there is no regional-processing uplift.
+ * Cache writes are 1.25x input, Fast is 2x, and prompts over 272K input tokens
+ * price at 2x input and 1.5x output for the whole request.
+ */
+export const OPENAI_GPT_6_RATE_CARD = Object.freeze({
+  id: "openai-gpt-6-global-2026-09-23",
+  effectiveAt: "2026-09-23T00:00:00.000Z",
+  source: "https://developers.openai.com/api/docs/pricing",
+  dataResidencyRegion: "global",
+  longContextThresholdInputTokens: 272_000,
+  models: Object.freeze({
+    "gpt-6-astra": Object.freeze({ input: 10_000n, cachedInput: 1_000n, output: 50_000n }),
+    "gpt-6-sol": Object.freeze({ input: 2_000n, cachedInput: 200n, output: 10_000n }),
+    "gpt-6-luna": Object.freeze({ input: 100n, cachedInput: 10n, output: 500n }),
+  }),
+  cacheWriteInputNumerator: 5n,
+  cacheWriteInputDenominator: 4n,
+  fastModeNumerator: 2n,
+  fastModeDenominator: 1n,
+  longContextInputNumerator: 2n,
+  longContextInputDenominator: 1n,
+  longContextOutputNumerator: 3n,
+  longContextOutputDenominator: 2n,
+  regionalProcessingNumerator: 1n,
+  regionalProcessingDenominator: 1n,
+} as const);
+
+/**
+ * Official xAI Grok 4.6 rate card. Cached input is $0.50 / 1M below 200k
+ * prompt tokens and $1.00 / 1M at or above that threshold. There is no
+ * Australian residency uplift. Fast maps to xAI Priority Processing at 2x.
+ */
+export const XAI_GROK_4_6_RATE_CARD = Object.freeze({
+  id: "xai-grok-4.6-2026-08-13",
+  effectiveAt: "2026-08-13T00:00:00.000Z",
+  source: "https://docs.x.ai/developers/pricing",
+  dataResidencyRegion: "US",
+  // Official xAI long-context is ≥ 200k prompt tokens. The shared meter uses
+  // a strict greater-than check, so 199_999 makes 200_000 the first 2x request.
+  longContextThresholdInputTokens: 199_999,
+  models: Object.freeze({
+    "grok-4.6": Object.freeze({ input: 2_000n, cachedInput: 500n, output: 6_000n }),
+  }),
+  cacheWriteInputNumerator: 1n,
+  cacheWriteInputDenominator: 1n,
+  fastModeNumerator: 2n,
+  fastModeDenominator: 1n,
+  longContextInputNumerator: 2n,
+  longContextInputDenominator: 1n,
+  longContextOutputNumerator: 2n,
+  longContextOutputDenominator: 1n,
+  regionalProcessingNumerator: 1n,
+  regionalProcessingDenominator: 1n,
+} as const);
+
+/**
+ * First-party Claude API rates for the pinned Haiku 4.5 snapshot. Albert uses
+ * the default five-minute prompt-cache write tier and standard processing.
+ * Manual thinking tokens are included in `output_tokens` by Anthropic.
+ */
+export const ANTHROPIC_HAIKU_4_5_RATE_CARD = Object.freeze({
+  id: "anthropic-claude-haiku-4.5-2026-08-19",
+  effectiveAt: "2026-08-19T00:00:00.000Z",
+  source: "https://platform.claude.com/docs/en/about-claude/pricing",
+  dataResidencyRegion: "global",
+  longContextThresholdInputTokens: Number.MAX_SAFE_INTEGER,
+  models: Object.freeze({
+    "claude-haiku-4-5-20251001": Object.freeze({
+      input: 1_000n,
+      cachedInput: 100n,
+      output: 5_000n,
+    }),
+  }),
+  cacheWriteInputNumerator: 5n,
+  cacheWriteInputDenominator: 4n,
+  fastModeNumerator: 1n,
+  fastModeDenominator: 1n,
+  longContextInputNumerator: 1n,
+  longContextInputDenominator: 1n,
+  longContextOutputNumerator: 1n,
+  longContextOutputDenominator: 1n,
+  regionalProcessingNumerator: 1n,
+  regionalProcessingDenominator: 1n,
+} as const);
+
+/**
+ * First-party Claude API rates for the Claude 5 family (2026-09-23). Cache
+ * reads are 0.1x input and five-minute cache writes 1.25x. Fast mode runs on
+ * Opus 5.5 only, at 2x ($8 / $40 per MTok) across the whole context window;
+ * no other model here can be metered as Fast. No long-context uplift.
+ */
+export const ANTHROPIC_CLAUDE_5_RATE_CARD = Object.freeze({
+  id: "anthropic-claude-5-2026-09-23",
+  effectiveAt: "2026-09-23T00:00:00.000Z",
+  source: "https://platform.claude.com/docs/en/about-claude/pricing",
+  dataResidencyRegion: "global",
+  longContextThresholdInputTokens: Number.MAX_SAFE_INTEGER,
+  models: Object.freeze({
+    "claude-sonnet-5": Object.freeze({ input: 2_000n, cachedInput: 200n, output: 10_000n }),
+    "claude-opus-5-5": Object.freeze({ input: 4_000n, cachedInput: 400n, output: 20_000n }),
+    "claude-fable-5-1": Object.freeze({ input: 10_000n, cachedInput: 1_000n, output: 50_000n }),
+  }),
+  cacheWriteInputNumerator: 5n,
+  cacheWriteInputDenominator: 4n,
+  fastModeNumerator: 2n,
+  fastModeDenominator: 1n,
+  longContextInputNumerator: 1n,
+  longContextInputDenominator: 1n,
+  longContextOutputNumerator: 1n,
+  longContextOutputDenominator: 1n,
+  regionalProcessingNumerator: 1n,
+  regionalProcessingDenominator: 1n,
 } as const);
 
 export type ProviderRequestUsage = Readonly<{
@@ -113,6 +230,35 @@ function multiplyRatio(value: bigint, numerator: bigint, denominator: bigint): b
   return (value * numerator + denominator - 1n) / denominator;
 }
 
+function rateCardFor(model: AlbertModelId) {
+  if (model === "grok-4.6") return XAI_GROK_4_6_RATE_CARD;
+  if (model === "claude-haiku-4-5-20251001") return ANTHROPIC_HAIKU_4_5_RATE_CARD;
+  if (model === "claude-sonnet-5" || model === "claude-opus-5-5" || model === "claude-fable-5-1") {
+    return ANTHROPIC_CLAUDE_5_RATE_CARD;
+  }
+  if (model === "gpt-6-astra" || model === "gpt-6-sol" || model === "gpt-6-luna") {
+    return OPENAI_GPT_6_RATE_CARD;
+  }
+  return OPENAI_GPT_5_6_RATE_CARD;
+}
+
+function tokenRatesFor(model: AlbertModelId) {
+  if (model === "grok-4.6") return XAI_GROK_4_6_RATE_CARD.models["grok-4.6"];
+  if (model === "claude-haiku-4-5-20251001") {
+    return ANTHROPIC_HAIKU_4_5_RATE_CARD.models["claude-haiku-4-5-20251001"];
+  }
+  if (model === "claude-sonnet-5" || model === "claude-opus-5-5" || model === "claude-fable-5-1") {
+    return ANTHROPIC_CLAUDE_5_RATE_CARD.models[model];
+  }
+  if (model === "gpt-6-astra" || model === "gpt-6-sol" || model === "gpt-6-luna") {
+    return OPENAI_GPT_6_RATE_CARD.models[model];
+  }
+  if (model === "gpt-5.6-sol" || model === "gpt-5.6-terra" || model === "gpt-5.6-luna") {
+    return OPENAI_GPT_5_6_RATE_CARD.models[model];
+  }
+  throw new Error(`No Albert rate card for ${model}.`);
+}
+
 function priceRequest(
   model: AlbertModelId,
   fastMode: boolean,
@@ -131,13 +277,14 @@ function priceRequest(
   }
 
   const uncachedInputTokens = inputTokens - cachedInputTokens - cacheWriteInputTokens;
-  const rates = OPENAI_GPT_5_6_RATE_CARD.models[model];
-  const longContext = inputTokens > OPENAI_GPT_5_6_RATE_CARD.longContextThresholdInputTokens;
+  const card = rateCardFor(model);
+  const rates = tokenRatesFor(model);
+  const longContext = inputTokens > card.longContextThresholdInputTokens;
   const inputMultiplier: readonly [bigint, bigint] = longContext
-    ? [OPENAI_GPT_5_6_RATE_CARD.longContextInputNumerator, OPENAI_GPT_5_6_RATE_CARD.longContextInputDenominator] as const
+    ? [card.longContextInputNumerator, card.longContextInputDenominator] as const
     : [1n, 1n] as const;
   const outputMultiplier: readonly [bigint, bigint] = longContext
-    ? [OPENAI_GPT_5_6_RATE_CARD.longContextOutputNumerator, OPENAI_GPT_5_6_RATE_CARD.longContextOutputDenominator] as const
+    ? [card.longContextOutputNumerator, card.longContextOutputDenominator] as const
     : [1n, 1n] as const;
 
   let nanos = 0n;
@@ -145,26 +292,22 @@ function priceRequest(
   nanos += multiplyRatio(BigInt(cachedInputTokens) * rates.cachedInput, inputMultiplier[0], inputMultiplier[1]);
   const cacheWriteRate = multiplyRatio(
     rates.input,
-    OPENAI_GPT_5_6_RATE_CARD.cacheWriteInputNumerator,
-    OPENAI_GPT_5_6_RATE_CARD.cacheWriteInputDenominator,
+    card.cacheWriteInputNumerator,
+    card.cacheWriteInputDenominator,
   );
   nanos += multiplyRatio(BigInt(cacheWriteInputTokens) * cacheWriteRate, inputMultiplier[0], inputMultiplier[1]);
   nanos += multiplyRatio(BigInt(outputTokens) * rates.output, outputMultiplier[0], outputMultiplier[1]);
   if (fastMode) {
     nanos = multiplyRatio(
       nanos,
-      OPENAI_GPT_5_6_RATE_CARD.fastModeNumerator,
-      OPENAI_GPT_5_6_RATE_CARD.fastModeDenominator,
+      card.fastModeNumerator,
+      card.fastModeDenominator,
     );
   }
-  // Albert production is pinned to the Australian data-residency endpoint.
-  // OpenAI applies a 10% residency uplift to eligible models released after
-  // 5 March 2026. Australia currently provides regional storage, not regional
-  // inference; this price adjustment must not be described as inference-local.
   nanos = multiplyRatio(
     nanos,
-    OPENAI_GPT_5_6_RATE_CARD.regionalProcessingNumerator,
-    OPENAI_GPT_5_6_RATE_CARD.regionalProcessingDenominator,
+    card.regionalProcessingNumerator,
+    card.regionalProcessingDenominator,
   );
   return { nanos, cachedInputTokens, cacheWriteInputTokens };
 }
@@ -218,8 +361,10 @@ export function meterOpenAIUsage(input: Readonly<{
   let nanos = 0n;
   let cachedInputTokens = 0;
   let cacheWriteInputTokens = 0;
+  // Fast is priced only where the model has it: Claude's fast mode runs on Opus 5.5 alone.
+  const fastMode = input.fastMode && modelSupportsFastMode(input.model);
   for (const entry of pricedEntries) {
-    const priced = priceRequest(input.model, input.fastMode, entry);
+    const priced = priceRequest(input.model, fastMode, entry);
     nanos += priced.nanos;
     cachedInputTokens += priced.cachedInputTokens;
     cacheWriteInputTokens += priced.cacheWriteInputTokens;
@@ -236,9 +381,9 @@ export function meterOpenAIUsage(input: Readonly<{
     throw new Error("Metered cost exceeds the supported safe integer range.");
   }
   return Object.freeze({
-    rateCardId: OPENAI_GPT_5_6_RATE_CARD.id,
+    rateCardId: rateCardFor(input.model).id,
     model: input.model,
-    fastMode: input.fastMode,
+    fastMode,
     requests,
     inputTokens,
     cachedInputTokens,

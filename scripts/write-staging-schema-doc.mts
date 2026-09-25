@@ -1,7 +1,8 @@
 /**
  * Build the staging schema knowledge injected into the Albert agent prompt.
  *
- * Lightspeed emits THREE artifacts from one reconciliation of
+ * The connector catalogue generator emits five artifacts from the reviewed
+ * connector contracts and the Lightspeed DDL reconciliation:
  * `connectors/lightspeed-r/tables.json` (semantic dictionary: meanings, grains,
  * primary keys) against the live typed-staging DDL (column truth):
  *
@@ -9,10 +10,14 @@
  *      primary key, and join edges. Injected into every SQL turn so the agent
  *      always knows the full queryable surface.
  *   2. LIGHTSPEED_DIMENSION_DICTIONARIES — per-dimension full column
- *      dictionaries (every live column with its meaning). Injected selectively
- *      by intent domain; the whole thing never rides in one prompt.
- *   3. XERO_SCHEMA_DOC — the existing Xero catalogue, injected only for
- *      finance questions.
+ *      dictionaries (every live column with its meaning). Retained for deep
+ *      dimension guides and compatibility; the whole thing never rides in one
+ *      prompt.
+ *   3. LIGHTSPEED_TABLE_DICTIONARIES — the same grounded documentation split
+ *      by table for on-demand describe_tables calls.
+ *   4. XERO_SCHEMA_DOC — the Xero catalogue, injected only for finance.
+ *   5. DEPUTY_SCHEMA_DOC — Deputy's reviewed workforce projection, injected
+ *      only for workforce questions.
  *
  * Column truth comes from EVERY analytical migration that shapes
  * `source_lightspeed.ls_*` (CREATE TABLE and ALTER TABLE ADD COLUMN), not one
@@ -22,8 +27,15 @@
  * Run: npm run generate:staging-schema      (writes the file)
  *      npm run generate:staging-schema -- --check   (CI freshness gate)
  */
-import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { deputyManifest } from "../connectors/deputy/manifest.js";
+import { stagingColumnName } from "../packages/connector-sdk/src/index.js";
+import {
+  lightspeedPhysicalCandidates,
+  parseStagingContractsFromMigrations,
+  STAGING_PLATFORM_COLUMNS,
+} from "./lib/staging-schema-contract.js";
 
 type SpecColumn = Readonly<{
   name: string;
@@ -44,146 +56,37 @@ type PackTable = Readonly<{
   columns?: readonly SpecColumn[];
 }>;
 
-/** Platform envelope columns present on every staging table; documented once. */
-const PLATFORM = new Set([
-  "tenant_id",
-  "namespaced_source_key",
-  "connection_id",
-  "external_account_reference",
-  "source_record_id",
-  "source_version",
-  "source_updated_at",
-  "payload_hash",
-  "payload_batch_id",
-  "sync_run_id",
-  "tombstone",
-  "mapping_version",
-  "first_ingested_at",
-  "ingested_at",
-]);
-
-/** Spec name → preferred live staging name(s). First live hit wins. */
-const RENAME: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  created_at: ["create_time", "create_date"],
-  updated_at: ["time_stamp", "updatetime", "timestamp"],
-  update_time: ["updatetime"],
-  change_given: ["change"],
-  taxable: ["tax"],
-  taxed: ["tax"],
-  item_archived: ["archived"],
-  is_archived: ["archived"],
-  is_complete: ["complete"],
-  is_sent: ["sent"],
-  is_received: ["received"],
-  is_open: ["open"],
-  is_layaway: ["layaway"],
-  ordered_at: ["ordered_date"],
-  received_at: ["received_date", "reception_date"],
-  sent_at: ["sent_on", "sent_date"],
-  closed_at: ["create_time"],
-  opened_at: ["open_time"],
-  time_in_at: ["time_in"],
-  expected_arrival: ["expected_arrival_at"],
-  counted_time: ["counted_at"],
-  reconciled_time: ["reconciled_at"],
-  ref_number: ["ref_num"],
-  vendor_name: ["name"],
-  customer_name: ["customer"],
-  status_name: ["name"],
-  status_system_value: ["system_value"],
-  item_description: ["description"],
-  item_serial: ["serial"],
-  from_shop_id: ["shop_id"],
-  sent_by_employee_id: ["employee_id"],
-  day: ["date"],
-  tax_amount: ["tax"],
-  discount_amount: ["discount"],
-  unit_cost: ["price"],
-  unit_cost_original: ["original_price"],
-  unit_cost_vendor_currency: ["vendor_cost"],
-  qty_checked_in: ["checked_in"],
-  qty_received_not_checked_in: ["num_received"],
-  line_total: ["total"],
-  price: ["amount_where_use_type_default"],
-  msrp: ["amount_where_use_type_msrp"],
-  attribute_1: ["attribute1"],
-  attribute_2: ["attribute2"],
-  attribute_3: ["attribute3"],
-  attribute_name_1: ["attribute_name1"],
-  attribute_name_2: ["attribute_name2"],
-  attribute_name_3: ["attribute_name3"],
-  tax_class_json: ["tax_class"],
-  note_json: ["note"],
-  custom_field_values_json: ["custom_field_values"],
-  contact_json: ["contact"],
-  department_json: ["department"],
-  calculation_json: ["calculation"],
-  item_fee_categories_json: ["item_fee_categories"],
-  catalog_vendor_json: ["catalog_vendor"],
-  ecom_item_ecommerce_id: ["item_e_commerce_id"],
-  ecom_long_description: ["long_description"],
-  ecom_short_description: ["short_description"],
-  ecom_list_on_store: ["list_on_store"],
-  vendor_sku: ["value"],
-});
-
 /**
  * Meaning overrides for live columns whose spec description is missing or
  * stale. Keyed `table.column`. These win over tables.json.
  */
 const DESCRIPTION_OVERRIDES: Readonly<Record<string, string>> = Object.freeze({
   "ls_sale_lines.sale_id": "The sale this line sits on. Join ls_sales through this key for completed/voided state and complete_time.",
-  "ls_sale_lines.completed": "Parent-projected; NULL on almost all rows in the current pack generation. Filter state via join to ls_sales instead.",
-  "ls_sale_lines.voided": "Parent-projected; NULL on almost all rows. Filter state via join to ls_sales instead.",
-  "ls_sale_lines.complete_time": "Parent-projected; NULL on almost all rows. Date-filter on ls_sales.complete_time via the sale_id join instead.",
-  "ls_sale_payments.completed": "Parent-projected; populated on only about half the rows. Filter state via join to ls_sales instead.",
-  "ls_sale_payments.voided": "Parent-projected; populated on only about half the rows. Filter state via join to ls_sales instead.",
+  "ls_sale_lines.completed": "Parent-projected and not authoritative. Filter state via join to ls_sales instead.",
+  "ls_sale_lines.voided": "Parent-projected and not authoritative. Filter state via join to ls_sales instead.",
+  "ls_sale_lines.complete_time": "Parent-projected and not authoritative. Date-filter on ls_sales.complete_time via the sale_id join instead.",
+  "ls_sale_payments.completed": "Parent-projected and potentially sparse. Filter state via join to ls_sales instead.",
+  "ls_sale_payments.voided": "Parent-projected and potentially sparse. Filter state via join to ls_sales instead.",
   "ls_sale_payments.complete_time": "Parent-projected; unreliable. Use ls_sales.complete_time via the sale_id join.",
   "ls_sale_payments.shop_id": "Parent-projected shop; unreliable coverage. Prefer ls_sales.shop_id via the sale_id join.",
-  "ls_purchase_order_lines.vendor_id": "Parent-projected; NULL on almost all rows. Join ls_purchase_orders for the vendor.",
-  "ls_purchase_order_lines.shop_id": "Parent-projected; NULL on almost all rows. Join ls_purchase_orders for the shop.",
-  "ls_purchase_order_lines.complete": "Parent-projected; NULL on almost all rows. Join ls_purchase_orders for order state.",
-  "ls_purchase_order_lines.ordered_date": "Parent-projected; NULL on almost all rows. Join ls_purchase_orders for dates.",
-  "ls_purchase_order_lines.received_date": "Parent-projected; NULL on almost all rows. Join ls_purchase_orders for dates.",
-  "ls_purchase_order_lines.archived": "Parent-projected; NULL on almost all rows. Join ls_purchase_orders for state.",
-  "ls_purchase_order_lines.vendor_currency_code": "Parent-projected; NULL on almost all rows. Join ls_purchase_orders.",
+  "ls_purchase_order_lines.vendor_id": "Parent-projected and potentially unpopulated. Join ls_purchase_orders for the vendor.",
+  "ls_purchase_order_lines.shop_id": "Parent-projected and potentially unpopulated. Join ls_purchase_orders for the shop.",
+  "ls_purchase_order_lines.complete": "Parent-projected and potentially unpopulated. Join ls_purchase_orders for order state.",
+  "ls_purchase_order_lines.ordered_date": "Parent-projected and potentially unpopulated. Join ls_purchase_orders for dates.",
+  "ls_purchase_order_lines.received_date": "Parent-projected and potentially unpopulated. Join ls_purchase_orders for dates.",
+  "ls_purchase_order_lines.archived": "Parent-projected and potentially unpopulated. Join ls_purchase_orders for state.",
+  "ls_purchase_order_lines.vendor_currency_code": "Parent-projected and potentially unpopulated. Join ls_purchase_orders.",
 });
 
 const MIGRATIONS_DIR = "infra/migrations/analytical";
 
-/**
- * Live column truth for every source_lightspeed table, from every migration:
- * CREATE TABLE IF NOT EXISTS plus ALTER TABLE ... ADD COLUMN. Later files are
- * lexically later migration numbers, so additions accumulate in order.
- */
-export function parseLightspeedDdlFromMigrations(dir: string): Map<string, Set<string>> {
-  const db = new Map<string, Set<string>>();
-  const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
-  const createRe = /CREATE TABLE IF NOT EXISTS "?source_lightspeed"?\."?(\w+)"?\s*\(([\s\S]*?)\n\);/g;
-  const alterRe = /ALTER TABLE\s+"?source_lightspeed"?\."?(\w+)"?\s+((?:ADD COLUMN IF NOT EXISTS\s+"?\w+"?[^,;]*[,;]?\s*)+)/g;
-  for (const file of files) {
-    const sql = readFileSync(join(dir, file), "utf8");
-    let match: RegExpExecArray | null;
-    while ((match = createRe.exec(sql))) {
-      const cols = [...match[2]!.matchAll(/^\s*"([a-zA-Z_][a-zA-Z0-9_]*)"\s+/gm)].map((x) => x[1]!);
-      const existing = db.get(match[1]!) ?? new Set<string>();
-      for (const col of cols) existing.add(col);
-      db.set(match[1]!, existing);
-    }
-    while ((match = alterRe.exec(sql))) {
-      const table = match[1]!;
-      const cols = [...match[2]!.matchAll(/ADD COLUMN IF NOT EXISTS\s+"?(\w+)"?/g)].map((x) => x[1]!);
-      const existing = db.get(table) ?? new Set<string>();
-      for (const col of cols) existing.add(col);
-      db.set(table, existing);
-    }
-  }
-  return db;
-}
-
-function mapToLive(name: string, live: Set<string>): string | null {
+function mapToLive(
+  tableId: string,
+  name: string,
+  live: Set<string>,
+): string | null {
   if (live.has(name)) return name;
-  for (const candidate of RENAME[name] ?? []) {
+  for (const candidate of lightspeedPhysicalCandidates(tableId, name)) {
     if (live.has(candidate)) return candidate;
   }
   return null;
@@ -214,8 +117,8 @@ function reconcile(specPath: string, ddl: Map<string, Set<string>>): LiveTable[]
     if (!live) continue;
     const columns = new Map<string, { description: string; type: string; enums: readonly string[] | null; deprecated: boolean }>();
     for (const column of table.columns ?? []) {
-      const mapped = mapToLive(column.name, live);
-      if (!mapped || PLATFORM.has(mapped)) continue;
+      const mapped = mapToLive(table.id, column.name, live);
+      if (!mapped || STAGING_PLATFORM_COLUMNS.has(mapped)) continue;
       if (columns.has(mapped)) continue;
       const override = DESCRIPTION_OVERRIDES[`${table.id}.${mapped}`];
       columns.set(mapped, {
@@ -228,11 +131,13 @@ function reconcile(specPath: string, ddl: Map<string, Set<string>>): LiveTable[]
     // Live columns the spec never documented still exist and must be listed —
     // an invisible column is an invented-column error waiting to happen.
     for (const col of [...live].sort()) {
-      if (PLATFORM.has(col) || columns.has(col)) continue;
+      if (STAGING_PLATFORM_COLUMNS.has(col) || columns.has(col)) continue;
       const override = DESCRIPTION_OVERRIDES[`${table.id}.${col}`];
       columns.set(col, { description: override ?? "", type: "", enums: null, deprecated: false });
     }
-    const pk = (table.primaryKey ?? []).map((k) => mapToLive(k, live)).filter((k): k is string => k !== null);
+    const pk = (table.primaryKey ?? [])
+      .map((key) => mapToLive(table.id, key, live))
+      .filter((key): key is string => key !== null);
     tables.push({
       id: table.id,
       domain: table.domain ?? "other",
@@ -325,7 +230,34 @@ function packCatalog(path: string, schema: string): string {
   return lines.join("\n");
 }
 
-const ddl = parseLightspeedDdlFromMigrations(resolve(MIGRATIONS_DIR));
+function deputyCatalog(): string {
+  const lines = [
+    "Every Deputy table lives in source_deputy and carries tenant-scoped platform envelope fields including tombstone, mapping_version and ingested_at.",
+    "Raw Deputy is a fallback for workforce detail; prefer the canonical workforce marts when they cover the question because those marts preserve reviewed employee identity and planned-versus-actual semantics.",
+    "",
+  ];
+  for (const stream of deputyManifest.streams) {
+    const fields = deputyManifest.fieldCoverage
+      .filter((field) => field.stream === stream.id && field.disposition !== "unsupported")
+      .map((field) => {
+        const column = stagingColumnName(field.field);
+        const typedColumn = `${column}(${field.stagingType})`;
+        return field.target ? `${typedColumn}→${field.target}` : typedColumn;
+      });
+    lines.push(`source_deputy.${stream.id} — one Deputy ${stream.resource} record per source id; authority: ${stream.authorityConcept}.`);
+    lines.push(`  columns: ${[...new Set(fields)].join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+const stagingContracts = parseStagingContractsFromMigrations(
+  resolve(MIGRATIONS_DIR),
+);
+const ddl = new Map(
+  [...stagingContracts.values()]
+    .filter(({ schema }) => schema === "source_lightspeed")
+    .map(({ table, columns }) => [table, new Set(columns.keys())]),
+);
 const lightspeedTables = reconcile(resolve("connectors/lightspeed-r/tables.json"), ddl);
 const lsOnly = lightspeedTables.filter((t) => t.id.startsWith("ls_"));
 const targets = joinTargets(lsOnly);
@@ -336,8 +268,14 @@ const dictionaries: Record<string, string> = {};
 for (const dimension of dimensions) {
   dictionaries[dimension] = buildDimensionDictionary(lsOnly.filter((t) => t.domain === dimension), targets);
 }
+const tableDictionaries = Object.fromEntries(
+  lsOnly
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((table) => [table.id, buildDimensionDictionary([table], targets)]),
+);
 
 const xero = packCatalog(resolve("connectors/xero/tables.json"), "source_xero");
+const deputy = deputyCatalog();
 
 const platformNote = [
   "Every source_lightspeed table also carries the platform envelope columns:",
@@ -356,8 +294,12 @@ const body = header
   + `export const LIGHTSPEED_DIMENSIONS = ${JSON.stringify(dimensions)} as const;\n\n`
   + `/** Full per-dimension column dictionaries (live typed-staging DDL names with meanings). */\n`
   + `export const LIGHTSPEED_DIMENSION_DICTIONARIES: Readonly<Record<string, string>> = Object.freeze(${JSON.stringify(dictionaries, null, 2)});\n\n`
+  + `/** Full per-table dictionaries for progressive agent discovery. */\n`
+  + `export const LIGHTSPEED_TABLE_DICTIONARIES: Readonly<Record<string, string>> = Object.freeze(${JSON.stringify(tableDictionaries, null, 2)});\n\n`
   + `/** Xero raw staging catalogue (financial truth). Inject only for finance questions. */\n`
   + `export const XERO_SCHEMA_DOC = ${JSON.stringify(xero)};\n\n`
+  + `/** Deputy raw staging catalogue (planned and actual workforce truth). Inject only for workforce questions. */\n`
+  + `export const DEPUTY_SCHEMA_DOC = ${JSON.stringify(deputy)};\n\n`
   + `/** @deprecated Composed compatibility view of the Lightspeed surface (index + all dictionaries). */\n`
   + `export const STAGING_SCHEMA_DOC = [\n`
   + `  "LIGHTSPEED POS raw staging (operational truth: tickets, units, stock, customers, workshop):",\n`
@@ -365,6 +307,9 @@ const body = header
   + `  "",\n`
   + `  "XERO accounting raw staging (financial truth: invoices, journals, bank, GST, contacts):",\n`
   + `  XERO_SCHEMA_DOC,\n`
+  + `  "",\n`
+  + `  "DEPUTY workforce raw staging (planned rosters and actual timesheets):",\n`
+  + `  DEPUTY_SCHEMA_DOC,\n`
   + `].join("\\n");\n`;
 
 const outPath = resolve("packages/agent/src/generated-staging-schema.ts");
@@ -379,5 +324,5 @@ if (check) {
 } else {
   writeFileSync(outPath, body);
   const dictChars = Object.values(dictionaries).reduce((sum, d) => sum + d.length, 0);
-  console.log(`wrote ${outPath} (index ${index.length} chars, ${dimensions.length} dictionaries totalling ${dictChars} chars, xero ${xero.length} chars)`);
+  console.log(`wrote ${outPath} (index ${index.length} chars, ${dimensions.length} dictionaries totalling ${dictChars} chars, xero ${xero.length} chars, deputy ${deputy.length} chars)`);
 }

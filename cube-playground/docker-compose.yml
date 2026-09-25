@@ -1,0 +1,12 @@
+services:
+  cube:
+    image: cubejs/cube:v1.7.16
+    ports:
+      - 4000:4000
+      - 15432:15432
+    env_file:
+      - .env
+    environment:
+      - CUBEJS_DEV_MODE=true
+    volumes:
+      - .:/cube/conf

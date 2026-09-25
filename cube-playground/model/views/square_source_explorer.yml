@@ -1,0 +1,75 @@
+views:
+  - name: square_source_explorer
+    title: Square source field explorer
+    description: >
+      Exhaustive field-level access to every value returned by the Square API.
+      This is a governed fallback for uncommon or newly introduced Square fields;
+      use a curated Square analytics view whenever it contains the requested
+      concept because curated measures encode grain, money and lifecycle rules.
+    meta:
+      ai_context: >
+        Route here only after checking the curated Square views. Always filter
+        parent_stream or source_object_type and one exact field_path before
+        aggregating. Pick the typed value member matching value_type. Numeric
+        fields are not automatically additive. Money amounts are integer minor
+        units and require their currency; never divide every currency by 100.
+        If the path is not present, say that Square returned no value rather than
+        inventing one. Do not expose PII unless explicitly requested and allowed.
+
+    cubes:
+      - join_path: square_source_fields
+        includes:
+          - parent_stream
+          - source_object_type
+          - source_record_id
+          - field_path
+          - field_ordinal_path
+          - field_name
+          - value_type
+          - string_value
+          - number_value
+          - boolean_value
+          - timestamp_value
+          - date_value
+          - json_value
+          - money_amount_minor
+          - money_currency
+          - field_occurrences
+          - source_records
+          - numeric_value_sum
+          - numeric_value_average
+          - numeric_value_minimum
+          - numeric_value_maximum
+
+    folders:
+      - name: Field identity
+        includes:
+          - parent_stream
+          - source_object_type
+          - source_record_id
+          - field_path
+          - field_ordinal_path
+          - field_name
+          - value_type
+      - name: Typed value
+        includes:
+          - string_value
+          - number_value
+          - boolean_value
+          - timestamp_value
+          - date_value
+          - json_value
+      - name: Money source value
+        includes:
+          - money_amount_minor
+          - money_currency
+      - name: Safe field statistics
+        includes:
+          - field_occurrences
+          - source_records
+          - numeric_value_average
+          - numeric_value_minimum
+          - numeric_value_maximum
+      - name: Additive only after review
+        includes:
+          - numeric_value_sum

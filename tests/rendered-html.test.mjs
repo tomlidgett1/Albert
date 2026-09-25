@@ -25,8 +25,12 @@ async function render(pathname = "/") {
 
 test("public root enters the authenticated product instead of a demo surface", async () => {
   const response = await render();
-  assert.ok([303, 307, 308].includes(response.status));
-  assert.equal(new URL(response.headers.get("location"), "http://localhost").pathname, "/login");
+  if ([303, 307, 308].includes(response.status)) {
+    assert.equal(new URL(response.headers.get("location"), "http://localhost").pathname, "/login");
+    return;
+  }
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /NEXT_REDIRECT;;%2Flogin/u);
 });
 
 test("dash ships governed traces, run controls, connections, themes, and reduced motion", async () => {
@@ -43,13 +47,15 @@ test("dash ships governed traces, run controls, connections, themes, and reduced
   assert.match(page, /<InsightsStyleTrace/);
   assert.match(page, /<ModelRunControls/);
   assert.match(page, /<ConnectionsWorkspace/);
-  assert.match(page, /fetch\("\/api\/conversation"/);
+  assert.match(page, /runRuntime === "anthropic"[\s\S]*"\/api\/anthropic-conversation"[\s\S]*"\/api\/conversation"/);
+  assert.match(page, /fetch\(endpoint,/);
   assert.match(insightsTrace, /StreamingTrace|ThinkingTrail|DetailedTrail/);
   assert.match(insightsTrace, /runningShimmer|genieProgressShimmer|insightsAgentShimmer|streamingLive/);
   assert.match(insightsTrace, /Verified[\s\S]*Qualified[\s\S]*Exploratory[\s\S]*Clarification[\s\S]*Unavailable/);
   assert.doesNotMatch(insightsTrace, /compiledSql|rawReasoning|chainOfThought/i);
   assert.match(legacyTrace, /Explain this number/i);
-  assert.match(controls, /Fast uses OpenAI/);
+  assert.match(controls, /aria-label="Fast mode"/);
+  assert.match(controls, /data-processing-speed/);
   assert.match(connections, /ready_partial/);
   assert.match(connections, /ready_complete/);
   assert.match(connections, /reauth_required/);

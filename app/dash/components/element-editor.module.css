@@ -1,0 +1,544 @@
+/* Sigma's current editor: a flat rail, small column shelves, an underline
+   tab indicator, and one continuous source-column list. Values are defined
+   in the dash style sheet; the compact field rows are intentional. */
+.panel {
+  display: flex;
+  width: 320px;
+  min-width: 320px;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--dash-border-soft);
+  background: var(--dash-surface);
+  color: var(--dash-text-body);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--dash-border-soft);
+}
+.headerName {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+.headerType {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.headerType > svg:first-child {
+  width: 17px;
+  height: 17px;
+}
+.headerType > svg:last-child {
+  width: 10px;
+  height: 10px;
+}
+.panel svg,
+.menu svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+.tabs {
+  position: relative;
+  display: flex;
+  flex: none;
+  gap: 24px;
+  height: 40px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--dash-border-soft);
+}
+.tabs > button {
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--dash-text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.tabs > button[aria-selected="true"] {
+  color: var(--dash-element-selection);
+  font-weight: 600;
+}
+.tabIndicator {
+  position: absolute;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--dash-element-selection);
+  transition:
+    left 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.panelContent {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.sourceSection {
+  padding: 12px 16px 9px;
+  border-bottom: 1px solid var(--dash-border-soft);
+}
+.sectionLabel {
+  color: var(--dash-text-body);
+  font-size: 10px;
+  line-height: 20px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.015em;
+}
+.sourceName {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+.sourceName > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sourceName > svg {
+  color: var(--dash-text-muted);
+  width: 15px;
+  height: 15px;
+}
+.shelf {
+  padding: 8px 8px 0;
+  border-bottom: 1px solid var(--dash-border-soft);
+}
+.sectionHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  gap: 6px;
+  padding: 0 8px;
+}
+.sectionTools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.iconButton {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--dash-text-body);
+  background: transparent;
+  cursor: pointer;
+}
+.iconButton:hover,
+.iconButton[aria-pressed="true"],
+.headerType:hover {
+  background: var(--dash-surface-hover);
+}
+.iconButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.shelfFields {
+  min-height: 30px;
+}
+.field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 6px;
+  border-radius: 0;
+  cursor: grab;
+  touch-action: pan-y;
+}
+.field:hover,
+.field[data-selected] {
+  background: var(--dash-element-highlight);
+}
+.field[data-dragging] {
+  opacity: 0.35;
+}
+.field[data-placeholder] {
+  margin: 2px 0;
+  outline: 1px dashed var(--dash-border-input);
+  outline-offset: -1px;
+  background: var(--dash-surface-soft);
+}
+.fieldName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 12px;
+  line-height: 20px;
+  cursor: inherit;
+}
+.fieldType {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  color: var(--dash-text-muted);
+  font-family: Arial, sans-serif;
+  font-size: 8px;
+  letter-spacing: -0.03em;
+}
+.fieldType svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1;
+}
+.fieldType svg text {
+  font-size: 6px;
+  fill: currentColor;
+  stroke: none;
+}
+.fieldMenu {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 24px;
+  padding: 2px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--dash-text-muted);
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+}
+.fieldGrip {
+  display: inline-flex;
+  color: var(--dash-text-muted);
+  opacity: 0;
+}
+.fieldGrip svg {
+  width: 12px;
+  height: 12px;
+}
+.field:hover .fieldMenu,
+.field:focus-within .fieldMenu,
+.field:hover .fieldGrip,
+.field[data-selected] .fieldMenu {
+  opacity: 1;
+}
+.dropTarget {
+  position: relative;
+  height: 8px;
+}
+.dropTarget[data-empty] {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  margin: 4px 0 8px;
+  padding: 0 10px;
+  border: 1px dashed var(--dash-border-input);
+  color: var(--dash-text-muted);
+  font-size: 11px;
+}
+.shelf[data-drop-active] {
+  background: color-mix(
+    in srgb,
+    var(--dash-element-highlight),
+    transparent 60%
+  );
+}
+.field[data-drop-before]::before,
+.dropTarget[data-drop-before]::before {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: var(--dash-element-selection);
+  content: "";
+}
+.available {
+  display: flex;
+  min-height: 120px;
+  flex-direction: column;
+}
+.columnTabs {
+  display: flex;
+  height: 32px;
+  flex: none;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--dash-border-soft);
+}
+.columnTabs button {
+  flex: 1;
+  padding: 0;
+  border: 0;
+  color: var(--dash-text-body);
+  background: var(--dash-surface-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.columnTabs button[aria-pressed="true"] {
+  background: var(--dash-surface);
+  font-weight: 500;
+}
+.available > .sectionHeading {
+  padding: 0 16px;
+}
+.availableFields {
+  padding: 4px 8px 16px;
+}
+.search {
+  display: block;
+  box-sizing: border-box;
+  width: calc(100% - 32px);
+  height: var(--dash-control-height);
+  margin: 4px 16px 8px;
+  padding: 0 10px;
+  border: 1px solid var(--dash-border-input);
+  border-radius: 10px;
+  color: var(--dash-text-body);
+  background: var(--dash-input-surface);
+  font: inherit;
+  font-size: 12px;
+}
+.hint {
+  margin: 8px 16px;
+  color: var(--dash-text-muted);
+  font-size: 11px;
+}
+.formatSections details {
+  padding: 0 16px;
+  border-bottom: 1px solid var(--dash-border-soft);
+}
+.formatSections summary {
+  min-height: 40px;
+  align-content: center;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
+}
+.formatSections summary::before {
+  display: inline-block;
+  width: 14px;
+  content: "›";
+  transition: transform 160ms ease;
+}
+.formatSections details[open] > summary::before {
+  transform: rotate(90deg);
+}
+.settings {
+  display: grid;
+  gap: 6px;
+  padding: 0 0 14px;
+}
+.setting {
+  display: flex;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+}
+.setting > span {
+  flex: 1;
+  min-width: 0;
+}
+.setting select,
+.setting input:not([type="checkbox"]) {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 132px;
+  height: var(--dash-control-height);
+  padding: 0 8px;
+  border: 1px solid var(--dash-border-input);
+  border-radius: 8px;
+  color: var(--dash-text-body);
+  background: var(--dash-input-surface);
+  font: inherit;
+  font-size: 11px;
+}
+.setting input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 16px;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--dash-border-input);
+  cursor: pointer;
+}
+.setting input[type="checkbox"]::after {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  top: 2px;
+  left: 2px;
+  border-radius: 999px;
+  background: var(--dash-surface);
+  content: "";
+  transition: transform 160ms ease;
+}
+.setting input[type="checkbox"]:checked {
+  background: var(--dash-element-selection);
+}
+.setting input[type="checkbox"]:checked::after {
+  transform: translateX(12px);
+}
+.menu {
+  padding: 2px;
+  color: var(--dash-text-body);
+  font-size: 12px;
+}
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+  width: 100%;
+  min-height: var(--dash-control-height);
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--dash-text-body);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.menuItem:hover {
+  background: var(--dash-surface-hover);
+}
+.menuItem:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.menuDivider {
+  display: block;
+  margin: 4px 6px;
+  border-top: 1px solid var(--dash-border-soft);
+}
+.picker {
+  width: 100%;
+  padding: 4px 0;
+}
+.picker .search {
+  margin: 4px 8px 8px;
+  width: calc(100% - 16px);
+}
+.pickerList {
+  max-height: 300px;
+  overflow: auto;
+}
+.pickerList .menuItem {
+  justify-content: flex-start;
+}
+.panel button:focus-visible,
+.panel input:focus-visible,
+.panel select:focus-visible,
+.panel summary:focus-visible,
+.menuItem:focus-visible,
+.picker input:focus-visible {
+  outline: 2px solid var(--dash-element-selection);
+  outline-offset: -2px;
+}
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.tooltipWrap {
+  position: relative;
+  display: inline-flex;
+}
+.tooltip {
+  position: absolute;
+  z-index: 30;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: max-content;
+  max-width: 240px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--dash-surface);
+  color: var(--dash-text-body);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 2px 6px rgba(0, 0, 0, 0.05),
+    0 4px 42px rgba(0, 0, 0, 0.06);
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.98);
+  transform-origin: 50% 100%;
+  transition:
+    opacity 50ms ease-out,
+    transform 50ms ease-out;
+}
+.tooltipWrap:hover .tooltip,
+.tooltipWrap:focus-within .tooltip {
+  opacity: 1;
+  transform: scale(1);
+  transition-duration: 150ms;
+  transition-delay: 80ms;
+}
+@media (hover: none) {
+  .fieldMenu {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tabIndicator,
+  .tooltip,
+  .formatSections summary::before,
+  .setting input[type="checkbox"]::after {
+    transition: none;
+  }
+}

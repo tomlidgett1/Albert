@@ -1,0 +1,260 @@
+views:
+  - name: xero_balance_sheet_analytics
+    title: Balance sheet (Xero)
+    description: >
+      Xero's own standard-layout Balance Sheet at month-end grain, landed from
+      Xero's report through Fivetran: total assets, total liabilities, net
+      assets and equity, bank total, accounts receivable / payable, GST control
+      balance, inventory and current-year earnings per as-at date (trailing 24
+      month ends, current month rendered through the last refresh).
+      Unprefixed members are one-row-per-date headline positions; line_*
+      members are the individual statement lines for account drill-down.
+    meta:
+      ai_context: >
+        Use for balance sheet / statement of financial position / net assets /
+        equity / what we own and owe / total assets or liabilities / bank
+        position / accounts receivable or payable BALANCES / GST control
+        balance / loan, owner-loan, PAYG or super payable at a month end or
+        financial-year end (30 June). Rows are month-end SNAPSHOTS (as_at =
+        snapshot date, trailing 24 month ends plus the current month rendered
+        month-to-date as of report_updated_at): always read ONE as_at. For
+        "now" / "current" use the latest_position segment (is_latest = true)
+        instead of a date range - a dateRange without granularity sums several
+        snapshots and is wrong; for a specific month end filter as_at to that
+        date; to compare two dates use compareDateRange with two single-day
+        ranges or two queries. There is no live balance sheet tool: answer
+        from the newest snapshot and say its date. BANK: total_bank is Xero's
+        "Total Bank" line = the asset Bank section only (cash accounts);
+        credit cards sit in current liabilities. The net bank position
+        including credit cards = line_bank_account_balance with the
+        latest_lines segment (liability balances subtracted), which equals
+        Xero's closing bank balance; per account use line_* members with
+        latest_lines grouped by line_account_name and line_is_account_line =
+        true. GST: gst_balance is the GST control account with Xero's display
+        sign (negative = refund / credit position) - this IS the GST/BAS
+        position; GST accrued between two dates is the difference between two
+        as_at values. Never use invoice-line GST from xero_finance_analytics
+        for it. INVENTORY: inventory sums INVENTORY-type accounts and is 0 for
+        businesses that do not track stock in Xero (this one: stock on hand
+        lives in inventory_analytics from the POS). FIXED ASSETS:
+        total_fixed_assets is null when Xero prints no Fixed Assets section
+        (this organisation); use the asset register in
+        xero_business_analytics (asset_book_value / total_book_value). Never
+        sum account lines with Xero's total lines (line_is_account_line =
+        false). For bills / invoices awaiting payment use
+        xero_finance_analytics payable_outstanding / receivable_outstanding;
+        for the P&L use xero_profit_and_loss_analytics.
+    cubes:
+      - join_path: xero_organisation
+        includes:
+          - tenant_id
+      - join_path: xero_balance_sheet_positions
+        includes:
+          - as_at
+          - report_updated_at
+          - synced_at
+          - is_current_period
+          - reconciles_to_xero
+          - name: is_latest
+            meta:
+              ai_context: >
+                True for the newest snapshot only; filter is_latest = true or
+                use the latest_position segment for "current" questions.
+          - latest_position
+          - statement_dates
+          - total_assets
+          - total_liabilities
+          - net_assets
+          - total_equity
+          - name: total_bank
+            meta:
+              ai_context: >
+                Asset Bank section only (Xero's Total Bank line); credit cards
+                are current liabilities. Net bank position incl. credit cards
+                = line_bank_account_balance with latest_lines.
+          - total_current_assets
+          - name: total_fixed_assets
+            meta:
+              ai_context: >
+                Null when Xero prints no Fixed Assets section; use the asset
+                register in xero_business_analytics instead.
+          - total_non_current_assets
+          - total_current_liabilities
+          - total_non_current_liabilities
+          - current_year_earnings
+          - accounts_receivable
+          - accounts_payable
+          - name: gst_balance
+            meta:
+              ai_context: >
+                The GST control balance = the GST/BAS position at that as_at
+                (Xero display sign: negative = refund/credit). Use one as_at or
+                latest_position; never invoice-line GST.
+          - name: inventory
+            meta:
+              ai_context: >
+                INVENTORY-type accounts only; 0 when stock is not tracked in
+                Xero (stock on hand is in inventory_analytics).
+      - join_path: xero_balance_sheet_positions.xero_organisation
+        includes:
+          - name: base_currency
+            alias: currency
+      - join_path: xero_balance_sheet_lines
+        includes:
+          - name: as_at
+            alias: line_as_at
+          - name: section
+            alias: line_section
+          - name: row_title
+            alias: line_title
+          - name: account_code
+            alias: line_account_code
+          - name: account_name
+            alias: line_account_name
+          - name: account_type
+            alias: line_account_type
+          - name: account_class
+            alias: line_account_class
+          - name: system_account
+            alias: line_system_account
+          - name: is_bank_account
+            alias: line_is_bank_account
+          - name: bank_account_type
+            alias: line_bank_account_type
+          - name: semantic_line
+            alias: line_kind
+          - name: balance_category
+            alias: line_balance_category
+          - name: statement_side
+            alias: line_statement_side
+          - name: is_account_line
+            alias: line_is_account_line
+          - name: is_latest
+            alias: line_is_latest
+          - latest_lines
+          - name: line_count
+          - name: statement_amount
+            alias: line_amount
+          - name: account_balance
+            alias: line_account_balance
+          - name: bank_account_balance
+            alias: line_bank_account_balance
+            meta:
+              ai_context: >
+                Sign-aware net bank position (credit-card liabilities
+                subtracted) = Xero's closing bank balance; query with the
+                latest_lines segment for "how much is in the bank now".
+    folders:
+      - name: Statement date
+        includes: [as_at, report_updated_at, synced_at, is_current_period, is_latest, reconciles_to_xero, currency]
+      - name: Headline position
+        includes: [total_assets, total_liabilities, net_assets, total_equity, total_bank, total_current_assets, total_fixed_assets, total_non_current_assets, total_current_liabilities, total_non_current_liabilities, current_year_earnings]
+      - name: Key balances
+        includes: [accounts_receivable, accounts_payable, gst_balance, inventory]
+      - name: Statement lines
+        includes: [line_as_at, line_is_latest, line_section, line_title, line_account_code, line_account_name, line_account_type, line_account_class, line_system_account, line_is_bank_account, line_bank_account_type, line_kind, line_balance_category, line_statement_side, line_is_account_line, line_count, line_amount, line_account_balance, line_bank_account_balance]
+
+  - name: xero_bank_balances_analytics
+    title: Bank balances and bank summary (Xero)
+    description: >
+      Xero's Bank Summary report at monthly grain: each bank and credit-card
+      account's opening balance, cash received, cash spent and closing balance
+      in Xero per calendar month (trailing 12 months), plus Xero's Total row.
+      The latest month's closing balance is the account's current "Balance in
+      Xero" as of the last refresh.
+    meta:
+      ai_context: >
+        Use for "how much is in the bank", "what's the balance of account X",
+        bank and credit-card balances per account, opening/closing balances
+        and per-account cash received / spent by month. Rows are monthly
+        SNAPSHOTS: always read ONE period. Current balances = the latest_month
+        segment (is_latest = true) with is_account_line = true grouped by
+        bank_account_name for the accounts (credit cards show negative), or
+        is_account_line = false for Xero's Total row = the whole-business
+        closing bank balance with credit cards netted. Never add the Total row
+        to the accounts, never sum closing balances across months and never
+        use a dateRange without granularity (it sums snapshots). Per-account
+        cash_received / cash_spent by month use period_start with month
+        granularity. This is the balance in Xero as of report_updated_at, not
+        the bank feed statement balance and not live; there is no live balance
+        tool. Whole-business cash in and out over a period: use
+        xero_finance_analytics cash_in / cash_out.
+    cubes:
+      - join_path: xero_organisation
+        includes:
+          - tenant_id
+      - join_path: xero_bank_summary_lines
+        includes:
+          - period_start
+          - period_end
+          - report_updated_at
+          - is_current_period
+          - name: is_latest
+            meta:
+              ai_context: >
+                True for the newest month only; use it (or the latest_month
+                segment) for current balances instead of a date range.
+          - latest_month
+          - row_title
+          - account_code
+          - bank_account_name
+          - bank_account_type
+          - currency_code
+          - is_account_line
+          - closing_balance_value
+          - opening_balance_value
+          - account_months
+          - closing_balance
+          - opening_balance
+          - cash_received
+          - cash_spent
+          - account_closing_balance
+    folders:
+      - name: Period
+        includes: [period_start, period_end, report_updated_at, is_current_period, is_latest]
+      - name: Account
+        includes: [bank_account_name, account_code, bank_account_type, currency_code, is_account_line, row_title]
+      - name: Balances and movement
+        includes: [closing_balance, opening_balance, account_closing_balance, cash_received, cash_spent, closing_balance_value, opening_balance_value, account_months]
+
+  - name: xero_trial_balance_analytics
+    title: Trial balance (Xero)
+    description: >
+      Xero's Trial Balance per as-at date (last three month ends and the
+      financial-year end): every ledger account with period and year-to-date
+      debit and credit balances.
+    meta:
+      ai_context: >
+        Use for a trial balance listing or "the balance of account X in Xero's
+        ledger" at a month end: rows are SNAPSHOTS per as_at (last three month
+        ends and the financial-year end), so choose ONE as_at - the
+        latest_trial_balance segment (is_latest = true) for the newest - and
+        filter is_account_line = true; never use a dateRange without
+        granularity (it sums snapshots). net_balance = debit - credit. Balance
+        sheet headlines live in xero_balance_sheet_analytics, P&L in
+        xero_profit_and_loss_analytics.
+    cubes:
+      - join_path: xero_organisation
+        includes:
+          - tenant_id
+      - join_path: xero_trial_balance_lines
+        includes:
+          - as_at
+          - is_latest
+          - latest_trial_balance
+          - report_updated_at
+          - section
+          - row_title
+          - account_code
+          - account_name
+          - account_type
+          - account_class
+          - system_account
+          - is_account_line
+          - line_count
+          - debit
+          - credit
+          - ytd_debit
+          - ytd_credit
+          - net_balance
+          - ytd_net_balance

@@ -182,10 +182,17 @@ export function buildScanPlan(tables: readonly SpecTable[] = SPEC_TABLES): ScanP
       if (table.isGroupLeader && (!entry.leader || table.recordIdField === conventionalId)) {
         entry.leader = table;
       }
+      // A few spec entries annotate the path in prose ("EmployeeRole (single
+      // nested object per employee; …)"). Only the dot path is executable:
+      // the annotation would otherwise ride into `load_relations` and make
+      // `resolvePath` look for a key that can never exist.
+      const projectFrom = parent.projectFrom
+        ? parent.projectFrom.replace(/\s*\(.*$/u, "").trim() || null
+        : null;
       entry.members.push({
         table,
-        projection: parent.projectFrom ? "nested" : "records",
-        projectFrom: parent.projectFrom,
+        projection: projectFrom ? "nested" : "records",
+        projectFrom,
       });
     }
   }

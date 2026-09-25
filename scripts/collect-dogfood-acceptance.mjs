@@ -152,7 +152,11 @@ export function validateRuntimePlan(input) {
   assert.deepEqual([...names].sort(), DOGFOOD_REQUIRED_RUNTIMES, "Runtime probe plan must contain the exact production runtime set.");
   const publicProbes = plan.filter(({ mode }) => mode === "https");
   const privateProbes = plan.filter(({ mode }) => mode === "fly-private");
-  assert.equal(publicProbes.length, 5, "Only the five public runtimes may use HTTPS probes.");
+  assert.equal(
+    publicProbes.length,
+    DOGFOOD_REQUIRED_RUNTIMES.length - PRIVATE_FLY_RUNTIMES.size,
+    "Only the declared public runtimes may use HTTPS probes.",
+  );
   assert.equal(
     new Set(privateProbes.map(({ flyApp }) => flyApp)).size,
     privateProbes.length,
@@ -422,7 +426,7 @@ async function probeRuntimes(config, flyManifest) {
     sites: config.sitesManifest,
   };
   return Object.freeze({
-    checkedCount: 7,
+    checkedCount: DOGFOOD_REQUIRED_RUNTIMES.length,
     requiredServices: DOGFOOD_REQUIRED_RUNTIMES,
     deploymentId: flyManifest.deploymentId,
     identityDigest: platformSha256(platformBinding),

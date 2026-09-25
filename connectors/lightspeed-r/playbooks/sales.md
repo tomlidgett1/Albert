@@ -25,7 +25,7 @@ can be months early.
 layaway instalment or deposit lands on the day cash moved, while the sale is recognised
 at `complete_time`. They will never tie for a shop that offers layaway, and that is
 correct, not a bug. Filter `archived = false` — archived payments are reversed tenders
-and there are 4,072 of them here (about 8%), independent of whether the sale was voided.
+and are independent of whether the sale was voided.
 Tender names come from `ls_payment_types.name` via `payment_type_id`.
 
 ## Money: which column means what
@@ -37,15 +37,13 @@ counts), `total_due` subtracts gift-card and store-credit movement. Pick `calc_t
 stay with it, never mix them in one query.
 
 **Ex-GST.** At line level use `calc_total - calc_tax1 - calc_tax2`. Do **not** divide by
-1.1 and do **not** use the line's `calc_subtotal`: verified live, line `calc_subtotal` is
-*gross of the line discount* (a $99.99 line with $30 off carries `calc_total` 69.99,
-`calc_tax1` 6.36, `calc_subtotal` 93.63). At ticket level `ls_sales.calc_subtotal` is
-the ex-tax figure and is safe.
+a presumed tax rate and do **not** use the line's `calc_subtotal`: it is gross of the
+line discount. At ticket level `ls_sales.calc_subtotal` is the ex-tax figure and is safe.
 
 **Tax.** Money collected is `calc_tax1 + calc_tax2`. `tax1_rate` is a **fraction**
 (0.1 = 10%) and is only a default — any line with its own tax class overrides it, so
-never reconstruct tax by multiplying. This shop runs two tax categories, "Sales Tax" and
-"Labor Tax", both 10% and both tax-inclusive.
+never reconstruct tax by multiplying. Read the tenant's tax categories and inclusion
+settings; they vary by merchant and can vary within one account.
 
 **Margin.** Gross profit = ex-GST revenue − FIFO cost. `calc_fifo_cost` is the basis
 Lightspeed's own profit reports use; `calc_avg_cost` is the alternative. Pick one, never
@@ -65,7 +63,7 @@ not a promotional markdown.
 
 **Refunds.** Negative `unit_quantity` at a **positive** `unit_price`. Never flip the
 price sign. The reliable marker of a refund line is `parent_sale_line_id` being set, not
-the sign alone (rebate lines are also negative). 787 negative-quantity lines exist.
+the sign alone (rebate lines are also negative).
 
 **Tips.** `tip_amount` sits **inside** `amount`, not on top. Merchandise money taken is
 `SUM(amount - tip_amount)`. Tips are not revenue.
@@ -109,9 +107,11 @@ WITH pack AS (
   SELECT mapping_version AS mv FROM source_lightspeed.ls_sales
   GROUP BY 1 ORDER BY max(ingested_at) DESC LIMIT 1
 )
-SELECT date_trunc('month', s.complete_time AT TIME ZONE 'Australia/Sydney') AS month,
+SELECT date_trunc('month', s.complete_time AT TIME ZONE sh.time_zone) AS month,
        SUM(s.calc_total) AS sales_inc_gst
 FROM source_lightspeed.ls_sales s
+JOIN source_lightspeed.ls_shops sh ON sh.shop_id = s.shop_id
+  AND sh.mapping_version = (SELECT mv FROM pack) AND NOT sh.tombstone
 WHERE s.mapping_version = (SELECT mv FROM pack)
   AND NOT s.tombstone
   AND s.completed
@@ -124,12 +124,19 @@ ORDER BY 1;
 Then `make_chart` with `chartType: "line"`, `xKey: "month"`, `yKey: "sales_inc_gst"`.
 Answer in one sentence naming the period covered.
 
-"Any glasses sold this year?" — a product-type question, so category first:
+"Any glasses sold this year?" — a product-type question, so resolve the tenant's
+category tree first rather than assuming a reference-store path:
 
 ```sql
 WITH pack AS (
   SELECT mapping_version AS mv FROM source_lightspeed.ls_sales
   GROUP BY 1 ORDER BY max(ingested_at) DESC LIMIT 1
+), category_match AS (
+  SELECT category_id
+  FROM source_lightspeed.ls_categories
+  WHERE mapping_version = (SELECT mv FROM pack) AND NOT tombstone
+    AND (name ILIKE '%glass%' OR name ILIKE '%eyewear%'
+         OR full_path_name ILIKE '%glass%' OR full_path_name ILIKE '%eyewear%')
 )
 SELECT i.description,
        SUM(l.unit_quantity)                                   AS units,
@@ -138,20 +145,20 @@ SELECT i.description,
 FROM source_lightspeed.ls_sale_lines l
 JOIN source_lightspeed.ls_sales s   ON s.sale_id = l.sale_id  AND s.mapping_version = (SELECT mv FROM pack) AND NOT s.tombstone
 JOIN source_lightspeed.ls_items i   ON i.item_id = l.item_id   AND i.mapping_version = (SELECT mv FROM pack) AND NOT i.tombstone
-JOIN source_lightspeed.ls_categories c ON c.category_id = i.category_id AND c.mapping_version = (SELECT mv FROM pack) AND NOT c.tombstone
+JOIN category_match c ON c.category_id = i.category_id
+JOIN source_lightspeed.ls_shops sh ON sh.shop_id = s.shop_id
+  AND sh.mapping_version = (SELECT mv FROM pack) AND NOT sh.tombstone
 WHERE l.mapping_version = (SELECT mv FROM pack) AND NOT l.tombstone
   AND s.completed AND NOT s.voided
-  AND s.complete_time >= date_trunc('year', now() AT TIME ZONE 'Australia/Sydney')
-  AND (c.full_path_name = 'Clothing & Protection/Eyewear'
-       OR c.full_path_name LIKE 'Clothing & Protection/Eyewear/%')
+  AND s.complete_time AT TIME ZONE sh.time_zone >= date_trunc('year', now() AT TIME ZONE sh.time_zone)
 GROUP BY i.description
 ORDER BY revenue_inc_gst DESC;
 ```
 
 Answer in one sentence with the number and the period, and name the assumption:
-*"Treating glasses as the Eyewear category."* If it returns nothing, widen to an
-`ILIKE` on `i.description` across `'%glass%'`, `'%sunglass%'`, `'%eyewear%'` before
-concluding there were none — and say which reading you used.
+*"Treating glasses as the matching catalogue category branches."* If it returns
+nothing, widen to a bounded `ILIKE` on `i.description` before concluding there were
+none — and say which tenant-derived reading you used.
 
 "What was our tender mix last month" — payments, not sales:
 
@@ -166,12 +173,14 @@ FROM source_lightspeed.ls_sale_payments p
 JOIN source_lightspeed.ls_sales s ON s.sale_id = p.sale_id
   AND s.mapping_version = (SELECT mv FROM pack) AND NOT s.tombstone
   AND s.completed AND NOT s.voided
+JOIN source_lightspeed.ls_shops sh ON sh.shop_id = s.shop_id
+  AND sh.mapping_version = (SELECT mv FROM pack) AND NOT sh.tombstone
 JOIN source_lightspeed.ls_payment_types pt ON pt.payment_type_id = p.payment_type_id
   AND pt.mapping_version = (SELECT mv FROM pack) AND NOT pt.tombstone
 WHERE p.mapping_version = (SELECT mv FROM pack) AND NOT p.tombstone
   AND NOT COALESCE(p.archived, false)
-  AND p.create_time >= date_trunc('month', now() AT TIME ZONE 'Australia/Sydney') - interval '1 month'
-  AND p.create_time <  date_trunc('month', now() AT TIME ZONE 'Australia/Sydney')
+  AND p.create_time AT TIME ZONE sh.time_zone >= date_trunc('month', now() AT TIME ZONE sh.time_zone) - interval '1 month'
+  AND p.create_time AT TIME ZONE sh.time_zone <  date_trunc('month', now() AT TIME ZONE sh.time_zone)
 GROUP BY 1
 ORDER BY taken DESC;
 ```

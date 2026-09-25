@@ -32,9 +32,23 @@ const DEAUTHORIZE_ENDPOINT = "https://connect.stripe.com/oauth/deauthorize";
 const API_ORIGIN = "https://api.stripe.com";
 
 /**
- * `access_token` and `refresh_token` are deprecated by Stripe and may be
- * absent, so neither is required. `stripe_user_id` is the durable credential.
+ * Stripe marks `access_token` and `refresh_token` deprecated for Albert's own
+ * API calls (`Stripe-Account` + the platform secret). Fivetran's native Stripe
+ * connector still needs that secret or Restricted key, so the exchange keeps
+ * it when present and fails closed when Stripe omits it.
  */
+export const STRIPE_FIVETRAN_SECRET = /^(?:sk|rk)_(?:live|test)_[A-Za-z0-9_]+$/u;
+export const STRIPE_LIVE_FIVETRAN_SECRET = /^(?:sk|rk)_live_[A-Za-z0-9_]+$/u;
+
+export function isStripeFivetranSecret(value: string): boolean {
+  return STRIPE_FIVETRAN_SECRET.test(value.trim());
+}
+
+/** Fivetran's `stripe` connector is live mode. Test keys belong on `stripe_test_mode`, which Albert does not create. */
+export function isStripeLiveFivetranSecret(value: string): boolean {
+  return STRIPE_LIVE_FIVETRAN_SECRET.test(value.trim());
+}
+
 const tokenSchema = z.object({
   stripe_user_id: z.string().min(1),
   scope: z.string().optional(),
@@ -140,10 +154,24 @@ export class StripeConnector extends AuthorizationOnlyConnectorPack implements O
     }, request.abortSignal, "Stripe returned an invalid OAuth token response.");
     const scopes = splitOAuthScopes(parsed.scope);
     const expiresAt = this.nextVerification();
+    const fivetranSecret = parsed.access_token?.trim() ?? "";
+    if (!isStripeFivetranSecret(fivetranSecret)) {
+      throw new ConnectorError(
+        "OAUTH_EXCHANGE_FAILED",
+        "Stripe Connect did not return a secret or Restricted key. Fivetran needs that key to land the official Stripe ERD.",
+      );
+    }
+    if (!isStripeLiveFivetranSecret(fivetranSecret)) {
+      throw new ConnectorError(
+        "OAUTH_EXCHANGE_FAILED",
+        "Stripe Connect returned a test-mode key. Albert's Fivetran Stripe connector is live mode only.",
+      );
+    }
     const stored = await this.vault.create({
       provider: this.id,
-      // Stripe deprecated per-connection bearer tokens. The connected account
-      // id is the durable credential; the platform secret key authorises.
+      // The connected account id stays the durable Albert credential. The
+      // Connect secret is kept only so Fivetran can authenticate as that
+      // account; Albert never calls the Stripe Admin API with it.
       accessToken: parsed.stripe_user_id,
       tokenType: "StripeAccount",
       expiresAt,
@@ -151,6 +179,8 @@ export class StripeConnector extends AuthorizationOnlyConnectorPack implements O
       metadata: {
         stripeUserId: parsed.stripe_user_id,
         livemode: parsed.livemode ?? null,
+        stripeAccessToken: fivetranSecret,
+        ...(parsed.refresh_token ? { stripeRefreshToken: parsed.refresh_token } : {}),
       },
     });
     return { credentialRef: stored.credentialRef, expiresAt: stored.secret.expiresAt, scopes: stored.secret.scopes };

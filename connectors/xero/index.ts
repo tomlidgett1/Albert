@@ -64,7 +64,6 @@ const TOKEN_ENDPOINT = "https://identity.xero.com/connect/token";
 const REVOCATION_ENDPOINT = "https://identity.xero.com/connect/revocation";
 const CONNECTIONS_ENDPOINT = "https://api.xero.com/connections";
 const ACCOUNTING_ORIGIN = "https://api.xero.com";
-const PAGE_SIZE = 1_000;
 
 const tokenSchema = z.object({
   access_token: z.string().min(1),
@@ -387,12 +386,23 @@ export class XeroConnector implements OAuthConnectorPack {
   async discover_account(context: ConnectorContext): Promise<ConnectionDiscovery> {
     const credential = await this.readCredential(context);
     const selected = credential.secret.metadata.xeroTenantId;
-    const accounts = await this.discover_accounts(context);
+    // Every data walk needs the organisation only for its xero-tenant-id
+    // header. select_account bound it into the credential at connect time, so
+    // re-fetching /connections here spent one budgeted call per page — half of
+    // a 1,000-call day — and under daily pacing starved every stream before
+    // its first data call. A revoked organisation still fails closed: the
+    // data request itself returns 401/403 and routes through refresh/health.
     if (typeof selected === "string") {
-      const account = accounts.find((candidate) => candidate.externalAccountId === selected);
-      if (account) return account;
-      throw new ConnectorError("AUTHENTICATION_REQUIRED", "The selected Xero organisation is disconnected.");
+      const boundConnectionId = credential.secret.metadata.xeroConnectionId;
+      return {
+        externalAccountId: selected,
+        displayName: selected,
+        metadata: {
+          xeroConnectionId: typeof boundConnectionId === "string" ? boundConnectionId : null,
+        },
+      };
     }
+    const accounts = await this.discover_accounts(context);
     if (accounts.length === 1 && accounts[0]) return accounts[0];
     throw new ConnectorError(
       "CONFIGURATION_INVALID",
@@ -424,8 +434,16 @@ export class XeroConnector implements OAuthConnectorPack {
     return selected;
   }
 
+  /** Backfill and scheduled sync see only streams the manifest lets them walk. */
   async list_streams(context: ConnectorContext): Promise<readonly ConnectorStream[]> {
     void context;
+    return this.list_all_streams().filter((stream) =>
+      this.manifest.streams.find((candidate) => candidate.id === stream.id)?.ingestionMode !== "on_demand"
+    );
+  }
+
+  /** Every declared stream, including on-demand ones an operator may walk explicitly. */
+  list_all_streams(): readonly ConnectorStream[] {
     return this.manifest.streams
       .map((stream) => ({
         id: stream.id,

@@ -205,6 +205,7 @@ function toStream(
     deletionStrategy: deletionStrategy(table),
     sourceTotalStrategy: "count_distinct_complete_scan",
     ...(availabilityOf(table) === "optional" ? { availability: "optional" as const } : {}),
+    ...(ON_DEMAND_STREAMS.has(table.id) ? { ingestionMode: "on_demand" as const } : {}),
     // A derived stream cannot run before the walk that produces its payload,
     // and a fan-out cannot run before the parent ids it iterates exist.
     dependencies: isScanLeader
@@ -243,8 +244,34 @@ function toStream(
  * Advanced grant, fan-outs are budget-priced. Only the accounting core and the
  * tenant connection inventory are unconditionally required.
  */
+/**
+ * Xero retired the classic ExpenseClaims endpoints when it moved organisations
+ * to the Expenses product; those organisations get a hard 4xx, not an empty
+ * page. Treat the family as optional so an ordinary organisation does not
+ * fail its connection over a product it was never on.
+ */
+const RETIRED_ACCOUNTING_FAMILIES = ["xero_expense_claim"] as const;
+
+/**
+ * Per-record fan-outs on the accounting API: one call per document or contact
+ * across the whole ledger. Against Xero's 1,000/day allowance these four
+ * would spend weeks of budget on data no product surface reads (attachments
+ * and history are audit trails; online-invoice URLs are ephemeral; CIS is a
+ * UK-only construction field). Declared, staged and deletable, but walked
+ * only on an explicit operator request. Payroll per-employee fan-outs stay
+ * in backfill: a payroll is dozens of records, not thousands.
+ */
+const ON_DEMAND_STREAMS: ReadonlySet<string> = new Set([
+  "xero_attachments",
+  "xero_history_records",
+  "xero_online_invoices",
+  "xero_contact_cis_settings",
+]);
+
 function availabilityOf(table: XeroSpecTable): "required" | "optional" {
   if (table.source.availability === "optional") return "optional";
+  if (ON_DEMAND_STREAMS.has(table.id)) return "optional";
+  if (RETIRED_ACCOUNTING_FAMILIES.some((prefix) => table.id.startsWith(prefix))) return "optional";
   if (table.source.api === "accounting" || table.source.api === "identity") return "required";
   return "optional";
 }

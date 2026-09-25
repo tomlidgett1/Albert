@@ -115,7 +115,7 @@ test("raw writer produces immutable compressed JSONL and idempotently resumes", 
   assert.match(first.objectKeys[0], /tenant\/01J.*\/batch-01J.*\.jsonl\.gz$/);
   const body = store.objects.get(first.objectKeys[0]);
   assert.ok(body);
-  const jsonl = gunzipSync(body).toString("utf8");
+  const jsonl = Buffer.from(gunzipSync(body)).toString("utf8");
   assert.equal(jsonl.split("\n").filter(Boolean).length, 1);
   assert.match(jsonl, /"payload":\{"id":"sale-1","nested":\{"a":1,"b":2\},"total":"12.3400"\}/);
 });

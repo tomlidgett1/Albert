@@ -62,7 +62,7 @@ test("relay claims from DB, sends only the selected generation access token, and
     } satisfies VendorAttestationRelayConfig,
     submit: async (_claim, token) => {
       submittedReference = token;
-      submittedCopy = token.toString("utf8");
+      submittedCopy = Buffer.from(token).toString("utf8");
     },
   });
   assert.equal(await relay.runOnce(), true);

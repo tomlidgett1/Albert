@@ -7,8 +7,9 @@ export interface TransactionalPostgres extends PostgresQueryClient {
 export type ConnectionRuntimeRecord = Readonly<{
   tenantId: string;
   connectionId: string;
-  connectorKey: "lightspeed-r" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
+  connectorKey: "lightspeed-r" | "lightspeed-x" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
   externalAccountReference: string;
+  accountMetadata: Readonly<Record<string, unknown>>;
   credentialRef: string;
   connectionGeneration: number;
 }>;

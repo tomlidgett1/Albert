@@ -1,9 +1,15 @@
 # ADR 0001: OpenAI agent runtime and auditable analytical traces
 
-- Status: Accepted
+- Status: Accepted for runtime and trace design; semantic safety boundary and the rejection of model-authored SQL are superseded by ADR 0068
 - Date: 2026-08-03
 - Owners: Albert engineering
 - Supersedes: the founding specification's provisional Claude provider choice
+
+> **Supersession note (2026-08-09):** ADR 0068 established linted,
+> canaried and attested model-authored SQL as Albert's primary analytical path.
+> The typed-IR-only statements below record the original decision but are no
+> longer current architecture. ADR 0075 further replaces deterministic
+> natural-language routing with model-owned structured interpretation.
 
 ## Context
 

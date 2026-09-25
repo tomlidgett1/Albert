@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AesKeyWrapper, EnvelopeCryptography } from "./src/credential-vault.js";
+import { AesKeyWrapper, EnvelopeCryptography, parseOAuthCredentialSecret } from "./src/credential-vault.js";
+
+test("vault contract accepts StripeAccount credentials used by Fivetran Stripe", () => {
+  const secret = parseOAuthCredentialSecret({
+    provider: "stripe",
+    accessToken: "acct_testmerchant",
+    tokenType: "StripeAccount",
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    scopes: ["read_write"],
+    metadata: { stripeUserId: "acct_testmerchant", stripeAccessToken: "rk_live_restrictedkey" },
+  });
+  assert.equal(secret.tokenType, "StripeAccount");
+  assert.equal(secret.provider, "stripe");
+});
 
 test("credential envelopes use independent DEKs and authenticate tenant/reference/version AAD", async () => {
   const crypto = new EnvelopeCryptography(new AesKeyWrapper(

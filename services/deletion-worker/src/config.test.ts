@@ -20,6 +20,9 @@ const valid: NodeJS.ProcessEnv = {
   TOKEN_ENCRYPTION_KEY_ID: "deletion-v1",
   LIGHTSPEED_CLIENT_ID: "lightspeed-client",
   LIGHTSPEED_CLIENT_SECRET: "lightspeed-secret",
+  ALBERT_PUBLIC_ORIGIN: "https://albert.example",
+  SQUARE_CLIENT_ID: "square-client",
+  SQUARE_CLIENT_SECRET: "square-secret",
   XERO_CLIENT_ID: "xero-client",
   DELETION_PROOF_HMAC_KEY: "p".repeat(48),
   ALBERT_DELETION_WORKER_ID: "deletion-worker-01",
@@ -44,12 +47,40 @@ test("deletion config excludes service-role, webhook, and sync settings", () => 
     SUPABASE_SERVICE_ROLE_KEY: "must-not-load",
     XERO_WEBHOOK_SIGNING_KEY: "must-not-load",
     DEPUTY_WEBHOOK_SHARED_SECRET: "must-not-load",
+    SHOPIFY_CLIENT_ID: "must-not-load",
+    SHOPIFY_CLIENT_SECRET: "must-not-load",
     MAPPING_VERSION: "must-not-load",
   });
   const serialized = JSON.stringify(config);
   assert.doesNotMatch(serialized, /must-not-load/);
   assert.equal(config.analyticalDatabaseUrl, valid.DELETION_ANALYTICAL_DATABASE_URL);
   assert.equal(config.rawStorage.bucket, "raw-payloads");
+});
+
+test("Shopify local destruction does not grant the deletion worker app-wide credentials", () => {
+  const config = loadDeletionWorkerConfig({
+    ...valid,
+    SHOPIFY_CLIENT_ID: "shopify-client-must-not-load",
+    SHOPIFY_CLIENT_SECRET: "shopify-secret-must-not-load",
+  });
+  assert.doesNotMatch(JSON.stringify(config), /shopify-(?:client|secret)-must-not-load/u);
+});
+
+test("deletion config requires the Square revocation registration and exact callback origin", () => {
+  const missingSquare = { ...valid };
+  delete missingSquare.SQUARE_CLIENT_SECRET;
+  assert.throws(
+    () => loadDeletionWorkerConfig(missingSquare),
+    /SQUARE_CLIENT_SECRET/u,
+  );
+  assert.throws(
+    () => loadDeletionWorkerConfig({ ...valid, ALBERT_PUBLIC_ORIGIN: "http://albert.example" }),
+    /clean HTTPS origin/u,
+  );
+  assert.equal(
+    loadDeletionWorkerConfig(valid).squareRedirectUri,
+    "https://albert.example/api/oauth/square/callback",
+  );
 });
 
 test("deletion config namespaces leases to the running Fly machine", () => {

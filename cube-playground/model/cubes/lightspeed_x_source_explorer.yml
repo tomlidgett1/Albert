@@ -1,0 +1,129 @@
+cubes:
+  - name: lightspeed_x_source_fields
+    title: Lightspeed X-Series source fields (exhaustive explorer)
+    public: false
+    description: >
+      One row per field occurrence returned by the Lightspeed Retail X-Series
+      2026-07 API. This is the completeness backstop for source-native questions:
+      every leaf emitted in a stream field_index is expanded here even when the
+      field is not promoted into a curated business view. Stable paths replace
+      array positions with [] while occurrence paths retain exact ordinals.
+    meta:
+      ai_context: >
+        Use only when no curated lightspeed_x_* view exposes the requested
+        concept. Always filter one exact parent_stream or source_object_type and
+        field_path before selecting a typed value. Numeric values are decimal
+        source values and are not automatically additive, currency, or safe to
+        sum. Lightspeed X-Series monetary fields are major-unit decimals in the
+        retailer/outlet currency, not integer minor-unit Money objects. This
+        surface can contain customer, employee, supplier, audit and free-text
+        PII; reveal it only for an explicit tenant-authorised request.
+      completeness_contract: >
+        Every field_index entry from every Lightspeed X-Series stream is expanded
+        into source_lightspeed_x.lx_source_fields. Curated dimensions and measures
+        improve safety and usability but never replace this exhaustive projection.
+      api_contract: Lightspeed Retail X-Series OpenAPI 2026-07.
+    sql: SELECT * FROM source_lightspeed_x.lx_source_fields
+
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: parent_stream
+        sql: parent_stream
+        type: string
+        title: X-Series stream
+        description: Connector stream that returned the parent source record.
+      - name: source_object_type
+        sql: source_object_type
+        type: string
+        title: X-Series object type
+      - name: source_record_id
+        sql: source_record_id
+        type: string
+        title: Source record ID
+      - name: field_path
+        sql: field_path
+        type: string
+        title: Stable field path
+        description: Dotted source path with [] in place of array positions.
+      - name: field_ordinal_path
+        sql: field_ordinal_path
+        type: string
+        title: Field occurrence path
+        description: Exact JSON pointer including array positions for this occurrence.
+      - name: field_name
+        sql: field_name
+        type: string
+        title: Field name
+      - name: value_type
+        sql: value_type
+        type: string
+        title: Value type
+        description: null, boolean, number, string, timestamp, date, object or array.
+      - name: string_value
+        sql: string_value
+        type: string
+        title: Text value
+      - name: number_value
+        sql: number_value
+        type: number
+        title: Numeric value
+        description: >
+          Lossless numeric source value. Filter one exact field_path and confirm
+          the documented grain before aggregating it.
+      - name: boolean_value
+        sql: boolean_value
+        type: boolean
+        title: Boolean value
+      - name: timestamp_value
+        sql: timestamp_value
+        type: time
+        title: Timestamp value (UTC)
+      - name: date_value
+        sql: date_value
+        type: time
+        title: Date value
+      - name: json_value
+        sql: "CAST(json_value AS text)"
+        type: string
+        title: JSON value
+        description: Exact JSON text for object, array and lossless fallback values.
+
+    measures:
+      - name: field_occurrences
+        type: count
+        title: Field occurrences
+      - name: source_records
+        sql: source_record_id
+        type: count_distinct
+        title: Source records
+      - name: numeric_value_sum
+        sql: number_value
+        type: sum
+        title: Numeric value sum
+        description: >
+          Use only after filtering to one documented additive field_path. Never
+          use for identifiers, versions, rates, balances or snapshots.
+      - name: numeric_value_average
+        sql: number_value
+        type: avg
+        title: Numeric value average
+      - name: numeric_value_minimum
+        sql: number_value
+        type: min
+        title: Numeric value minimum
+      - name: numeric_value_maximum
+        sql: number_value
+        type: max
+        title: Numeric value maximum

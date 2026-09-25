@@ -1,9 +1,9 @@
-# Dogfood sync worker. Runs against the unified Tokyo dogfood Supabase project,
-# so NODE_ENV stays "development": the production runtime boundary requires
-# Sydney regions, split control/analytical databases, and a release SHA that
-# dogfood deliberately does not have.
+# Dogfood sync worker, rebuilt 2026-08-13 against the production two-project
+# pair (control jjiugnriaypjoxsupjft, analytical ndncknjodgoovbojedaa).
+# NODE_ENV stays "development" because dogfood carries no release SHA; the
+# database targets are the Sydney production pair.
 app = "albert-sync-worker-dogfood"
-primary_region = "nrt"
+primary_region = "syd"
 kill_signal = "SIGTERM"
 kill_timeout = 120
 
@@ -36,6 +36,10 @@ kill_timeout = 120
   auto_start_machines = true
   min_machines_running = 1
   processes = ["app"]
+
+  [http_service.http_options]
+    idle_timeout = 180
+    read_timeout = 180
 
   [[http_service.checks]]
     grace_period = "45s"

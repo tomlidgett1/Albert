@@ -54,6 +54,51 @@ BEGIN
           'awaiting_approval','cancelled','completed','failed','queued',
           'retry_wait','running','verifying'
         ]::text[]
+      ),
+      (
+        'control_plane.shopify_compliance_inbox',
+        'shopify_compliance_inbox_status_fkey',
+        'shopify_compliance_inbox_status_check',
+        'control_plane.shopify_compliance_inbox_status_lookup',
+        'status',
+        ARRAY['dispatched','unresolved']::text[]
+      ),
+      (
+        'control_plane.shopify_privacy_cases',
+        'shopify_privacy_cases_status_fkey',
+        'shopify_privacy_cases_status_check',
+        'control_plane.shopify_privacy_case_status_lookup',
+        'status',
+        ARRAY[
+          'attention_required','awaiting_delivery','awaiting_operator_export',
+          'completed','export_in_progress','queued','redaction_dispatched'
+        ]::text[]
+      ),
+      (
+        'control_plane.shopify_privacy_exports',
+        'shopify_privacy_exports_status_fkey',
+        'shopify_privacy_exports_status_check',
+        'control_plane.shopify_privacy_export_status_lookup',
+        'status',
+        ARRAY['claimed','completed','expired','failed','requested']::text[]
+      ),
+      (
+        'control_plane.shopifyql_query_executions',
+        'shopifyql_query_executions_status_fkey',
+        'shopifyql_query_executions_status_check',
+        'control_plane.shopifyql_query_execution_status_lookup',
+        'status',
+        ARRAY[
+          'failed','parse_error','reserved','response_rejected','succeeded'
+        ]::text[]
+      ),
+      (
+        'control_plane.shopify_admin_query_executions',
+        'shopify_admin_query_executions_status_fkey',
+        'shopify_admin_query_executions_status_check',
+        'control_plane.shopify_admin_query_execution_status_lookup',
+        'status',
+        ARRAY['failed','reserved','response_rejected','succeeded']::text[]
       )
     ) AS contract(
       source_name,foreign_key_name,legacy_check_name,lookup_name,

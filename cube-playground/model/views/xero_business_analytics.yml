@@ -1,0 +1,255 @@
+views:
+  - name: xero_business_analytics
+    title: Business setup and assets (Xero)
+    description: >
+      The organisation and structural surface, powered by Xero: business
+      facts (ABN, entity type, GST basis, financial year end), the chart of
+      accounts, the product/service item list with prices, tax rates, users
+      with access, budgets, fixed assets with book values and depreciation,
+      and the file library. Each prefix (org_, account_, item_, asset_,
+      file_...) is an independent reference grain: query one grain at a time.
+    meta:
+      ai_context: >
+        Use this view for questions about the business itself and its setup:
+        "what's my ABN", "when does my financial year end", GST basis,
+        expense/revenue account structure (chart of accounts), product and
+        service prices, tax rates, who has Xero access, fixed assets owned,
+        their book value and depreciation, and files stored in Xero. These
+        grains do not join to each other: never mix members of different
+        prefixes in one query. ASSETS: asset_status values are mixed case
+        ('Registered', 'Draft', 'Disposed'), never uppercase. Accumulated
+        depreciation of 0 is a real answer when assets have no depreciation
+        method set up (asset_depreciation_method 'NoDepreciation'): report
+        the 0 and explain why, do not call the data unpopulated when the
+        asset list itself has rows. The balance sheet's total_fixed_assets is
+        null when Xero prints no Fixed Assets section, so this register
+        (asset_book_value / total_book_value with registered_assets) is the
+        fixed-asset answer. BUDGETS: only the budget list (budget_name,
+        budget_type) is landed; budget line values and budget-vs-actual are
+        NOT available - say so. Transactional money questions (invoices,
+        payments, spending) belong in xero_finance_analytics; pay questions
+        in xero_payroll_analytics.
+
+    cubes:
+      # The organisation record (single row).
+      - join_path: xero_organisation
+        includes:
+          - tenant_id
+          - name: organisation_name
+            alias: org_business_name
+          - name: legal_name
+            alias: org_legal_name
+          - name: organisation_type
+            alias: org_type
+          - name: line_of_business
+            alias: org_line_of_business
+          - name: base_currency
+            alias: org_base_currency
+          - name: country_code
+            alias: org_country
+          - name: timezone
+            alias: org_timezone
+          - name: abn
+            alias: org_abn
+          - name: gst_basis
+            alias: org_gst_basis
+          - name: gst_period
+            alias: org_gst_period
+          - name: financial_year_end_day
+            alias: org_fy_end_day
+          - name: financial_year_end_month
+            alias: org_fy_end_month
+          - name: period_lock_date
+            alias: org_period_lock_date
+          - name: created_at
+            alias: org_created_at
+          - name: pays_tax
+            alias: org_pays_tax
+
+      # Chart of accounts.
+      - join_path: xero_accounts
+        includes:
+          - account_code
+          - account_name
+          - account_type
+          - account_class
+          - name: status
+            alias: account_status
+          - name: description
+            alias: account_description
+          - name: tax_type
+            alias: account_tax_type
+          - is_bank_account
+          - name: system_account
+            alias: account_system_role
+          - reporting_code
+          - reporting_code_name
+          - name: on_watchlist
+            alias: account_on_watchlist
+          - account_count
+          - mapped_reporting_code_count
+          - reporting_code_coverage_pct
+          - active_accounts
+          - revenue_accounts
+          - expense_accounts
+          - bank_accounts
+          - sales_revenue_accounts
+          - other_income_accounts
+          - direct_cost_accounts
+          - operating_expense_accounts
+
+      # Products and services.
+      - join_path: xero_items
+        includes:
+          - item_code
+          - item_name
+          - name: description
+            alias: item_description
+          - is_sold
+          - is_purchased
+          - is_tracked_as_inventory
+          - name: sales_unit_price
+            alias: item_sales_price
+          - name: purchase_unit_price
+            alias: item_purchase_price
+          - item_count
+
+      # Tax rates.
+      - join_path: xero_tax_rates
+        includes:
+          - tax_name
+          - name: tax_type
+            alias: tax_type_code
+          - name: display_tax_rate
+            alias: tax_rate_percent
+          - name: status
+            alias: tax_rate_status
+          - tax_rate_count
+
+      # Currencies set up in the org.
+      - join_path: xero_currencies
+        includes:
+          - name: currency_code
+            alias: org_currency_code
+          - name: description
+            alias: org_currency_name
+          - currency_count
+
+      # Users with access.
+      - join_path: xero_users
+        includes:
+          - organisation_role
+          - is_subscriber
+          - user_count
+
+      # Budgets.
+      - join_path: xero_budgets
+        includes:
+          - budget_type
+          - name: description
+            alias: budget_name
+          - budget_count
+
+      # Fixed assets.
+      - join_path: xero_assets
+        includes:
+          - asset_name
+          - asset_number
+          - name: status
+            alias: asset_status
+          - purchased_on
+          - name: purchase_price_value
+            alias: asset_purchase_price
+          - name: book_value_amount
+            alias: asset_book_value
+          - name: depreciation_method
+            alias: asset_depreciation_method
+          - name: current_accumulated_depreciation
+            alias: asset_accumulated_depreciation
+          - asset_count
+          - total_purchase_price
+          - total_book_value
+          - total_accumulated_depreciation
+          - registered_assets
+      - join_path: xero_assets.xero_asset_types
+        includes:
+          - asset_type_name
+          - name: depreciation_rate
+            alias: asset_type_depreciation_rate
+
+      # File library.
+      - join_path: xero_files
+        includes:
+          - file_name
+          - mime_type
+          - uploaded_by
+          - name: created_at
+            alias: file_uploaded_at
+          - file_count
+          - total_size_bytes
+
+    folders:
+      - name: Organisation
+        includes:
+          - org_business_name
+          - org_legal_name
+          - org_type
+          - org_abn
+          - org_gst_basis
+          - org_gst_period
+          - org_fy_end_day
+          - org_fy_end_month
+          - org_base_currency
+          - org_timezone
+          - org_line_of_business
+      - name: Chart of accounts
+        includes:
+          - account_code
+          - account_name
+          - account_type
+          - account_class
+          - account_status
+          - account_tax_type
+          - account_system_role
+          - reporting_code
+          - reporting_code_name
+          - account_count
+          - mapped_reporting_code_count
+          - reporting_code_coverage_pct
+          - is_bank_account
+      - name: Products and services
+        includes:
+          - item_code
+          - item_name
+          - item_sales_price
+          - item_purchase_price
+          - is_sold
+          - is_purchased
+          - is_tracked_as_inventory
+          - item_count
+      - name: Fixed assets
+        includes:
+          - asset_name
+          - asset_status
+          - purchased_on
+          - asset_purchase_price
+          - asset_book_value
+          - asset_accumulated_depreciation
+          - asset_depreciation_method
+          - asset_type_name
+          - asset_count
+          - total_purchase_price
+          - total_book_value
+          - total_accumulated_depreciation
+      - name: Tax, users, budgets, files
+        includes:
+          - tax_name
+          - tax_rate_percent
+          - tax_rate_count
+          - organisation_role
+          - user_count
+          - budget_name
+          - budget_count
+          - file_name
+          - file_uploaded_at
+          - file_count

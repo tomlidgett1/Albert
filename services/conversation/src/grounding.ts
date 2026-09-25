@@ -59,6 +59,9 @@ type NumericToken = Readonly<{
   value: number;
   decimals: number;
   scale: number;
+  /** An explicit percent sign may faithfully render either a ratio cell
+   * (0.0265 -> 2.65%) or an already-percent-scaled cell (2.65 -> 2.65%). */
+  percent: boolean;
   /** Whether the author wrote an explicit sign, rather than carrying direction
    * in words ("down $2,219.31"). Unsigned figures may match a cell magnitude. */
   signed: boolean;
@@ -98,6 +101,7 @@ function parseNumericToken(token: string): NumericToken | null {
     value,
     decimals: fractionPart?.length ?? 0,
     scale,
+    percent: normalizedSuffix === "%",
     signed: sign === "-" || sign === "+",
   });
 }
@@ -120,7 +124,10 @@ function tokenMatchesCellValue(token: NumericToken, cell: number): boolean {
   // business prose carries direction in words: "sales are down $2,219.31"
   // reports the cell -2219.31 faithfully. Typed comparison claims, not the
   // narrative, are what prove direction.
-  const candidates = token.signed ? [cell] : [cell, Math.abs(cell)];
+  const signedCandidates = token.signed ? [cell] : [cell, Math.abs(cell)];
+  const candidates = token.percent
+    ? [...signedCandidates, ...signedCandidates.map((candidate) => candidate * 100)]
+    : signedCandidates;
   return candidates.some((candidate) => {
     const scaled = candidate / token.scale;
     if (scaled === token.value) return true;
@@ -181,11 +188,20 @@ function parseNumberWords(value: string): number | null {
  * stored "31-60 days" as "31–60 days" — same label, different dash. Grounding
  * must compare content, not glyph choice.
  */
+const comparableLabelCache = new Map<string, string>();
 function comparableLabelText(value: string): string {
-  return value
+  // Grounding scans compare every narrative token against every governed
+  // label; normalizing the same labels repeatedly measured as an event-loop
+  // stall in production (health checks timed out during compose phases).
+  const cached = comparableLabelCache.get(value);
+  if (cached !== undefined) return cached;
+  const normalized = value
     .toLocaleLowerCase("en-AU")
     .replace(/[‐-―−]/gu, "-")
     .replace(/\s+/gu, " ");
+  if (comparableLabelCache.size >= 20_000) comparableLabelCache.clear();
+  comparableLabelCache.set(value, normalized);
+  return normalized;
 }
 
 function copiedSourceLabel(
@@ -210,11 +226,17 @@ function quantitativeWordClaims(
   for (const match of narrative.matchAll(numberWordPattern)) {
     const token = match[0];
     const offset = match.index ?? 0;
-    const before = narrative.slice(Math.max(0, offset - 16), offset).toLowerCase();
+    const before = narrative.slice(Math.max(0, offset - 64), offset).toLowerCase();
     const after = narrative.slice(offset + token.length, offset + token.length + 16).toLowerCase();
     if (
       token.toLowerCase() === "one" &&
-      (/(?:\bno\s+|\bsome\s*)$/u.test(before) || /^\s+(?:of|another|off)\b/u.test(after))
+      (/(?:\bno\s+|\bsome\s*)$/u.test(before)
+        || /^\s+(?:of|another|off)\b/u.test(after)
+        // "Cannot identify one owner" expresses unresolved uniqueness; it
+        // does not assert that the evidence contains one record. Treating the
+        // determiner as a quantitative finding can erase an honest ambiguity
+        // warning and replace it with a misleading ranked result.
+        || /\b(?:cannot|can't|could not|couldn't|unable to)\s+(?:safely\s+)?(?:identify|choose|select|name)\s*$/u.test(before))
     ) continue;
     if (copiedSourceLabel(narrative, token, copiedLabels)) continue;
     const parsed = parseNumberWords(token);
@@ -269,6 +291,23 @@ function dateCellComponents(value: TraceCell): readonly number[] {
   return [Number(year), Number(month), Number(day)];
 }
 
+/**
+ * Streaming validators (commentary, reasoning summaries, key insights) ground
+ * every event against the same accumulated result rows. Re-scanning each
+ * result's cells per event blocked the event loop for seconds on production;
+ * result row arrays are frozen once created, so their extraction is cacheable.
+ */
+const rowsEvidenceCache = new WeakMap<object, GroundingEvidence>();
+export function cachedGroundingEvidenceFromRows(
+  rows: readonly Readonly<Record<string, TraceCell>>[],
+): GroundingEvidence {
+  const cached = rowsEvidenceCache.get(rows);
+  if (cached) return cached;
+  const evidence = groundingEvidenceFromRows(rows);
+  rowsEvidenceCache.set(rows, evidence);
+  return evidence;
+}
+
 export function groundingEvidenceFromRows(
   rows: readonly Readonly<Record<string, TraceCell>>[],
 ): GroundingEvidence {
@@ -298,6 +337,43 @@ export function groundingEvidenceFromRows(
     }
   }
   return Object.freeze({ values: Object.freeze(values), labels: Object.freeze(labels) });
+}
+
+/**
+ * Numbers the owner themselves wrote — a target ("save $1k a month"), a
+ * hypothetical ("raise prices 5%"), a constraint ("under $10k a month").
+ * Restating the owner's own figure is reporting, not invention, so these
+ * values may join the grounded pool for the final answer. Digit tokens with
+ * $/%/k/m forms, "N grand", and plain number-word phrases ("five hundred",
+ * "a thousand") all count; the scaled value is returned so a question's
+ * "$1k" grounds an answer's "$1,000".
+ */
+export function ownerStatedGroundingValues(text: string): readonly number[] {
+  const values = new Set<number>();
+  numericTokenPattern.lastIndex = 0;
+  for (const raw of text.match(numericTokenPattern) ?? []) {
+    const token = parseNumericToken(raw.trim());
+    if (!token) continue;
+    values.add(token.value * token.scale);
+    if (token.scale !== 1) values.add(token.value);
+  }
+  const grandCount = new RegExp(
+    String.raw`\b(\d[\d,]*(?:\.\d+)?|a|an|(?:${numberWordAlternation})(?:[\s-]+(?:${numberWordAlternation}))?)\s*grand\b`,
+    "giu",
+  );
+  for (const grand of text.matchAll(grandCount)) {
+    const raw = grand[1]!;
+    const parsed = /^\d/u.test(raw)
+      ? Number(raw.replaceAll(",", ""))
+      : /^an?$/iu.test(raw) ? 1 : parseNumberWords(raw);
+    if (parsed !== null && Number.isFinite(parsed) && parsed > 0) values.add(parsed * 1_000);
+  }
+  numberWordPattern.lastIndex = 0;
+  for (const phrase of text.match(numberWordPattern) ?? []) {
+    const parsed = parseNumberWords(phrase);
+    if (parsed !== null && parsed !== 0) values.add(parsed);
+  }
+  return Object.freeze([...values]);
 }
 
 /**
@@ -355,8 +431,32 @@ export function normalizedQuantitativeClaims(
  */
 const listMarkerPattern = /^[ \t]*(?:[-*]\s*)?\d+[.)](?=\s)/gmu;
 
+/** Rank/# cells are presentation ordinals, like ordered-list markers. */
+function withoutMarkdownRankCells(narrative: string): string {
+  const lines = narrative.split("\n");
+  let rankColumn = -1;
+  let inTable = false;
+  return lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) {
+      rankColumn = -1;
+      inTable = false;
+      return line;
+    }
+    const cells = trimmed.slice(1, -1).split("|").map((cell) => cell.trim());
+    if (!inTable) {
+      rankColumn = cells.findIndex((cell) => /^(?:rank|#|position)$/iu.test(cell));
+      inTable = true;
+      return line;
+    }
+    if (rankColumn < 0 || !cells[rankColumn] || !/^\d+$/u.test(cells[rankColumn]!)) return line;
+    cells[rankColumn] = "";
+    return `| ${cells.join(" | ")} |`;
+  }).join("\n");
+}
+
 function numericTokens(narrative: string): readonly NumericToken[] {
-  const withoutListMarkers = narrative.replace(listMarkerPattern, "");
+  const withoutListMarkers = withoutMarkdownRankCells(narrative.replace(listMarkerPattern, ""));
   numericTokenPattern.lastIndex = 0;
   return (withoutListMarkers.match(numericTokenPattern) ?? [])
     .map(parseNumericToken)
@@ -440,7 +540,7 @@ export function redactUngroundedProse(
   return dropEmptyTables(kept).join("\n").replace(/\n{3,}/gu, "\n\n").trim();
 }
 
-function findUngroundedNumbersWithEvidence(
+export function findUngroundedNumbersWithEvidence(
   narrative: string,
   cellValues: readonly number[],
   copiedLabels: readonly string[],

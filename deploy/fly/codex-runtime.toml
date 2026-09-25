@@ -1,0 +1,66 @@
+primary_region = "syd"
+kill_signal = "SIGTERM"
+kill_timeout = 30
+
+[build]
+  dockerfile = "../../Dockerfile.services"
+
+[env]
+  ALBERT_ANALYTICAL_REGION = "ap-southeast-2"
+  # Both harnesses share 16 slots. Omni runs in-process; Codex uses a CLI child.
+  # The VM and HTTP concurrency limits are sized for this cap.
+  ALBERT_CODEX_MAX_CONCURRENT_TURNS = "16"
+  ALBERT_CONTROL_PLANE_REGION = "ap-southeast-2"
+  ALBERT_RUNTIME_IDENTITY = "codex-runtime"
+  NODE_ENV = "production"
+  PORT = "8792"
+
+[processes]
+  app = "node --enable-source-maps services/codex-runtime.js"
+
+[http_service]
+  internal_port = 8792
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    # 16 concurrent turns each hold one open request (stream or job poll),
+    # plus turn-start POSTs and health checks.
+    type = "requests"
+    soft_limit = 32
+    hard_limit = 48
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "15s"
+    method = "GET"
+    path = "/v1/omni/readyz"
+    timeout = "10s"
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/livez"
+    # 3s tripped during heavy compose phases: an event-loop stall marked the
+    # machine unhealthy and Fly's proxy cut ALL routing (turn submissions and
+    # job polls), killing healthy in-flight turns. Liveness here means "will
+    # recover", not "instantly responsive" — keep it lenient.
+    timeout = "10s"
+
+[[restart]]
+  policy = "always"
+  processes = ["app"]
+
+[[vm]]
+  # Shared CPUs starved the event loop under ~4 concurrent max-effort turns
+  # (2026-08-29): health checks flapped and Fly's proxy refused routing,
+  # cascading into turn failures. Dedicated cores hold the health loop and
+  # SSE/poll handlers responsive while codex children and validation run.
+  cpu_kind = "performance"
+  cpus = 2
+  memory = "4gb"
+  processes = ["app"]

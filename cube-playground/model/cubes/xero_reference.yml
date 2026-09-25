@@ -1,0 +1,898 @@
+cubes:
+  # ---------------------------------------------------------------------------
+  # Xero reference and structural cubes: organisation, chart of accounts,
+  # items, tax rates, currencies, users, branding, budgets, fixed assets and
+  # the files library.
+  #
+  # Source: source_xero_official.xo_* security-barrier views over Albert's
+  # per-connection Fivetran Connector SDK Xero schemas.
+  # ---------------------------------------------------------------------------
+
+  - name: xero_organisation
+    title: Organisation (Xero)
+    public: false
+    description: >
+      One row for the connected Xero organisation: legal and trading names,
+      ABN, entity type, base currency, timezone, GST basis and reporting
+      period, financial year end and lock dates.
+    meta:
+      ai_context: >
+        Facts about the business itself: "what's my ABN", "when does my
+        financial year end", "what GST basis am I on" resolve here. financial
+        year ends on financial_year_end_day / financial_year_end_month
+        (e.g. 30/6 for a standard AU financial year).
+    sql: SELECT * FROM source_xero_official.xo_organisation
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: organisation_id
+        sql: organisation_id
+        type: string
+        public: false
+      - name: organisation_name
+        sql: organisation_name
+        type: string
+        title: Business name
+      - name: legal_name
+        sql: legal_name
+        type: string
+      - name: organisation_type
+        sql: organisation_type
+        type: string
+        description: COMPANY, SOLETRADER, PARTNERSHIP, TRUST...
+      - name: entity_type
+        sql: entity_type
+        type: string
+        public: false
+      - name: line_of_business
+        sql: line_of_business
+        type: string
+        title: Line of business
+      - name: base_currency
+        sql: base_currency
+        type: string
+      - name: country_code
+        sql: country_code
+        type: string
+      - name: timezone
+        sql: timezone
+        type: string
+      - name: abn
+        sql: abn
+        type: string
+        title: ABN
+        description: Australian Business Number (Xero RegistrationNumber).
+      - name: tax_number
+        sql: tax_number
+        type: string
+        public: false
+      - name: pays_tax
+        sql: pays_tax
+        type: boolean
+      - name: gst_basis
+        sql: gst_basis
+        type: string
+        title: GST basis
+        description: ACCRUALS or CASH.
+      - name: gst_period
+        sql: gst_period
+        type: string
+        title: GST reporting period
+        description: MONTHLY, QUARTERLY (1MONTHLY/3MONTHLY/6MONTHLY).
+      - name: default_sales_tax
+        sql: default_sales_tax
+        type: string
+        public: false
+      - name: default_purchases_tax
+        sql: default_purchases_tax
+        type: string
+        public: false
+      - name: financial_year_end_day
+        sql: financial_year_end_day
+        type: number
+        title: Financial year end day
+      - name: financial_year_end_month
+        sql: financial_year_end_month
+        type: number
+        title: Financial year end month
+      - name: period_lock_date
+        sql: period_lock_date
+        type: time
+        description: Books are locked for edits up to this date.
+      - name: end_of_year_lock_date
+        sql: end_of_year_lock_date
+        type: time
+      - name: is_demo_company
+        sql: is_demo_company
+        type: boolean
+        public: false
+      - name: organisation_status
+        sql: organisation_status
+        type: string
+        public: false
+      - name: edition
+        sql: edition
+        type: string
+        public: false
+      - name: created_at
+        sql: created_at
+        type: time
+        description: When the organisation was created in Xero.
+    measures:
+      - name: organisation_count
+        type: count
+        public: false
+
+  - name: xero_accounts
+    title: Chart of accounts (Xero)
+    public: false
+    description: >
+      One row per GL account in the Xero chart of accounts: code, name, type
+      (REVENUE, EXPENSE, BANK, CURRLIAB...), class (ASSET, EQUITY, EXPENSE,
+      LIABILITY, REVENUE), tax treatment and status. The backbone every
+      transaction line codes to.
+    meta:
+      ai_context: >
+        Official Xero chart-of-accounts taxonomy. Use account_type for business
+        meaning and account_class for the broad statement side; never infer a
+        category from a user-editable name/code. P&L types: SALES/REVENUE =
+        sales revenue, OTHERINCOME = other income, DIRECTCOSTS = cost of sales,
+        EXPENSE/OVERHEADS/DEPRECIATN = operating expense. WAGEPAYABLES is a
+        current-liability system account, not wage expense. Archived accounts
+        remain valid dimensions for historical activity.
+    sql: SELECT * FROM source_xero_official.xo_accounts
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+      - name: account_code
+        sql: account_code
+        type: string
+        title: Account code
+      - name: account_name
+        sql: account_name
+        type: string
+        title: Account
+      - name: status
+        sql: status
+        type: string
+        description: ACTIVE or ARCHIVED.
+      - name: account_type
+        sql: account_type
+        type: string
+        title: Account type
+        description: >
+          Official detailed Xero classifier. SALES/REVENUE are sales revenue;
+          OTHERINCOME is non-operating income; DIRECTCOSTS is cost of sales;
+          EXPENSE/OVERHEADS/DEPRECIATN are operating expenses. BANK, CURRENT,
+          PREPAYMENT, INVENTORY, FIXED and NONCURRENT are assets; CURRLIAB,
+          LIABILITY and TERMLIAB are liabilities; EQUITY is equity.
+      - name: account_class
+        sql: account_class
+        type: string
+        title: Account class
+        description: >
+          Broad class returned by Xero: ASSET, EQUITY, EXPENSE, LIABILITY or
+          REVENUE. Use the returned value; never reconstruct it from names.
+      - name: tax_type
+        sql: tax_type
+        type: string
+        description: Default tax type applied to the account.
+      - name: description
+        sql: description
+        type: string
+      - name: system_account
+        sql: system_account
+        type: string
+        description: >
+          Xero-managed role such as DEBTORS (accounts receivable), CREDITORS
+          (accounts payable), GST or WAGEPAYABLES. System liabilities and tax
+          control accounts belong on the balance sheet, not in profit.
+      - name: is_bank_account
+        sql: is_bank_account
+        type: boolean
+      - name: bank_account_type
+        sql: bank_account_type
+        type: string
+        public: false
+      - name: currency_code
+        sql: currency_code
+        type: string
+        public: false
+      - name: reporting_code
+        sql: reporting_code
+        type: string
+        title: Reporting code
+        description: >
+          Optional Xero report-template mapping for fine-grained semantics such
+          as wages. Codes vary by country and may be absent; account_type remains
+          the canonical fallback.
+      - name: reporting_code_name
+        sql: reporting_code_name
+        type: string
+        title: Reporting code name
+        description: Xero display label for reporting_code, when supplied.
+      - name: enable_payments
+        sql: enable_payments
+        type: boolean
+        public: false
+      - name: show_in_expense_claims
+        sql: show_in_expense_claims
+        type: boolean
+        public: false
+      - name: on_watchlist
+        sql: on_watchlist
+        type: boolean
+        description: Shown on the Xero dashboard watchlist.
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+    measures:
+      - name: account_count
+        type: count
+        title: Accounts
+      - name: mapped_reporting_code_count
+        type: count
+        title: Accounts with reporting codes
+        description: Accounts carrying a non-empty Xero reporting code.
+        filters:
+          - sql: "NULLIF(BTRIM({CUBE}.reporting_code), '') IS NOT NULL"
+      - name: reporting_code_coverage_pct
+        type: number
+        sql: "100.0 * {mapped_reporting_code_count} / NULLIF({account_count}, 0)"
+        format: percent
+        title: Reporting code coverage %
+        description: Share of selected accounts mapped to a reporting code.
+    segments:
+      - name: active_accounts
+        sql: "{CUBE}.status = 'ACTIVE'"
+      - name: revenue_accounts
+        sql: "{CUBE}.account_class = 'REVENUE'"
+      - name: expense_accounts
+        sql: "{CUBE}.account_class = 'EXPENSE'"
+      - name: bank_accounts
+        sql: "{CUBE}.account_type = 'BANK'"
+      - name: sales_revenue_accounts
+        sql: "{CUBE}.account_type IN ('REVENUE', 'SALES')"
+      - name: other_income_accounts
+        sql: "{CUBE}.account_type = 'OTHERINCOME'"
+      - name: direct_cost_accounts
+        sql: "{CUBE}.account_type = 'DIRECTCOSTS'"
+      - name: operating_expense_accounts
+        sql: "{CUBE}.account_type IN ('EXPENSE', 'OVERHEADS', 'DEPRECIATN')"
+
+  - name: xero_items
+    title: Items (Xero products and services)
+    public: false
+    description: >
+      One row per Xero inventory/service item: code, name, sales and purchase
+      prices, account coding and whether it is tracked as inventory.
+    meta:
+      ai_context: >
+        The product/service catalogue used on invoice lines. "Prices of my
+        products", "what do I sell" resolve here; actual sales quantities and
+        values come from xero_invoice_line_items joined by item_code.
+    sql: SELECT * FROM source_xero_official.xo_items
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: item_id
+        sql: item_id
+        type: string
+        public: false
+      - name: item_code
+        sql: item_code
+        type: string
+        title: Item code
+      - name: item_name
+        sql: item_name
+        type: string
+        title: Item
+      - name: description
+        sql: description
+        type: string
+      - name: purchase_description
+        sql: purchase_description
+        type: string
+        public: false
+      - name: is_sold
+        sql: is_sold
+        type: boolean
+      - name: is_purchased
+        sql: is_purchased
+        type: boolean
+      - name: is_tracked_as_inventory
+        sql: is_tracked_as_inventory
+        type: boolean
+      - name: sales_unit_price
+        sql: sales_unit_price
+        type: number
+        title: Sales price
+      - name: sales_account_code
+        sql: sales_account_code
+        type: string
+        public: false
+      - name: sales_tax_type
+        sql: sales_tax_type
+        type: string
+        public: false
+      - name: purchase_unit_price
+        sql: purchase_unit_price
+        type: number
+        title: Purchase price
+      - name: purchase_account_code
+        sql: purchase_account_code
+        type: string
+        public: false
+      - name: purchase_tax_type
+        sql: purchase_tax_type
+        type: string
+        public: false
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+    measures:
+      - name: item_count
+        type: count
+        title: Items
+
+  - name: xero_tax_rates
+    title: Tax rates (Xero)
+    public: false
+    description: >
+      One row per Xero tax rate: the GST codes (GST on Income, GST on
+      Expenses, GST Free...) with their effective percentage and where they
+      can apply.
+    sql: SELECT * FROM source_xero_official.xo_tax_rates
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: tax_type
+        sql: tax_type
+        type: string
+        title: Tax type code
+        description: The code lines reference (OUTPUT, INPUT, EXEMPTOUTPUT...).
+      - name: tax_name
+        sql: tax_name
+        type: string
+        title: Tax rate
+      - name: report_tax_type
+        sql: report_tax_type
+        type: string
+        public: false
+      - name: status
+        sql: status
+        type: string
+      - name: display_tax_rate
+        sql: display_tax_rate
+        type: number
+        title: Rate (%)
+      - name: effective_rate
+        sql: effective_rate
+        type: number
+        public: false
+      - name: can_apply_to_assets
+        sql: can_apply_to_assets
+        type: boolean
+        public: false
+      - name: can_apply_to_equity
+        sql: can_apply_to_equity
+        type: boolean
+        public: false
+      - name: can_apply_to_expenses
+        sql: can_apply_to_expenses
+        type: boolean
+        public: false
+      - name: can_apply_to_liabilities
+        sql: can_apply_to_liabilities
+        type: boolean
+        public: false
+      - name: can_apply_to_revenue
+        sql: can_apply_to_revenue
+        type: boolean
+        public: false
+    measures:
+      - name: tax_rate_count
+        type: count
+
+  - name: xero_currencies
+    title: Currencies (Xero)
+    public: false
+    description: One row per currency enabled in the organisation.
+    sql: SELECT * FROM source_xero_official.xo_currencies
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: currency_code
+        sql: currency_code
+        type: string
+        title: Currency
+      - name: description
+        sql: description
+        type: string
+    measures:
+      - name: currency_count
+        type: count
+
+  - name: xero_users
+    title: Xero users
+    public: false
+    description: >
+      One row per user with access to the Xero organisation, with their role
+      and whether they are the subscriber.
+    sql: SELECT * FROM source_xero_official.xo_users
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: user_id
+        sql: user_id
+        type: string
+        public: false
+      - name: first_name
+        sql: first_name
+        type: string
+        public: false
+      - name: last_name
+        sql: last_name
+        type: string
+        public: false
+      - name: email
+        sql: email
+        type: string
+        public: false
+      - name: organisation_role
+        sql: organisation_role
+        type: string
+        title: Role
+        description: STANDARD, ADMIN, READONLY, INVOICEONLY...
+      - name: is_subscriber
+        sql: is_subscriber
+        type: boolean
+        description: True for the user who owns the Xero subscription.
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+    measures:
+      - name: user_count
+        type: count
+        title: Users with access
+
+  - name: xero_branding_themes
+    title: Branding themes (Xero)
+    public: false
+    description: One row per invoice branding theme.
+    sql: SELECT * FROM source_xero_official.xo_branding_themes
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: branding_theme_id
+        sql: branding_theme_id
+        type: string
+        public: false
+      - name: theme_name
+        sql: theme_name
+        type: string
+        title: Branding theme
+      - name: theme_type
+        sql: theme_type
+        type: string
+        public: false
+      - name: sort_order
+        sql: sort_order
+        type: number
+        public: false
+      - name: created_at
+        sql: created_at
+        type: time
+        public: false
+    measures:
+      - name: theme_count
+        type: count
+
+  - name: xero_budgets
+    title: Budgets (Xero)
+    public: false
+    description: >
+      One row per budget defined in Xero (the overall budget and any tracking
+      budgets).
+    sql: SELECT * FROM source_xero_official.xo_budgets
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: budget_id
+        sql: budget_id
+        type: string
+        public: false
+      - name: budget_type
+        sql: budget_type
+        type: string
+        description: OVERALL or TRACKING.
+      - name: description
+        sql: description
+        type: string
+        title: Budget
+      - name: status
+        sql: status
+        type: string
+        public: false
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+    measures:
+      - name: budget_count
+        type: count
+
+  - name: xero_assets
+    title: Fixed assets (Xero)
+    public: false
+    description: >
+      One row per fixed asset registered in Xero: purchase date and price,
+      current book value, accumulated depreciation and depreciation settings.
+    meta:
+      ai_context: >
+        The fixed asset register. "What assets do I own", "asset value",
+        "depreciation" = purchase_price / book_value / accumulated
+        depreciation here. status: DRAFT, REGISTERED or DISPOSED.
+    sql: SELECT * FROM source_xero_official.xo_assets
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_asset_types
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_asset_types}.tenant_id
+          AND {CUBE}.asset_type_id = {xero_asset_types}.asset_type_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: asset_id
+        sql: asset_id
+        type: string
+        public: false
+      - name: asset_name
+        sql: asset_name
+        type: string
+        title: Asset
+      - name: asset_number
+        sql: asset_number
+        type: string
+      - name: status
+        sql: status
+        type: string
+        description: >
+          Exactly 'Registered', 'Draft' or 'Disposed' (mixed case, NOT
+          uppercase). Filter with these exact values.
+      - name: purchased_on
+        sql: purchased_on
+        type: time
+        title: Purchase date
+      - name: purchase_price_value
+        sql: purchase_price
+        type: number
+        title: Purchase price
+      - name: disposal_price_value
+        sql: disposal_price
+        type: number
+      - name: book_value_amount
+        sql: book_value
+        type: number
+        title: Current book value
+      - name: asset_type_id
+        sql: asset_type_id
+        type: string
+        public: false
+      - name: depreciation_method
+        sql: depreciation_method
+        type: string
+        description: StraightLine, DiminishingValue100/150/200, FullDepreciation or NoDepreciation.
+      - name: depreciation_calculation_method
+        sql: depreciation_calculation_method
+        type: string
+        public: false
+      - name: depreciation_started_on
+        sql: depreciation_started_on
+        type: time
+        public: false
+      - name: prior_accumulated_depreciation
+        sql: prior_accumulated_depreciation
+        type: number
+        public: false
+      - name: current_accumulated_depreciation
+        sql: current_accumulated_depreciation
+        type: number
+        title: Accumulated depreciation (current FY)
+      - name: current_gain_loss
+        sql: current_gain_loss
+        type: number
+        public: false
+    measures:
+      - name: asset_count
+        type: count
+        title: Assets
+      - name: total_purchase_price
+        type: sum
+        sql: purchase_price
+        format: currency
+        title: Total purchase cost
+      - name: total_book_value
+        type: sum
+        sql: book_value
+        format: currency
+        title: Total book value
+      - name: total_accumulated_depreciation
+        type: sum
+        sql: current_accumulated_depreciation
+        format: currency
+        title: Accumulated depreciation
+    segments:
+      - name: registered_assets
+        sql: "{CUBE}.status = 'Registered'"
+
+  - name: xero_asset_types
+    title: Asset types (Xero)
+    public: false
+    description: One row per fixed asset type with its default depreciation settings.
+    sql: SELECT * FROM source_xero_official.xo_asset_types
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: asset_type_id
+        sql: asset_type_id
+        type: string
+        public: false
+      - name: asset_type_name
+        sql: asset_type_name
+        type: string
+        title: Asset type
+      - name: fixed_asset_account_id
+        sql: fixed_asset_account_id
+        type: string
+        public: false
+      - name: depreciation_expense_account_id
+        sql: depreciation_expense_account_id
+        type: string
+        public: false
+      - name: accumulated_depreciation_account_id
+        sql: accumulated_depreciation_account_id
+        type: string
+        public: false
+      - name: depreciation_method
+        sql: depreciation_method
+        type: string
+      - name: depreciation_rate
+        sql: depreciation_rate
+        type: number
+        description: Annual depreciation rate percentage.
+    measures:
+      - name: asset_type_count
+        type: count
+
+  - name: xero_files
+    title: Files (Xero library)
+    public: false
+    description: >
+      One row per file in the Xero file library (receipts, contracts...),
+      with name, type, size and uploader. File contents are not ingested.
+    sql: SELECT * FROM source_xero_official.xo_files
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: file_id
+        sql: file_id
+        type: string
+        public: false
+      - name: file_name
+        sql: file_name
+        type: string
+        title: File
+      - name: mime_type
+        sql: mime_type
+        type: string
+      - name: folder_id
+        sql: folder_id
+        type: string
+        public: false
+      - name: uploaded_by
+        sql: uploaded_by
+        type: string
+      - name: created_at
+        sql: created_at
+        type: time
+        title: Uploaded
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+    measures:
+      - name: file_count
+        type: count
+        title: Files
+      - name: total_size_bytes
+        type: sum
+        sql: size_bytes
+        title: Total size (bytes)
+
+  - name: xero_file_associations
+    title: File associations (Xero)
+    public: false
+    description: One row per link between a library file and a document (invoice, contact...).
+    sql: SELECT * FROM source_xero_official.xo_file_associations
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_files
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_files}.tenant_id
+          AND {CUBE}.file_id = {xero_files}.file_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: file_id
+        sql: file_id
+        type: string
+        public: false
+      - name: object_id
+        sql: object_id
+        type: string
+        public: false
+      - name: object_type
+        sql: object_type
+        type: string
+        description: The kind of record the file is attached to.
+      - name: object_group
+        sql: object_group
+        type: string
+        description: Invoice, Contact, BankTransaction...
+    measures:
+      - name: association_count
+        type: count

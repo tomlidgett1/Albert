@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { createServiceLogger } from "../../../packages/observability/src/index.js";
 import {
   INTERNAL_SIGNATURE_HEADER,
@@ -7,17 +8,27 @@ import {
   verifyInternalRequest,
 } from "../../../packages/security/src/index.js";
 import {
+  fivetranMyDataRequestSchema,
+  fivetranMyDataResultSchema,
   operatorDiagnosticRequestSchema,
   operatorDiagnosticSampleSchema,
   protectedDogfoodOnboardingReceiptRequestSchema,
   protectedDogfoodOnboardingReceiptSchema,
+  shopifyPrivacyArtifactSchema,
+  shopifyPrivacyExportRequestSchema,
+  type FivetranMyDataGrant,
+  type FivetranMyDataResult,
   type OperatorDiagnosticGrant,
   type OperatorDiagnosticSample,
   type ProtectedDogfoodOnboardingReceipt,
   type ProtectedDogfoodOnboardingReceiptRequest,
+  type ShopifyPrivacyArtifact,
+  type ShopifyPrivacyExportGrant,
 } from "./contracts.js";
 
 export const OPERATOR_DIAGNOSTIC_ROW_SAMPLE_PATH = "/v1/row-samples";
+export const FIVETRAN_MY_DATA_PATH = "/v1/fivetran-my-data";
+export const SHOPIFY_PRIVACY_EXPORT_PATH = "/v1/shopify-privacy-exports";
 export const PROTECTED_DOGFOOD_ONBOARDING_RECEIPT_PATH =
   "/v1/protected-dogfood/onboarding-receipts";
 
@@ -31,13 +42,32 @@ export type OperatorDiagnosticControlStore = Readonly<{
     rowCount: number;
     errorCode?: string;
   }>): Promise<void>;
+  claimFivetranMyData?(requestId: string): Promise<FivetranMyDataGrant>;
+  completeFivetranMyData?(input: Readonly<{
+    requestId: string;
+    status: "completed" | "failed";
+    resultCount: number;
+    errorCode?: string;
+  }>): Promise<void>;
   completeOnboardingReceipt?(
     input: ProtectedDogfoodOnboardingReceiptRequest,
   ): Promise<ProtectedDogfoodOnboardingReceipt>;
+  claimShopifyPrivacyExport?(exportId: string): Promise<ShopifyPrivacyExportGrant>;
+  completeShopifyPrivacyExport?(input: Readonly<{
+    exportId: string;
+    status: "completed" | "failed";
+    artifactSha256?: string;
+    recordCount?: number;
+    errorCode?: string;
+  }>): Promise<void>;
 }>;
 
 export type OperatorDiagnosticReadStore = Readonly<{
   sample(grant: OperatorDiagnosticGrant): Promise<OperatorDiagnosticSample>;
+  browseFivetranMyData?(grant: FivetranMyDataGrant): Promise<FivetranMyDataResult>;
+  exportShopifyPrivacy?(
+    grant: ShopifyPrivacyExportGrant,
+  ): Promise<ShopifyPrivacyArtifact>;
 }>;
 
 function safeDiagnosticCode(error: unknown): string {
@@ -86,6 +116,8 @@ export function createOperatorDiagnosticHttpHandler(options: Readonly<{
     const url = new URL(request.url);
     if (![
       OPERATOR_DIAGNOSTIC_ROW_SAMPLE_PATH,
+      FIVETRAN_MY_DATA_PATH,
+      SHOPIFY_PRIVACY_EXPORT_PATH,
       PROTECTED_DOGFOOD_ONBOARDING_RECEIPT_PATH,
     ].includes(url.pathname)) {
       return json({ error: { code: "NOT_FOUND", message: "Unknown diagnostic endpoint." } }, 404, requestId);
@@ -131,6 +163,129 @@ export function createOperatorDiagnosticHttpHandler(options: Readonly<{
             message: invalid
               ? "The protected onboarding receipt request is invalid."
               : "The protected onboarding receipt could not be completed.",
+          },
+        }, invalid ? 400 : 503, requestId);
+      }
+    }
+
+    if (url.pathname === FIVETRAN_MY_DATA_PATH) {
+      let grant: FivetranMyDataGrant | undefined;
+      let terminalOutcomePersisted = false;
+      try {
+        if (!options.controlStore.claimFivetranMyData ||
+            !options.controlStore.completeFivetranMyData ||
+            !options.readStore.browseFivetranMyData) {
+          throw Object.assign(new Error("Fivetran My Data is unavailable."), {
+            diagnosticCode: "FIVETRAN_MY_DATA_UNAVAILABLE",
+          });
+        }
+        const input = fivetranMyDataRequestSchema.parse(JSON.parse(rawBody));
+        grant = await options.controlStore.claimFivetranMyData(input.requestId);
+        const result = fivetranMyDataResultSchema.parse(
+          await options.readStore.browseFivetranMyData(grant),
+        );
+        const resultCount = result.kind === "catalogue"
+          ? result.catalogue.sources.reduce((count, source) => count + source.tables.length, 0)
+          : result.table.rows.length;
+        await options.controlStore.completeFivetranMyData({
+          requestId: grant.request_id,
+          status: "completed",
+          resultCount,
+        });
+        terminalOutcomePersisted = true;
+        logger.info("fivetran_my_data_completed", {
+          requestId: grant.request_id,
+          kind: grant.request_kind,
+          resultCount,
+        }, requestId);
+        return json({ result }, 200, requestId);
+      } catch (error) {
+        if (grant && !terminalOutcomePersisted && options.controlStore.completeFivetranMyData) {
+          for (let attempt = 1; attempt <= 3 && !terminalOutcomePersisted; attempt += 1) {
+            try {
+              await options.controlStore.completeFivetranMyData({
+                requestId: grant.request_id,
+                status: "failed",
+                resultCount: 0,
+                errorCode: safeDiagnosticCode(error),
+              });
+              terminalOutcomePersisted = true;
+            } catch { /* retry the append-only terminal outcome */ }
+          }
+        }
+        const invalid = error instanceof z.ZodError || error instanceof SyntaxError;
+        logger.error("fivetran_my_data_failed", {
+          requestId: grant?.request_id ?? null,
+          kind: grant?.request_kind ?? null,
+          code: invalid ? "INVALID_REQUEST" : safeDiagnosticCode(error),
+          terminalOutcomePersisted,
+        }, requestId);
+        return json({
+          error: {
+            code: invalid ? "INVALID_REQUEST" : "FIVETRAN_MY_DATA_UNAVAILABLE",
+            message: invalid
+              ? "The Fivetran My Data request is invalid."
+              : "Fivetran data could not be loaded.",
+          },
+        }, invalid ? 400 : 503, requestId);
+      }
+    }
+
+    if (url.pathname === SHOPIFY_PRIVACY_EXPORT_PATH) {
+      let grant: ShopifyPrivacyExportGrant | undefined;
+      let terminalOutcomePersisted = false;
+      try {
+        if (!options.controlStore.claimShopifyPrivacyExport ||
+            !options.controlStore.completeShopifyPrivacyExport ||
+            !options.readStore.exportShopifyPrivacy) {
+          throw Object.assign(new Error("Shopify privacy export is unavailable."), {
+            diagnosticCode: "SHOPIFY_PRIVACY_EXPORT_UNAVAILABLE",
+          });
+        }
+        const input = shopifyPrivacyExportRequestSchema.parse(JSON.parse(rawBody));
+        grant = await options.controlStore.claimShopifyPrivacyExport(input.exportId);
+        const artifact = shopifyPrivacyArtifactSchema.parse(
+          await options.readStore.exportShopifyPrivacy(grant),
+        );
+        const artifactBody = JSON.stringify(artifact);
+        const artifactSha256 = createHash("sha256").update(artifactBody, "utf8").digest("hex");
+        await options.controlStore.completeShopifyPrivacyExport({
+          exportId: grant.export_id,
+          status: "completed",
+          artifactSha256,
+          recordCount: artifact.recordCount,
+        });
+        terminalOutcomePersisted = true;
+        logger.info("shopify_privacy_export_completed", {
+          exportId: grant.export_id,
+          recordCount: artifact.recordCount,
+        }, requestId);
+        return json({ artifact, artifactSha256 }, 200, requestId);
+      } catch (error) {
+        if (grant && !terminalOutcomePersisted && options.controlStore.completeShopifyPrivacyExport) {
+          for (let attempt = 1; attempt <= 3 && !terminalOutcomePersisted; attempt += 1) {
+            try {
+              await options.controlStore.completeShopifyPrivacyExport({
+                exportId: grant.export_id,
+                status: "failed",
+                errorCode: safeDiagnosticCode(error),
+              });
+              terminalOutcomePersisted = true;
+            } catch { /* retry append-only outcome persistence */ }
+          }
+        }
+        const invalid = error instanceof z.ZodError || error instanceof SyntaxError;
+        logger.error("shopify_privacy_export_failed", {
+          exportId: grant?.export_id ?? null,
+          code: invalid ? "INVALID_REQUEST" : safeDiagnosticCode(error),
+          terminalOutcomePersisted,
+        }, requestId);
+        return json({
+          error: {
+            code: invalid ? "INVALID_REQUEST" : "DIAGNOSTIC_UNAVAILABLE",
+            message: invalid
+              ? "The Shopify privacy export request is invalid."
+              : "The Shopify privacy export could not be produced.",
           },
         }, invalid ? 400 : 503, requestId);
       }
@@ -187,6 +342,34 @@ export async function signOperatorDiagnosticRequest(
   return signInternalRequest({
     method: "POST",
     path: OPERATOR_DIAGNOSTIC_ROW_SAMPLE_PATH,
+    body: rawBody,
+    secret,
+    ...(timestamp === undefined ? {} : { timestamp }),
+  });
+}
+
+export async function signFivetranMyDataRequest(
+  rawBody: string,
+  secret: string,
+  timestamp?: number,
+): Promise<Readonly<Record<string, string>>> {
+  return signInternalRequest({
+    method: "POST",
+    path: FIVETRAN_MY_DATA_PATH,
+    body: rawBody,
+    secret,
+    ...(timestamp === undefined ? {} : { timestamp }),
+  });
+}
+
+export async function signShopifyPrivacyExportRequest(
+  rawBody: string,
+  secret: string,
+  timestamp?: number,
+): Promise<Readonly<Record<string, string>>> {
+  return signInternalRequest({
+    method: "POST",
+    path: SHOPIFY_PRIVACY_EXPORT_PATH,
     body: rawBody,
     secret,
     ...(timestamp === undefined ? {} : { timestamp }),

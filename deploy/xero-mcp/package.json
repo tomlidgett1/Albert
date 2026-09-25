@@ -1,0 +1,9 @@
+{
+  "name": "albert-xero-mcp-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lockfile-pinned official Xero MCP runtime for the services image",
+  "dependencies": {
+    "@xeroapi/xero-mcp-server": "0.0.17"
+  }
+}

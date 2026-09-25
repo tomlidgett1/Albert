@@ -1,22 +1,22 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import { LoginFrame } from "./login-chrome";
 import LoginForm from "./login-form";
 import styles from "./login.module.css";
 
 export const metadata: Metadata = {
-  title: "Sign in · Albert",
-  description: "Sign in or create your Albert account.",
+  title: {
+    absolute: "Albert",
+  },
+  description: "Governed, natural-language analytics for small business.",
 };
 
 function LoginShell() {
   return (
-    <main className={styles.loginPage} data-theme="system" aria-busy="true">
+    <LoginFrame theme="system" busy home>
       <section className={styles.loginCard} aria-labelledby="login-title">
-        <div className={styles.brand} aria-label="Albert">
-          <span>Albert</span>
-        </div>
         <div className={styles.intro}>
-          <h1 id="login-title">Welcome back</h1>
+          <h2 id="login-title">Welcome back</h2>
           <p>Sign in to continue to your workspace.</p>
         </div>
         <div className={styles.shellFields} aria-hidden="true">
@@ -25,7 +25,7 @@ function LoginShell() {
           <div className={styles.shellButton} />
         </div>
       </section>
-    </main>
+    </LoginFrame>
   );
 }
 

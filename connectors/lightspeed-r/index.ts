@@ -97,12 +97,6 @@ function asArray(value: unknown): readonly unknown[] {
   return value && typeof value === "object" ? [value] : [];
 }
 
-function truthy(value: unknown): boolean {
-  return value === true || value === 1 || value === "1" || value === "true";
-}
-
-
-
 const DISCOVERED_ACCOUNT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 

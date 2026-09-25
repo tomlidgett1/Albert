@@ -2,8 +2,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { pathToFileURL } from "node:url";
 import { loadEncodedAes256Keyring } from "../../../packages/security/src/index.js";
 import { parseSuppressedInitialBackfillConnectors } from "./config.js";
+import { isFivetranDestinationSchema } from "../../../packages/fivetran/src/index.js";
 import { ProductionConnectorFactory } from "./connector-factory.js";
 import { AesKeyringWrapper, EnvelopeCryptography } from "./credential-vault.js";
+import { FivetranDestinationStore } from "./fivetran-destinations.js";
+import { FivetranWorkerHttpHandler } from "./fivetran-http.js";
+import { FivetranConnectionStore } from "./fivetran-store.js";
 import { OAuthWorkerHttpHandler } from "./oauth-http.js";
 import { OAuthSessionStore } from "./oauth-session-store.js";
 import { PgTransactionalDatabase } from "./postgres.js";
@@ -88,6 +92,11 @@ export async function runOAuthOnlyWorker(): Promise<void> {
   if (process.env.NODE_ENV === "production") {
     throw new Error("The OAuth-only worker is unavailable in production.");
   }
+  const stripeClientId = process.env.STRIPE_CLIENT_ID?.trim() || "";
+  const stripeSecretKey = process.env.STRIPE_SECRET_KEY?.trim() || "";
+  if (Boolean(stripeClientId) !== Boolean(stripeSecretKey)) {
+    throw new Error("STRIPE_CLIENT_ID and STRIPE_SECRET_KEY must be configured together.");
+  }
   const origin = publicOrigin();
   const tokenKeyring = loadEncodedAes256Keyring({
     currentKey: required("TOKEN_ENCRYPTION_KEY"),
@@ -111,6 +120,9 @@ export async function runOAuthOnlyWorker(): Promise<void> {
   const connectorFactory = new ProductionConnectorFactory({
     lightspeedClientId: required("LIGHTSPEED_CLIENT_ID"),
     lightspeedClientSecret: required("LIGHTSPEED_CLIENT_SECRET"),
+    lightspeedXClientId: required("LIGHTSPEED_X_CLIENT_ID"),
+    lightspeedXClientSecret: required("LIGHTSPEED_X_CLIENT_SECRET"),
+    lightspeedXRedirectUri: new URL("/api/oauth/lightspeed-x/callback", origin).toString(),
     xeroClientId: required("XERO_CLIENT_ID"),
     xeroEnableAdvancedJournals: process.env.XERO_ENABLE_ADVANCED_JOURNALS === "true",
     deputyClientId: required("DEPUTY_CLIENT_ID"),
@@ -122,8 +134,8 @@ export async function runOAuthOnlyWorker(): Promise<void> {
     shopifyClientId: required("SHOPIFY_CLIENT_ID"),
     shopifyClientSecret: required("SHOPIFY_CLIENT_SECRET"),
     shopifyRedirectUri: new URL("/api/oauth/shopify/callback", origin).toString(),
-    stripeClientId: required("STRIPE_CLIENT_ID"),
-    stripeSecretKey: required("STRIPE_SECRET_KEY"),
+    stripeClientId,
+    stripeSecretKey,
     stripeRedirectUri: new URL("/api/oauth/stripe/callback", origin).toString(),
     momenceClientId: required("MOMENCE_CLIENT_ID"),
     momenceClientSecret: required("MOMENCE_CLIENT_SECRET"),
@@ -137,7 +149,7 @@ export async function runOAuthOnlyWorker(): Promise<void> {
   });
   const handler = new OAuthWorkerHttpHandler({
     oauthWorkerSigningSecret: required("ALBERT_OAUTH_WORKER_SIGNING_SECRET"),
-    allowedRedirectUris: new Set(["lightspeed", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"].map((provider) =>
+    allowedRedirectUris: new Set(["lightspeed", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads", "fivetran-xero", "fivetran-stripe"].map((provider) =>
       new URL(`/api/oauth/${provider}/callback`, origin).toString()
     )),
     sessions: new OAuthSessionStore(database, new EnvelopeCryptography(wrapper), {
@@ -147,6 +159,43 @@ export async function runOAuthOnlyWorker(): Promise<void> {
     }),
     connectors: connectorFactory,
   });
+  const fivetranApiKey = process.env.FIVETRAN_API_KEY?.trim();
+  const fivetranApiSecret = process.env.FIVETRAN_API_SECRET?.trim();
+  const fivetranGroupId = process.env.FIVETRAN_GROUP_ID?.trim();
+  const fivetranSchema = process.env.FIVETRAN_XERO_SCHEMA?.trim() || "xero";
+  if ((Boolean(fivetranApiKey) || Boolean(fivetranApiSecret) || Boolean(fivetranGroupId))
+    && (!fivetranApiKey || !fivetranApiSecret || !fivetranGroupId)) {
+    throw new Error("FIVETRAN_API_KEY, FIVETRAN_API_SECRET, and FIVETRAN_GROUP_ID must be configured together.");
+  }
+  if (fivetranSchema && !isFivetranDestinationSchema(fivetranSchema)) {
+    throw new Error("FIVETRAN_XERO_SCHEMA must be a Fivetran-legal destination schema name.");
+  }
+  const fivetran = fivetranApiKey && fivetranApiSecret && fivetranGroupId
+    ? new FivetranWorkerHttpHandler({
+        oauthWorkerSigningSecret: required("ALBERT_OAUTH_WORKER_SIGNING_SECRET"),
+        allowedRedirectUris: new Set(["fivetran-xero", "fivetran-lightspeed", "fivetran-deputy", "fivetran-stripe", "xero", "deputy", "stripe"].map((provider) =>
+          new URL(`/api/oauth/${provider}/callback`, origin).toString()
+        )),
+        config: {
+          apiKey: fivetranApiKey,
+          apiSecret: fivetranApiSecret,
+          groupId: fivetranGroupId,
+          destinationSchema: fivetranSchema,
+          destinationRole: process.env.FIVETRAN_DESTINATION_ROLE?.trim() || undefined,
+          tokenBrokerOrigin: process.env.FIVETRAN_TOKEN_BROKER_ORIGIN?.trim() || undefined,
+          sdkProjectDir: process.env.FIVETRAN_XERO_SDK_DIR?.trim() || "connectors/xero-fivetran-sdk",
+        },
+        store: new FivetranConnectionStore(database),
+        destinations: new FivetranDestinationStore(new PgTransactionalDatabase(
+          required("ANALYTICAL_DATABASE_URL"),
+          {
+            applicationName: "albert-oauth-worker/fivetran",
+            assumedRole: "ingest_rw",
+            maxConnections: 2,
+          },
+        )),
+      })
+    : null;
   await database.ping();
 
   const port = Number(process.env.PORT ?? "8787");
@@ -165,6 +214,10 @@ export async function runOAuthOnlyWorker(): Promise<void> {
       }
       if (pathname.startsWith("/v1/oauth/")) {
         await writeFetchResponse(await handler.handle(await toFetchRequest(request)), response);
+        return;
+      }
+      if (fivetran && pathname.startsWith("/v1/fivetran/")) {
+        await writeFetchResponse(await fivetran.handle(await toFetchRequest(request)), response);
         return;
       }
       json(response, 404, { error: "not_found" });

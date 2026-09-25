@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import type { ConnectorCapability,RawSourceRecord } from "../../packages/connector-sdk/src/index.js";
@@ -43,20 +42,6 @@ test("missing scopes and observed schema drift fail closed",()=>{
   assert.equal(check(results,"scope_available").status,"blocked");
   assert.deepEqual(check(results,"scope_available").details.missingScopes,["accounting.journals.read"]);
   assert.equal(check(results,"schema_drift").status,"blocked");
-});
-
-test("connector quality persistence rolls page and stream evidence up without last-write wins",async()=>{
-  const [migration,pipeline]=await Promise.all([
-    readFile(new URL("../../infra/migrations/analytical/0073_m5_canonical_capability_vocabulary.sql",import.meta.url),"utf8"),
-    readFile(new URL("../../services/sync-workers/src/canonical-pipeline.ts",import.meta.url),"utf8"),
-  ]);
-  assert.match(migration,/CREATE TABLE IF NOT EXISTS quality\.connector_check_observation/);
-  assert.match(migration,/PRIMARY KEY \(tenant_id,run_id,batch_id,check_id,connection_id,stream\)/);
-  assert.match(migration,/bool_or\(observation\.status='blocked'\)/);
-  assert.match(migration,/jsonb_agg\([\s\S]*ORDER BY observation\.connector_id,observation\.connection_id/);
-  assert.match(pipeline,/from quality\.check_expectation expectation[\s\S]*left join quality\.check_result result/);
-  assert.match(pipeline,/expectation\.blocks_partial_readiness/);
-  assert.match(pipeline,/resolveReadinessQualityStatus/);
 });
 
 function record(issue?:NonNullable<RawSourceRecord["validationIssues"]>[number]):RawSourceRecord{

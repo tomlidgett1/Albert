@@ -4,9 +4,9 @@ Date: 2026-08-06
 
 ## Status
 
-Accepted. Amends locked principle 6 of `docs/albert-v1-spec.md` and supersedes
-the constitutional reading in ADR 0001 that model-generated SQL is rejected
-outright.
+Superseded for the primary question-time path by ADR 0077. This design remains
+historical documentation for the bounded V1 rollback window only; model-authored
+SQL is prohibited in Semantic Execution V2.
 
 ## Context
 
@@ -31,8 +31,15 @@ supply.
 
 ## Decision
 
-The model writes SQL against the canonical model as the primary analytical
-path, and software owns correctness at three moments instead of one:
+The model writes SQL against Albert's declared analytical schemas as the
+primary analytical path. Canonical facts and marts are the strongest governed
+surface. Documented source-specific staging is also deliberately available for
+progressive semantic coverage and novel questions; results from that surface
+remain Exploratory unless they are separately attested. Immutable payload
+storage, diagnostic access and relations outside the semantic role's declared
+schema allowlist are never agent-facing.
+
+Software owns safety and certification at three moments instead of one:
 
 1. **Before execution** — `packages/semantic-registry/src/linter.ts` reads
    the statement (scope-aware: CTEs, derived tables, joins, aggregates,
@@ -67,9 +74,12 @@ substrate cannot certify no matter how well a claim attests. The audited
 route set widens to `sql_first`, which Verified may rest on while
 `source_exploration` remains excluded.
 
-`run_semantic_query` and the typed IR remain during transition; the plan IR
-retires only after the eval suite holds at or above baseline on the SQL-first
-path (C7).
+`run_semantic_query` and the typed IR may remain as compatibility tools for
+established paths, but they are not the primary analytical language and may
+not constrain the questions Albert can answer. Schema and semantic context are
+retrieved progressively: the agent searches the declared catalogue, loads only
+the relevant grains, joins, fields and business rules, then writes the
+question-specific SQL.
 
 ## Consequences
 
@@ -85,3 +95,6 @@ path (C7).
 - `mart.sales_day` and `mart.sales_day_location_category` pre-aggregate the
   most-asked shapes so fan-out is structurally impossible there and the
   linter is a backstop, not the load-bearing wall.
+- SQL-first does not mean ungoverned text-to-SQL: trusted code, not the model,
+  owns tenant scope, relation permissions, execution budgets, query auditing,
+  scope receipts, numerical grounding and certification.

@@ -1,0 +1,22 @@
+views:
+  - name: stripe_customer_analytics
+    title: Stripe customer analytics
+    description: Stripe Customer profiles with delinquency and recorded balance. Lifetime spend is on charges and invoices, not here.
+    meta:
+      ai_context: >
+        Customer-profile grain. Do not treat customer_count as unique people
+        across other tools. Email is PII: only list it when asked.
+    cubes:
+      - join_path: stripe_customers
+        includes:
+          - tenant_id
+          - name
+          - email
+          - address_city
+          - address_state
+          - address_country
+          - delinquent
+          - created
+          - customer_count
+          - delinquent_customers
+          - customer_balance

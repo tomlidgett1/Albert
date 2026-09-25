@@ -75,6 +75,7 @@ const dogfoodSeedOutcomesSchema = z.tuple(DOGFOOD_SEED_OUTCOME_SUITE_CASES.map((
   passed: z.literal(true),
 }).strict()));
 export const DOGFOOD_REQUIRED_RUNTIMES = Object.freeze([
+  "anthropic-analytics",
   "deletion-worker",
   "operator-diagnostic",
   "semantic-query",
@@ -85,6 +86,7 @@ export const DOGFOOD_REQUIRED_RUNTIMES = Object.freeze([
 ]);
 const deploymentIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/u);
 const flyAppsSchema = z.tuple([
+  ["anthropic-analytics", "public"],
   ["deletion-worker", "private"],
   ["operator-diagnostic", "public"],
   ["semantic-query", "public"],
@@ -204,8 +206,9 @@ export const dogfoodAcceptanceBodySchema = z.object({
     deletionTenantRef: digestSchema,
   }).strict(),
   runtimes: z.object({
-    checkedCount: z.literal(7),
+    checkedCount: z.literal(8),
     requiredServices: z.tuple([
+      z.literal("anthropic-analytics"),
       z.literal("deletion-worker"),
       z.literal("operator-diagnostic"),
       z.literal("semantic-query"),

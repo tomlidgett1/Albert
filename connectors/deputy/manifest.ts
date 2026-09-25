@@ -78,6 +78,7 @@ export const deputyManifest: ConnectorManifest = {
     "https://developer.deputy.com/docs/contact",
     "https://developer.deputy.com/docs/address",
   ],
+  ingestion: { initialStart: "automatic" },
   oauth: {
     scopes: DEPUTY_DEFAULT_SCOPES,
     leastPrivilegeNotes: [

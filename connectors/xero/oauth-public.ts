@@ -1,5 +1,15 @@
 import { XERO_ALLOWED_SCOPES, XERO_DEFAULT_SCOPES } from "./manifest";
 
+/** Sanity cap for worker-returned Xero AUTH. The live default set is 44 scopes. */
+export const XERO_OAUTH_SCOPE_LIMIT = Math.max(64, XERO_ALLOWED_SCOPES.length);
+
+/** Union the worker's recorded grant with the current AUTH set so a stale
+ *  OAuth worker cannot drop report or write scopes from the consent URL. */
+export function xeroAuthorizeScopes(workerScopes: readonly string[]): readonly string[] {
+  const allowed = new Set<string>(XERO_ALLOWED_SCOPES);
+  return [...new Set([...XERO_DEFAULT_SCOPES, ...workerScopes])].filter((scope) => allowed.has(scope));
+}
+
 export type XeroAuthorizationUrlInput = Readonly<{
   clientId: string;
   state: string;

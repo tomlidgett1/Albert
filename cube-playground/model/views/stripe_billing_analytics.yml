@@ -1,0 +1,43 @@
+views:
+  - name: stripe_billing_analytics
+    title: Stripe billing analytics
+    description: >
+      Stripe invoices and invoice lines, with customer and subscription links.
+      Paid totals use invoice status paid. Outstanding uses amount_remaining
+      on open or uncollectible invoices.
+    meta:
+      ai_context: >
+        Invoice grain for billed and outstanding. Line members are a different
+        grain: do not mix invoice_count with line_amount in one query.
+        Subscription state lives in stripe_subscriptions_analytics.
+    cubes:
+      - join_path: stripe_invoices
+        includes:
+          - tenant_id
+          - number
+          - status
+          - billing_reason
+          - currency
+          - paid
+          - created
+          - due_date
+          - period_start
+          - period_end
+          - status_paid_at
+          - invoice_count
+          - paid_invoices
+          - open_invoices
+          - invoiced_total
+          - amount_paid
+          - amount_due
+          - amount_remaining
+          - tax_amount
+      - join_path: stripe_invoices.stripe_customers
+        prefix: true
+        includes: [name, email]
+      - join_path: stripe_invoice_lines
+        prefix: true
+        includes: [description, type, proration, line_count, line_amount, line_quantity]
+    folders:
+      - { name: Invoices, includes: [status, invoiced_total, amount_paid, amount_remaining, paid_invoices, created] }
+      - { name: Lines, includes: [stripe_invoice_lines_description, stripe_invoice_lines_line_amount] }

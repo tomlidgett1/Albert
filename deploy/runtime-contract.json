@@ -8,15 +8,27 @@
   },
   "runtimes": {
     "web": {
-      "platform": "sites",
-      "manifest": ".openai/hosting.json",
-      "buildCommand": "npm run build",
-      "artifact": "dist/server/index.js",
+      "platform": "vercel",
+      "manifest": "vercel.json",
+      "project": "deploy/vercel-project.json",
+      "buildCommand": "next build --webpack",
+      "artifact": ".next/BUILD_ID",
       "exposure": "public",
       "healthPath": "/api/health",
-      "requiredBuildValues": [
-        "ALBERT_BUILD_SHA"
+      "requiredBuildValues": [],
+      "requiredPlatformValues": [
+        "VERCEL",
+        "VERCEL_ENV",
+        "VERCEL_DEPLOYMENT_ID",
+        "VERCEL_PROJECT_ID",
+        "VERCEL_GIT_PROVIDER",
+        "VERCEL_GIT_COMMIT_REF",
+        "VERCEL_GIT_COMMIT_SHA"
       ],
+      "platformValueAliases": {
+        "ALBERT_SERVICE_VERSION": "VERCEL_GIT_COMMIT_SHA",
+        "ALBERT_DEPLOYMENT_ID": "VERCEL_DEPLOYMENT_ID"
+      },
       "requiredRuntimeValues": [
         "NEXT_PUBLIC_SUPABASE_URL",
         "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
@@ -27,30 +39,48 @@
         "ALBERT_LIGHTSPEED_PRODUCT",
         "ALBERT_OAUTH_STATE_SECRET",
         "ALBERT_OAUTH_WORKER_SIGNING_SECRET",
+        "ALBERT_SHOPIFYQL_SIGNING_SECRET",
+        "ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET",
         "ALBERT_SEMANTIC_SIGNING_SECRET",
+        "ALBERT_SEMANTIC_PROFILE_SIGNING_SECRET",
+        "ALBERT_ANTHROPIC_SIGNING_SECRET",
         "ALBERT_OPERATOR_DIAGNOSTIC_SIGNING_SECRET",
         "ALBERT_USER_HASH_SECRET",
         "ALBERT_PUBLIC_ORIGIN",
         "SYNC_WORKER_INTERNAL_URL",
         "SEMANTIC_QUERY_SERVICE_URL",
+        "ANTHROPIC_ANALYTICS_SERVICE_URL",
         "OPERATOR_DIAGNOSTIC_SERVICE_URL",
+        "CODEX_RUNTIME_SERVICE_URL",
+        "CUBE_API_URL",
+        "CUBEJS_API_SECRET",
+        "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
         "LIGHTSPEED_CLIENT_ID",
         "XERO_CLIENT_ID",
+        "SQUARE_CLIENT_ID",
+        "SHOPIFY_CLIENT_ID",
+        "SHOPIFY_CLIENT_SECRET",
         "DEPUTY_CLIENT_ID",
         "ALBERT_CONVERSATION_RUNTIME",
+        "ALBERT_ANALYTICAL_RUNTIME",
         "ALBERT_ALLOW_FIXTURE_RUNTIME",
-        "ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST",
-        "ALBERT_SERVICE_VERSION",
-        "ALBERT_DEPLOYMENT_ID"
+        "ALBERT_BLOCKING_QUESTIONS_APPROVED_DIGEST"
       ],
       "optionalRuntimeValues": [
+        "ALBERT_LIGHTSPEED_X_PRODUCT",
         "ALBERT_OPENAI_TRACING_ENABLED",
         "ALBERT_TURN_TIMEOUT_MS",
-        "ALBERT_EMBEDDING_TIMEOUT_MS"
+        "ALBERT_EMBEDDING_TIMEOUT_MS",
+        "LIGHTSPEED_X_CLIENT_ID",
+        "MOMENCE_CLIENT_ID"
       ],
       "forbiddenRuntimeValues": [
+        "ALBERT_BUILD_SHA",
+        "ALBERT_SERVICE_VERSION",
+        "ALBERT_DEPLOYMENT_ID",
+        "ALBERT_RELEASE_SHA",
         "CONTROL_PLANE_DATABASE_URL",
         "ANALYTICAL_DATABASE_URL",
         "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
@@ -70,13 +100,58 @@
         "TOKEN_ENCRYPTION_KEY_ID",
         "TOKEN_PREVIOUS_ENCRYPTION_KEYS",
         "LIGHTSPEED_CLIENT_SECRET",
+        "LIGHTSPEED_X_CLIENT_SECRET",
         "DEPUTY_CLIENT_SECRET",
+        "MOMENCE_CLIENT_SECRET",
+        "SQUARE_CLIENT_SECRET",
         "XERO_WEBHOOK_SIGNING_KEY",
         "WEBHOOK_ATTESTATION_KEY_ID",
         "WEBHOOK_ATTESTATION_SECRET",
         "WEBHOOK_INBOX_ENCRYPTION_KEY",
         "DEPUTY_WEBHOOK_ENCRYPTION_KEY",
         "DELETION_PROOF_HMAC_KEY"
+      ]
+    },
+    "cube": {
+      "platform": "fly",
+      "manifest": "deploy/fly/cube.toml",
+      "buildCommand": "fly deploy --config deploy/fly/cube.toml",
+      "artifact": "cube-playground/Dockerfile",
+      "exposure": "signed-public",
+      "livenessPath": "/readyz",
+      "healthPath": "/readyz",
+      "requiredSecretNames": [
+        "ALBERT_SEMANTIC_READ_DATABASE_URL",
+        "ALBERT_SEMANTIC_CONTROL_DATABASE_URL",
+        "CUBEJS_API_SECRET"
+      ],
+      "optionalSecretNames": []
+    },
+    "codex-runtime": {
+      "platform": "fly",
+      "manifest": "deploy/fly/codex-runtime.toml",
+      "buildCommand": "npm run build:services",
+      "artifact": ".albert-build/services/codex-runtime.js",
+      "exposure": "signed-public",
+      "livenessPath": "/livez",
+      "healthPath": "/v1/omni/readyz",
+      "requiredSecretNames": [
+        "ALBERT_CODEX_RUNTIME_SIGNING_SECRET",
+        "CUBE_API_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "ALBERT_OMNI_JOB_DATABASE_URL"
+      ],
+      "optionalSecretNames": [],
+      "forbiddenRuntimeValues": [
+        "CUBEJS_API_SECRET",
+        "CONTROL_PLANE_DATABASE_URL",
+        "ANALYTICAL_DATABASE_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "TOKEN_ENCRYPTION_KEY",
+        "LIGHTSPEED_CLIENT_SECRET",
+        "XERO_CLIENT_SECRET",
+        "DEPUTY_CLIENT_SECRET"
       ]
     },
     "sync-worker": {
@@ -99,13 +174,17 @@
         "TOKEN_ENCRYPTION_KEY",
         "TOKEN_ENCRYPTION_KEY_ID",
         "ALBERT_OAUTH_WORKER_SIGNING_SECRET",
+        "ALBERT_SHOPIFYQL_SIGNING_SECRET",
+        "ALBERT_SHOPIFY_ADMIN_SIGNING_SECRET",
         "ALBERT_PUBLIC_ORIGIN",
         "LIGHTSPEED_CLIENT_ID",
         "LIGHTSPEED_CLIENT_SECRET",
         "XERO_CLIENT_ID",
+        "SQUARE_CLIENT_ID",
+        "SQUARE_CLIENT_SECRET",
+        "SHOPIFY_CLIENT_ID",
+        "SHOPIFY_CLIENT_SECRET",
         "XERO_DAILY_REQUEST_LIMIT",
-        "DEPUTY_CLIENT_ID",
-        "DEPUTY_CLIENT_SECRET",
         "ALBERT_VENDOR_ATTESTOR_RELAY_ENABLED",
         "ALBERT_VENDOR_ATTESTOR_PRIVATE_ORIGIN",
         "ALBERT_VENDOR_ATTESTOR_TLS_SERVER_NAME",
@@ -116,28 +195,18 @@
         "ALBERT_VENDOR_ATTESTOR_TLS_SERVER_CA_BASE64"
       ],
       "optionalSecretNames": [
+        "ALBERT_LIGHTSPEED_X_PRODUCT",
+        "LIGHTSPEED_X_CLIENT_ID",
+        "LIGHTSPEED_X_CLIENT_SECRET",
         "TOKEN_PREVIOUS_ENCRYPTION_KEYS",
         "XERO_ENABLE_ADVANCED_JOURNALS",
+        "DEPUTY_CLIENT_ID",
+        "DEPUTY_CLIENT_SECRET",
+        "MOMENCE_CLIENT_ID",
+        "MOMENCE_CLIENT_SECRET",
         "ALBERT_OAUTH_SUPPRESS_INITIAL_BACKFILL",
         "ALBERT_MAPPING_VERSION",
         "ALBERT_VENDOR_ATTESTOR_RELAY_POLL_MS"
-      ]
-    },
-    "transform-worker": {
-      "platform": "fly",
-      "manifest": "deploy/fly/transform-worker.toml",
-      "buildCommand": "npm run build:services",
-      "artifact": ".albert-build/services/transform-worker.js",
-      "exposure": "private",
-      "livenessPath": "/livez",
-      "healthPath": "/readyz",
-      "requiredSecretNames": [
-        "ALBERT_CONTROL_PLANE_PROJECT_REF",
-        "TRANSFORM_CONTROL_PLANE_DATABASE_URL",
-        "TRANSFORM_DATABASE_URL"
-      ],
-      "optionalSecretNames": [
-        "ALBERT_MAPPING_VERSION"
       ]
     },
     "webhook-gateway": {
@@ -156,6 +225,7 @@
         "SUPABASE_STORAGE_S3_LEGACY_ANON_KEY",
         "ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD",
         "XERO_WEBHOOK_SIGNING_KEY",
+        "SHOPIFY_CLIENT_SECRET",
         "WEBHOOK_ATTESTATION_KEY_ID",
         "WEBHOOK_ATTESTATION_SECRET",
         "WEBHOOK_INBOX_ENCRYPTION_KEY",
@@ -167,33 +237,6 @@
         "WEBHOOK_INBOX_PREVIOUS_ENCRYPTION_KEYS",
         "DEPUTY_WEBHOOK_PREVIOUS_ENCRYPTION_KEYS",
         "DEPUTY_WEBHOOK_MAX_SKEW_SECONDS"
-      ]
-    },
-    "semantic-query": {
-      "platform": "fly",
-      "manifest": "deploy/fly/semantic-query.toml",
-      "buildCommand": "npm run build:services",
-      "artifact": ".albert-build/services/semantic-query.js",
-      "exposure": "signed-public",
-      "livenessPath": "/healthz",
-      "healthPath": "/readyz",
-      "requiredSecretNames": [
-        "ALBERT_CONTROL_PLANE_PROJECT_REF",
-        "ALBERT_MODEL_DATA_CONTROL_APPROVED",
-        "CONTROL_PLANE_DATABASE_URL",
-        "ANALYTICAL_DATABASE_URL",
-        "ALBERT_SEMANTIC_METADATA_DATABASE_URL",
-        "ALBERT_SEMANTIC_SIGNING_SECRET",
-        "OPENAI_API_KEY",
-        "OPENAI_BASE_URL"
-      ],
-      "optionalSecretNames": [
-        "ALBERT_EMBEDDING_TIMEOUT_MS",
-        "ALBERT_SEMANTIC_CACHE_TTL_SECONDS",
-        "ALBERT_SEMANTIC_STATEMENT_TIMEOUT_MS",
-        "ALBERT_CONTROL_PLANE_POOL_SIZE",
-        "ALBERT_ANALYTICAL_READ_POOL_SIZE",
-        "ALBERT_SEMANTIC_METADATA_POOL_SIZE"
       ]
     },
     "operator-diagnostic": {
@@ -234,12 +277,37 @@
         "TOKEN_ENCRYPTION_KEY_ID",
         "LIGHTSPEED_CLIENT_ID",
         "LIGHTSPEED_CLIENT_SECRET",
+        "ALBERT_PUBLIC_ORIGIN",
+        "SQUARE_CLIENT_ID",
+        "SQUARE_CLIENT_SECRET",
         "XERO_CLIENT_ID",
         "DELETION_PROOF_HMAC_KEY"
       ],
       "optionalSecretNames": [
         "TOKEN_PREVIOUS_ENCRYPTION_KEYS",
         "DELETION_WORKER_POLL_MS"
+      ]
+    },
+    "imessage-bridge": {
+      "platform": "fly",
+      "manifest": "deploy/fly/imessage-bridge.toml",
+      "buildCommand": "npm run build:services",
+      "artifact": ".albert-build/services/imessage-bridge.js",
+      "exposure": "signed-public",
+      "livenessPath": "/livez",
+      "healthPath": "/readyz",
+      "requiredSecretNames": [
+        "LINQ_API_TOKEN",
+        "LINQ_WEBHOOK_SIGNING_SECRET",
+        "LINQ_WEBHOOK_URL_TOKEN",
+        "ALBERT_IMESSAGE_SUPABASE_ANON_KEY",
+        "ALBERT_IMESSAGE_SUPABASE_SERVICE_KEY",
+        "CUBEJS_API_SECRET",
+        "ALBERT_CODEX_RUNTIME_SIGNING_SECRET"
+      ],
+      "optionalSecretNames": [
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL"
       ]
     }
   },
@@ -260,6 +328,7 @@
     "ALBERT_SYNC_CONTROL_DB_PASSWORD",
     "ALBERT_TRANSFORM_CONTROL_DB_PASSWORD",
     "ALBERT_SEMANTIC_CONTROL_DB_PASSWORD",
+    "ALBERT_ANTHROPIC_CONTROL_DB_PASSWORD",
     "ALBERT_OPERATOR_DIAGNOSTIC_CONTROL_DB_PASSWORD",
     "ALBERT_WEBHOOK_CONTROL_DB_PASSWORD",
     "ALBERT_DELETION_CONTROL_DB_PASSWORD",

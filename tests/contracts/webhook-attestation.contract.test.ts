@@ -91,3 +91,21 @@ test("control plane consumes proofs once and leaves the edge no receipt-table or
     "WEBHOOK_ATTESTATION_SECRET",
   ));
 });
+
+test("manual-only Xero webhooks remain proof-bound connection deliveries", async () => {
+  const migration = await readFile(
+    new URL("infra/migrations/control-plane/0173_m2_xero_manual_webhook_delivery.sql", root),
+    "utf8",
+  );
+  assert.match(migration, /receipt\.status IN \('queued','ignored'\)/u);
+  assert.match(migration, /receipt\.signature_verified/u);
+  assert.match(migration, /receipt\.raw_object_key IS NOT NULL/u);
+  assert.match(
+    migration,
+    /REVOKE ALL ON FUNCTION[\s\S]*record_attested_xero_webhook_connection_delivery[\s\S]*FROM PUBLIC,anon,authenticated,service_role/u,
+  );
+  assert.match(
+    migration,
+    /GRANT EXECUTE ON FUNCTION[\s\S]*record_attested_xero_webhook_connection_delivery[\s\S]*TO albert_webhook_control/u,
+  );
+});

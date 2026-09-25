@@ -1,0 +1,1181 @@
+cubes:
+  # Xero's standard-layout ProfitAndLoss report, landed by Albert's Fivetran
+  # Connector SDK. Unlike document reconstruction, this report includes every
+  # posted P&L account, including system payroll and depreciation journals.
+
+  - name: xero_profit_and_loss_periods
+    title: Profit and Loss periods (Xero, accrual)
+    public: false
+    description: >
+      One row per monthly accrual-basis period from Xero's own standard Profit
+      and Loss report. Headline figures are Xero's reported totals; component
+      figures use Xero's official account types and reconcile to Net Profit.
+      Amounts are in the organisation's base currency and exclude GST control
+      accounts. The current month is month-to-date through report_updated_at.
+    meta:
+      ai_context: >
+        AUTHORITATIVE source for whole-business accrual Profit and Loss, income,
+        cost of sales, gross profit, operating expenses, wages, superannuation,
+        total expenses, Net Profit and profit margins. Net Profit already
+        includes every posted wage, super, payroll-tax, depreciation, interest
+        and tax expense account; never subtract payroll again. Xero definitions:
+        sales revenue = REVENUE + SALES; other income = OTHERINCOME; cost of
+        sales = DIRECTCOSTS; operating expenses = EXPENSE + OVERHEADS +
+        DEPRECIATN; total expenses = all four expense types; Net Profit = total
+        income - total expenses. MONTHLY GRAIN: one row per calendar month, so
+        query period_start with month granularity over calendar-month ranges
+        (first to last day of the months wanted) and never rolling "last 30
+        days" / "last N weeks" windows, which match 0-2 rows. Monthly rows can
+        be summed for quarter, year and financial-year totals; "this month vs
+        the same month last year" is compareDateRange with two explicit whole
+        months. About 25 months are retained; the current month is
+        month-to-date (disclose it) and report_updated_at is the freshness.
+        BASIS: only Xero's ACCRUAL rendering is exposed (the source also lands
+        a CASH-basis rendering that is deliberately not modelled), so say the
+        figures are accrual when asked about cash-basis profit. Only true
+        calendar-month report columns are kept: Xero also renders columns
+        anchored on the day-of-month of the report date (e.g. 1-30 Aug) and
+        those duplicates are filtered out here.
+    sql: >
+      SELECT *
+      FROM source_xero_official.xo_profit_and_loss_periods
+      WHERE basis = 'ACCRUAL'
+        AND period_end = (period_start + INTERVAL '1 month' - INTERVAL '1 day')::date
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {xero_organisation}.tenant_id"
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: basis
+        sql: basis
+        type: string
+        title: Accounting basis
+        description: >
+          Always ACCRUAL on this view: income when earned and expenses when
+          incurred, including authorised but unpaid invoices and bills.
+      - name: period_start
+        sql: period_start
+        type: time
+        title: P&L period start
+        description: First calendar day of this monthly Xero report column.
+      - name: period_end
+        sql: period_end
+        type: time
+        title: P&L period end
+        description: >
+          Month end printed by Xero. For the current month the amount is only
+          month-to-date through report_updated_at, not a forecast to month end.
+      - name: report_updated_at
+        sql: report_updated_at
+        type: time
+        title: Xero report updated at
+        description: When Xero last rendered the report snapshot.
+      - name: synced_at
+        sql: synced_at
+        type: time
+        title: Fivetran synced at
+        description: When Albert's Fivetran connector last landed this period.
+      - name: is_current_partial_period
+        type: boolean
+        title: Current partial month
+        sql: >
+          {CUBE}.period_start <= CURRENT_DATE
+          AND {CUBE}.period_end >= CURRENT_DATE
+        description: >
+          True for the current month. Its amounts are month-to-date through the
+          report freshness timestamp even though period_end is month end.
+      - name: reconciles_to_xero
+        type: boolean
+        title: Reconciles to Xero
+        sql: >
+          {CUBE}.net_profit_line_count = 1
+          AND {CUBE}.gross_profit_line_count = 1
+          AND ABS({CUBE}.net_profit_reconciliation_variance) <= 0.01
+          AND ABS({CUBE}.gross_profit_reconciliation_variance) <= 0.01
+        description: >
+          True only when one Xero Gross Profit and Net Profit total exists and
+          official account-type arithmetic agrees with both within one cent.
+
+    measures:
+      - name: report_periods
+        type: count
+        title: Report months
+        description: Number of monthly Xero P&L periods in the selected range.
+      - name: sales_revenue
+        type: sum
+        sql: sales_revenue
+        format: currency
+        title: Sales revenue
+        description: >
+          Primary operating income in Xero account types REVENUE and SALES.
+          Excludes OTHERINCOME and GST. Amounts are base currency.
+      - name: other_income
+        type: sum
+        sql: other_income
+        format: currency
+        title: Other income
+        description: >
+          Secondary or non-operating income in Xero account type OTHERINCOME.
+      - name: total_income
+        type: sum
+        sql: total_income
+        format: currency
+        title: Total income
+        description: >
+          Sales revenue plus other income: Xero account types REVENUE, SALES
+          and OTHERINCOME. Excludes GST and balance-sheet movements.
+      - name: cost_of_sales
+        type: sum
+        sql: cost_of_sales
+        format: currency
+        title: Cost of sales
+        description: >
+          Costs directly tied to producing or providing what the business sold,
+          classified by Xero as DIRECTCOSTS. Also called COGS/direct costs.
+      - name: gross_profit
+        type: sum
+        sql: gross_profit
+        format: currency
+        title: Gross profit
+        description: >
+          Xero's reported Gross Profit: sales revenue minus cost of sales.
+          Excludes other income and operating expenses such as ordinary wages,
+          rent and tax; direct-cost wages do reduce this figure.
+      - name: operating_expenses
+        type: sum
+        sql: operating_expenses
+        format: currency
+        title: Operating expenses
+        description: >
+          Xero EXPENSE, OVERHEADS and DEPRECIATN account types. Includes
+          ordinary wages and salaries, employer super and other payroll on-cost
+          accounts when posted there; excludes DIRECTCOSTS.
+      - name: total_expenses
+        type: sum
+        sql: total_expenses
+        format: currency
+        title: Total expenses
+        description: >
+          Every P&L cost account: DIRECTCOSTS, EXPENSE, OVERHEADS and
+          DEPRECIATN. Includes wages, super, interest and tax expenses; excludes
+          payroll liabilities such as Wages Payable.
+      - name: wage_expenses
+        type: sum
+        sql: wage_expenses
+        format: currency
+        title: Mapped wage expenses
+        description: >
+          Wage expense accounts mapped by official Xero report codes EXP.WAG,
+          EXP.EMP.WAG or EXP.COS.WAG. Both operating and direct wages reduce
+          Net Profit. WAGEPAYABLES is a liability and is never included.
+      - name: direct_wage_expenses
+        type: sum
+        sql: direct_wage_expenses
+        format: currency
+        title: Direct-cost wages
+        description: >
+          Wages mapped to Xero report code EXP.COS.WAG. These reduce both Gross
+          Profit and Net Profit because they are cost of sales.
+      - name: operating_wage_expenses
+        type: sum
+        sql: operating_wage_expenses
+        format: currency
+        title: Operating wages
+        description: >
+          Wages mapped to EXP.WAG or EXP.EMP.WAG. These reduce Net Profit but
+          not Gross Profit because they are operating expenses.
+      - name: employer_super_expenses
+        type: sum
+        sql: employer_super_expenses
+        format: currency
+        title: Mapped employer super expense
+        description: >
+          Employer superannuation expense mapped by official Xero report codes.
+          This is an employer P&L cost, not a super payable liability balance.
+      - name: net_profit
+        type: sum
+        sql: net_profit
+        format: currency
+        title: Net profit
+        description: >
+          Xero's own reported Net Profit: total income minus every P&L expense,
+          including wages, superannuation, direct costs, overheads,
+          depreciation, interest and tax expenses. Negative means a net loss.
+      - name: net_profit_before_mapped_wages
+        type: number
+        sql: "{net_profit} + {wage_expenses}"
+        format: currency
+        title: Net profit before mapped wages
+        description: >
+          Derived scenario: reported Net Profit plus only wage accounts carrying
+          an official wage report code. It is not EBITDA and does not add back
+          super, payroll tax or other employment on-costs.
+      - name: gross_margin_pct
+        type: number
+        sql: "100.0 * {gross_profit} / NULLIF({sales_revenue}, 0)"
+        format: percent
+        title: Gross profit margin %
+        description: Gross Profit divided by sales revenue. Other income is excluded.
+      - name: net_profit_margin_pct
+        type: number
+        sql: "100.0 * {net_profit} / NULLIF({sales_revenue}, 0)"
+        format: percent
+        title: Net profit margin %
+        description: Net Profit divided by sales revenue, not total income.
+      - name: net_profit_variance
+        type: sum
+        sql: net_profit_reconciliation_variance
+        format: currency
+        title: Net profit reconciliation variance
+        description: >
+          Xero's reported Net Profit minus account-type total income less total
+          expenses. Expected to be zero within one cent.
+      - name: gross_profit_variance
+        type: sum
+        sql: gross_profit_reconciliation_variance
+        format: currency
+        title: Gross profit reconciliation variance
+        description: >
+          Xero's reported Gross Profit minus sales revenue less cost of sales.
+          Expected to be zero within one cent.
+
+    segments:
+      - name: complete_periods
+        sql: "{CUBE}.period_end < CURRENT_DATE"
+        title: Complete months
+      - name: reconciled_periods
+        sql: >
+          {CUBE}.net_profit_line_count = 1
+          AND {CUBE}.gross_profit_line_count = 1
+          AND ABS({CUBE}.net_profit_reconciliation_variance) <= 0.01
+          AND ABS({CUBE}.gross_profit_reconciliation_variance) <= 0.01
+        title: Reconciled periods
+
+  - name: xero_profit_and_loss_account_lines
+    title: Profit and Loss account lines (Xero, accrual)
+    public: false
+    description: >
+      One row per account per monthly accrual-basis Xero Profit and Loss report
+      column. Use for expense/revenue rankings and wage-account drill-down. This
+      cube contains leaf account rows only, never Xero subtotal/formula rows, so
+      statement_amount cannot double-count Net Profit or Gross Profit totals.
+    meta:
+      ai_context: >
+        AUTHORITATIVE account-line drill-down for Xero P&L. Group
+        statement_amount by account_name, account_type, profit_category or
+        section. Wages are identified by official reporting codes, never by
+        matching account names. Use xero_profit_and_loss_analytics for headline
+        Net Profit/Gross Profit/margins. Do not calculate Net Profit by summing
+        this view, and do not use the old xero_finance_analytics pnl_* members.
+        MONTHLY GRAIN: one row per account per calendar month; query
+        period_start with month granularity over calendar-month ranges, never
+        rolling day/week windows. "Which expenses went up" is one query: filter
+        period_start to one month, group by account_name and order by
+        change_vs_prior_month (statement_amount minus prior_month_amount, the
+        same account's previous calendar month). Only true calendar-month
+        report columns are kept (Xero's day-of-month anchored duplicate
+        columns are filtered out); accrual basis only.
+    sql: >
+      SELECT
+        line.*,
+        CASE
+          WHEN line.period_start > MIN(line.period_start) OVER (PARTITION BY line.tenant_id)
+          THEN COALESCE(
+            CASE
+              WHEN LAG(line.period_start) OVER account_months = (line.period_start - INTERVAL '1 month')::date
+              THEN LAG(line.amount) OVER account_months
+            END,
+            0)
+        END AS prior_month_amount
+      FROM source_xero_official.xo_profit_and_loss_lines AS line
+      WHERE line.basis = 'ACCRUAL'
+        AND line.is_account_line
+        AND line.period_end = (line.period_start + INTERVAL '1 month' - INTERVAL '1 day')::date
+      WINDOW account_months AS (PARTITION BY line.tenant_id, line.account_id ORDER BY line.period_start)
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {xero_organisation}.tenant_id"
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: period_start
+        sql: period_start
+        type: time
+        title: P&L period start
+        description: First calendar day of this monthly report column.
+      - name: period_end
+        sql: period_end
+        type: time
+        title: P&L period end
+      - name: report_updated_at
+        sql: report_updated_at
+        type: time
+        title: Xero report updated at
+      - name: synced_at
+        sql: synced_at
+        type: time
+        title: Fivetran synced at
+      - name: section
+        sql: section
+        type: string
+        title: Xero P&L section
+        description: >
+          Standard Xero report section, such as Income, Less Cost of Sales or
+          Less Operating Expenses. Section is presentation; account_type is the
+          stable business classifier.
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+      - name: account_code
+        sql: account_code
+        type: string
+        title: Account code
+        description: User-defined Xero chart-of-accounts code. It may be renamed.
+      - name: account_name
+        sql: account_name
+        type: string
+        title: Account
+        description: Current Xero account display name. Grouping identity is account_id.
+      - name: account_type
+        sql: account_type
+        type: string
+        title: Xero account type
+        description: >
+          Official detailed classifier: REVENUE/SALES, OTHERINCOME,
+          DIRECTCOSTS, EXPENSE, OVERHEADS or DEPRECIATN on a P&L.
+      - name: account_class
+        sql: account_class
+        type: string
+        title: Xero account class
+        description: REVENUE or EXPENSE for P&L account rows.
+      - name: account_status
+        sql: account_status
+        type: string
+        title: Account status
+        description: ACTIVE or ARCHIVED. Archived accounts remain in historical reports.
+      - name: reporting_code
+        sql: reporting_code
+        type: string
+        title: Xero reporting code
+        description: >
+          Optional country/report-template mapping used for fine-grained
+          semantics such as wages. It is not populated on every account.
+      - name: reporting_code_name
+        sql: reporting_code_name
+        type: string
+        title: Reporting code name
+      - name: profit_category
+        sql: profit_category
+        type: string
+        title: Profit category
+        description: >
+          SALES_REVENUE, OTHER_INCOME, COST_OF_SALES, OPERATING_EXPENSE or
+          UNCLASSIFIED_ACCOUNT, derived from official account type with the
+          standard Xero section only as a fallback.
+      - name: is_wage_expense
+        sql: is_wage_expense
+        type: boolean
+        title: Mapped wage expense
+        description: >
+          True only for official wage report codes. Wages Payable is a
+          liability and cannot appear here.
+      - name: is_direct_wage_expense
+        sql: is_direct_wage_expense
+        type: boolean
+        title: Direct-cost wage expense
+      - name: is_super_expense
+        sql: is_employer_super_expense
+        type: boolean
+        title: Mapped employer super expense
+
+    measures:
+      - name: account_lines
+        type: count
+        title: P&L account lines
+        description: Number of leaf Xero P&L account rows in the selected months.
+      - name: statement_amount
+        type: sum
+        sql: amount
+        format: currency
+        title: Account amount
+        description: >
+          Xero-rendered monthly amount for leaf account rows only. Revenue and
+          expense rows both use Xero's natural report display sign; reversals
+          and credits may make an account negative.
+      - name: sales_revenue
+        type: sum
+        sql: amount
+        format: currency
+        title: Sales revenue
+        description: >
+          Account-row amount classified by Xero as REVENUE or SALES. Excludes
+          OTHERINCOME, GST and balance-sheet movements.
+        filters:
+          - sql: "{CUBE}.profit_category = 'SALES_REVENUE'"
+      - name: other_income
+        type: sum
+        sql: amount
+        format: currency
+        title: Other income
+        description: Account-row amount in Xero account type OTHERINCOME.
+        filters:
+          - sql: "{CUBE}.profit_category = 'OTHER_INCOME'"
+      - name: cost_of_sales
+        type: sum
+        sql: amount
+        format: currency
+        title: Cost of sales
+        description: Account-row amount in Xero account type DIRECTCOSTS.
+        filters:
+          - sql: "{CUBE}.profit_category = 'COST_OF_SALES'"
+      - name: operating_expenses
+        type: sum
+        sql: amount
+        format: currency
+        title: Operating expenses
+        description: >
+          Account-row amount in Xero types EXPENSE, OVERHEADS and DEPRECIATN.
+        filters:
+          - sql: "{CUBE}.profit_category = 'OPERATING_EXPENSE'"
+      - name: wage_expenses
+        type: sum
+        sql: amount
+        format: currency
+        title: Mapped wage expenses
+        description: >
+          Account-row amount carrying an official Xero wage reporting code;
+          excludes Wages Payable and unmapped employment on-costs.
+        filters:
+          - sql: "{CUBE}.is_wage_expense"
+      - name: employer_super_expenses
+        type: sum
+        sql: amount
+        format: currency
+        title: Mapped employer super expense
+        description: Account-row amount carrying an official employer-super expense code.
+        filters:
+          - sql: "{CUBE}.is_employer_super_expense"
+      - name: prior_month_amount
+        type: sum
+        sql: prior_month_amount
+        format: currency
+        title: Prior month amount
+        description: >
+          The same account's amount in the previous calendar month: 0 when the
+          account had no row that month, null for the earliest month landed.
+          Read with a single period_start month for a month-on-month view.
+      - name: change_vs_prior_month
+        type: number
+        sql: "{statement_amount} - {prior_month_amount}"
+        format: currency
+        title: Change vs prior month
+        description: >
+          statement_amount minus prior_month_amount: positive means the account
+          went up versus the previous calendar month. Filter one period_start
+          month and group by account_name; the current month is partial.
+
+  # ---------------------------------------------------------------------------
+  # Xero's standard-layout Balance Sheet, Bank Summary and Trial Balance,
+  # landed by Albert's Fivetran Connector SDK (analytical 0175). These are
+  # Xero's own statements at month-end grain, refreshed by the connector. There
+  # is no live report tool: "as at today" means the newest snapshot (is_latest
+  # / latest_* segments) with its report_updated_at disclosed.
+  # ---------------------------------------------------------------------------
+
+  - name: xero_balance_sheet_positions
+    title: Balance sheet positions (Xero)
+    public: false
+    description: >
+      One row per Balance Sheet as-at date (month ends, trailing 24 months)
+      from Xero's own standard-layout report. Total assets, total liabilities,
+      net assets and total equity are Xero's reported totals; accounts
+      receivable, accounts payable, GST, inventory and bank components come
+      from Xero's official system-account roles and account types.
+    meta:
+      ai_context: >
+        AUTHORITATIVE landed source for balance sheet headlines at a month end:
+        total assets, total liabilities, net assets / equity, bank total,
+        accounts receivable and payable balances, GST control balance,
+        inventory value and current-year earnings. Rows are SNAPSHOTS: as_at is
+        the snapshot date - use one. "Now" / "current" = the latest_position
+        segment (is_latest = true); a dateRange without granularity sums
+        several snapshots and is wrong. The newest row is the current month
+        rendered month-to-date as of report_updated_at; there is no live
+        report tool, so say the snapshot date. Report amounts keep Xero's
+        display signs (a negative liability is a debit balance, e.g. a GST
+        refund due). total_bank is the asset Bank section only; credit cards
+        sit in current liabilities, so the net bank position is
+        xero_balance_sheet_lines bank_account_balance. inventory is 0 when
+        stock is not tracked in Xero; total_fixed_assets is null when Xero
+        prints no Fixed Assets section (use the xero_assets register). Use
+        xero_balance_sheet_lines for individual accounts.
+    sql: >
+      SELECT
+        bs.*,
+        bs.as_at = MAX(bs.as_at) OVER (PARTITION BY bs.tenant_id) AS is_latest
+      FROM source_xero_official.xo_balance_sheet_positions AS bs
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {xero_organisation}.tenant_id"
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: as_at
+        sql: as_at
+        type: time
+        title: Balance sheet date
+        description: Snapshot date (a month end) - use one. The newest as_at is the current month rendered month-to-date.
+      - name: report_updated_at
+        sql: report_updated_at
+        type: time
+        title: Xero report updated at
+      - name: synced_at
+        sql: synced_at
+        type: time
+        title: Fivetran synced at
+      - name: is_current_period
+        type: boolean
+        title: Current month end
+        sql: "{CUBE}.as_at >= date_trunc('month', CURRENT_DATE)::date"
+        description: True for the current month's column, which Xero renders through today.
+      - name: reconciles_to_xero
+        type: boolean
+        title: Reconciles to Xero
+        sql: "ABS(COALESCE({CUBE}.net_assets_reconciliation_variance, 0)) <= 0.01"
+      - name: is_latest
+        sql: is_latest
+        type: boolean
+        title: Latest snapshot
+        description: True only for the newest as_at date landed - the current position as of the last refresh. The newest snapshot can be the current month's partial position (an as_at at month end that has only month-to-date postings); say which as_at date you are reporting.
+
+    measures:
+      - name: statement_dates
+        type: count
+        title: Balance sheet dates
+      - name: total_assets
+        type: sum
+        sql: total_assets
+        format: currency
+        title: Total assets
+        description: Xero's Total Assets line. Select one as_at date; never sum across dates.
+      - name: total_liabilities
+        type: sum
+        sql: total_liabilities
+        format: currency
+        title: Total liabilities
+        description: Xero's Total Liabilities line for the selected as_at date.
+      - name: net_assets
+        type: sum
+        sql: net_assets
+        format: currency
+        title: Net assets
+        description: Xero's Net Assets line (= total equity) for the selected as_at date.
+      - name: total_equity
+        type: sum
+        sql: total_equity
+        format: currency
+        title: Total equity
+      - name: total_bank
+        type: sum
+        sql: total_bank
+        format: currency
+        title: Total bank
+        description: >
+          Xero's Total Bank line: the asset Bank section only (cash and bank
+          accounts). Credit-card accounts sit in current liabilities and are
+          not netted here; the net position is xero_balance_sheet_lines
+          bank_account_balance.
+      - name: total_current_assets
+        type: sum
+        sql: total_current_assets
+        format: currency
+        title: Total current assets
+      - name: total_fixed_assets
+        type: sum
+        sql: total_fixed_assets
+        format: currency
+        title: Total fixed assets
+        description: Xero's Total Fixed Assets line; null when the report prints no Fixed Assets section (use the xero_assets register).
+      - name: total_non_current_assets
+        type: sum
+        sql: total_non_current_assets
+        format: currency
+        title: Total non-current assets
+      - name: total_current_liabilities
+        type: sum
+        sql: total_current_liabilities
+        format: currency
+        title: Total current liabilities
+      - name: total_non_current_liabilities
+        type: sum
+        sql: total_non_current_liabilities
+        format: currency
+        title: Total non-current liabilities
+      - name: current_year_earnings
+        type: sum
+        sql: current_year_earnings
+        format: currency
+        title: Current year earnings
+        description: Xero's Current Year Earnings equity line (profit or loss since the financial year started).
+      - name: accounts_receivable
+        type: sum
+        sql: accounts_receivable
+        format: currency
+        title: Accounts receivable
+        description: Balance of Xero's DEBTORS system account (what customers owe) at the as_at date.
+      - name: accounts_payable
+        type: sum
+        sql: accounts_payable
+        format: currency
+        title: Accounts payable
+        description: Balance of Xero's CREDITORS system account (what is owed to suppliers) at the as_at date.
+      - name: gst_balance
+        type: sum
+        sql: gst_balance
+        format: currency
+        title: GST balance
+        description: >
+          Balance of Xero's GST control account as displayed: positive = GST
+          owed to the tax office, negative (shown in brackets by Xero) = a GST
+          refund due / debit balance.
+      - name: inventory
+        type: sum
+        sql: inventory
+        format: currency
+        title: Inventory
+        description: Sum of INVENTORY-type accounts (stock on hand at cost) at the as_at date; 0 when the organisation does not track stock in Xero.
+      - name: net_assets_reconciliation_variance
+        type: sum
+        sql: net_assets_reconciliation_variance
+        format: currency
+        title: Net assets reconciliation variance
+        public: false
+
+    segments:
+      - name: latest_position
+        sql: "{CUBE}.is_latest"
+        title: Latest balance sheet snapshot
+        description: Only the newest as_at row - use for "current" / "now" balance questions instead of a date range.
+
+  - name: xero_balance_sheet_lines
+    title: Balance sheet lines (Xero)
+    public: false
+    description: >
+      Every line of Xero's Balance Sheet per as-at date: bank accounts, current
+      assets, fixed assets, liabilities and equity accounts with their balance,
+      classified by Xero account type and system role, plus Xero's subtotal
+      and total rows (is_account_line = false).
+    meta:
+      ai_context: >
+        Use for individual balance sheet accounts at a month end: a bank
+        account's balance in Xero, a loan balance, owner loan / drawings
+        accounts, PAYG withholding payable, superannuation payable, inventory
+        accounts, fixed assets, retained earnings. Filter is_account_line =
+        true and group statement_amount by account_name (or balance_category /
+        statement_side) for one as_at date; never sum account rows together
+        with Xero's total rows, and never sum across as_at dates. Rows are
+        snapshots: use the latest_lines segment (is_latest) for current
+        balances instead of a date range. bank_account_balance is sign-aware
+        (credit-card liabilities subtracted) and equals Xero's closing bank
+        balance. Headline totals live in xero_balance_sheet_positions.
+    sql: >
+      SELECT
+        line.*,
+        line.as_at = MAX(line.as_at) OVER (PARTITION BY line.tenant_id) AS is_latest
+      FROM source_xero_official.xo_balance_sheet_lines AS line
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {xero_organisation}.tenant_id"
+      - name: xero_balance_sheet_positions
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {xero_balance_sheet_positions}.tenant_id AND {CUBE}.as_at = {xero_balance_sheet_positions}.as_at"
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: as_at
+        sql: as_at
+        type: time
+        title: Balance sheet date
+        description: Snapshot date (a month end) - use one.
+      - name: report_updated_at
+        sql: report_updated_at
+        type: time
+        title: Xero report updated at
+      - name: synced_at
+        sql: synced_at
+        type: time
+        public: false
+      - name: section
+        sql: section
+        type: string
+        title: Statement section
+        description: Xero's section heading (Bank, Current Assets, Fixed Assets, Current Liabilities, Non-current Liabilities, Equity ...).
+      - name: row_title
+        sql: row_title
+        type: string
+        title: Line title
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+      - name: account_code
+        sql: account_code
+        type: string
+        title: Account code
+      - name: account_name
+        sql: account_name
+        type: string
+        title: Account
+      - name: account_type
+        sql: account_type
+        type: string
+        title: Xero account type
+      - name: account_class
+        sql: account_class
+        type: string
+        title: Account class
+      - name: account_status
+        sql: account_status
+        type: string
+        public: false
+      - name: system_account
+        sql: system_account
+        type: string
+        title: Xero system role
+        description: DEBTORS (accounts receivable), CREDITORS (accounts payable), GST, RETAINEDEARNINGS ... blank for ordinary accounts.
+      - name: is_bank_account
+        sql: is_bank_account
+        type: boolean
+        title: Bank account
+      - name: bank_account_type
+        sql: bank_account_type
+        type: string
+        title: Bank account type
+        description: BANK, CREDITCARD or PAYPAL for bank accounts.
+      - name: reporting_code
+        sql: reporting_code
+        type: string
+        public: false
+      - name: semantic_line
+        sql: semantic_line
+        type: string
+        title: Line kind
+        description: ACCOUNT for account rows; TOTAL_ASSETS, TOTAL_LIABILITIES, NET_ASSETS, TOTAL_EQUITY, TOTAL_BANK ... for Xero's own total rows.
+      - name: balance_category
+        sql: balance_category
+        type: string
+        title: Balance category
+        description: BANK, CURRENT_ASSET, FIXED_ASSET, NON_CURRENT_ASSET, CURRENT_LIABILITY, NON_CURRENT_LIABILITY, EQUITY (SUMMARY for total rows).
+      - name: statement_side
+        sql: statement_side
+        type: string
+        title: Statement side
+        description: ASSET, LIABILITY or EQUITY for account rows.
+      - name: is_account_line
+        sql: is_account_line
+        type: boolean
+        title: Account row
+        description: True for real account rows; false for Xero's subtotal / total rows.
+      - name: is_accounts_receivable
+        sql: is_accounts_receivable
+        type: boolean
+        public: false
+      - name: is_accounts_payable
+        sql: is_accounts_payable
+        type: boolean
+        public: false
+      - name: is_gst_control
+        sql: is_gst_control
+        type: boolean
+        public: false
+      - name: is_inventory
+        sql: is_inventory
+        type: boolean
+        public: false
+      - name: ordinal
+        sql: ordinal
+        type: number
+        public: false
+      - name: is_latest
+        sql: is_latest
+        type: boolean
+        title: Latest snapshot
+        description: True only for lines of the newest as_at date landed, which may be the current month's partial position; say which as_at date you are reporting.
+
+    measures:
+      - name: line_count
+        type: count
+        title: Statement lines
+      - name: statement_amount
+        type: sum
+        sql: amount
+        format: currency
+        title: Balance
+        description: >
+          The balance Xero prints on the line, display sign preserved (liability
+          and equity balances positive when owed; brackets in Xero = negative
+          here). Select one as_at date and filter is_account_line as needed.
+      - name: account_balance
+        type: sum
+        sql: amount
+        format: currency
+        title: Account balance
+        description: Balance of account rows only (Xero total rows excluded) - safe to group by account_name or balance_category for one as_at date.
+        filters:
+          - sql: "{CUBE}.is_account_line"
+      - name: bank_account_balance
+        type: sum
+        sql: "CASE WHEN {CUBE}.statement_side = 'LIABILITY' THEN -{CUBE}.amount ELSE {CUBE}.amount END"
+        format: currency
+        title: Net bank balance in Xero
+        description: >
+          Bank and credit-card account rows (balance_category BANK) at the
+          as_at date, sign-aware: cash accounts (asset side) add and credit
+          cards (liability side) subtract, so the total equals Xero's closing
+          bank balance (the Bank Summary Total row). It is the "Balance in
+          Xero" figure, not the bank feed statement balance.
+        filters:
+          - sql: "{CUBE}.is_account_line AND {CUBE}.balance_category = 'BANK'"
+
+    segments:
+      - name: latest_lines
+        sql: "{CUBE}.is_latest"
+        title: Latest statement lines
+        description: Only the newest as_at snapshot's lines - use for current account balances instead of a date range.
+
+  - name: xero_bank_summary_lines
+    title: Bank summary (Xero)
+    public: false
+    description: >
+      Xero's Bank Summary report at monthly grain (trailing 12 months): one
+      row per bank account per calendar month with opening balance, cash
+      received, cash spent and closing balance in Xero, plus Xero's Total row
+      (is_account_line = false).
+    meta:
+      ai_context: >
+        Use for each bank account's balance in Xero at a month end (closing_balance
+        for the latest period_end = the current "Balance in Xero" through the
+        last sync), opening balances, and per-account cash received / spent by
+        month. Filter is_account_line = true and choose one period (period_start)
+        when reading balances; closing balances must never be summed across
+        months. Rows are monthly snapshots: the latest_month segment
+        (is_latest) gives the current balance in Xero per account
+        (is_account_line = true, credit cards negative) or Xero's Total row
+        (is_account_line = false) without a date range. For whole-business
+        cash in and out over a period prefer xero_finance_analytics cash_in /
+        cash_out (transaction grain, exact to Xero's dashboard). There is no
+        live balance tool: balances are as of report_updated_at.
+    sql: >
+      SELECT
+        line.*,
+        line.period_start = MAX(line.period_start) OVER (PARTITION BY line.tenant_id) AS is_latest
+      FROM source_xero_official.xo_bank_summary_lines AS line
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {xero_organisation}.tenant_id"
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: period_start
+        sql: period_start
+        type: time
+        title: Month start
+        description: Snapshot month - use one; the newest is the current month through the last refresh.
+      - name: period_end
+        sql: period_end
+        type: time
+        title: Month end
+      - name: report_updated_at
+        sql: report_updated_at
+        type: time
+        title: Xero report updated at
+      - name: synced_at
+        sql: synced_at
+        type: time
+        public: false
+      - name: is_current_period
+        type: boolean
+        title: Current month
+        sql: "{CUBE}.period_start <= CURRENT_DATE AND {CUBE}.period_end >= CURRENT_DATE"
+      - name: is_latest
+        sql: is_latest
+        type: boolean
+        title: Latest month
+        description: True only for rows of the newest month landed - the current balance in Xero, which for the current month is month-to-date; say which month you are reporting.
+      - name: row_title
+        sql: row_title
+        type: string
+        title: Line title
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+      - name: account_code
+        sql: account_code
+        type: string
+        title: Account code
+      - name: bank_account_name
+        sql: bank_account_name
+        type: string
+        title: Bank account
+      - name: bank_account_type
+        sql: bank_account_type
+        type: string
+        title: Bank account type
+      - name: account_status
+        sql: account_status
+        type: string
+        public: false
+      - name: currency_code
+        sql: currency_code
+        type: string
+        title: Currency
+      - name: is_account_line
+        sql: is_account_line
+        type: boolean
+        title: Account row
+      - name: is_total_line
+        sql: is_total_line
+        type: boolean
+        public: false
+      - name: closing_balance_value
+        sql: closing_balance
+        type: number
+        title: Closing balance
+        description: The account's balance in Xero at period_end (row-level value).
+      - name: opening_balance_value
+        sql: opening_balance
+        type: number
+        title: Opening balance
+
+    measures:
+      - name: account_months
+        type: count
+        title: Account-months
+      - name: closing_balance
+        type: sum
+        sql: closing_balance
+        format: currency
+        title: Closing balance in Xero
+        description: Balance in Xero at period_end. One period at a time; group by bank_account_name with is_account_line = true, or read the Total row (is_account_line = false).
+      - name: opening_balance
+        type: sum
+        sql: opening_balance
+        format: currency
+        title: Opening balance in Xero
+      - name: cash_received
+        type: sum
+        sql: cash_received
+        format: currency
+        title: Cash received
+        description: Money into the account during the month per Xero's Bank Summary (includes transfers in from other own accounts).
+      - name: cash_spent
+        type: sum
+        sql: cash_spent
+        format: currency
+        title: Cash spent
+        description: Money out of the account during the month per Xero's Bank Summary (includes transfers out to other own accounts).
+      - name: account_closing_balance
+        type: sum
+        sql: closing_balance
+        format: currency
+        title: Account closing balance
+        description: Closing balance of bank-account rows only (Xero's Total row excluded).
+        filters:
+          - sql: "{CUBE}.is_account_line"
+
+    segments:
+      - name: latest_month
+        sql: "{CUBE}.is_latest"
+        title: Latest bank summary month
+        description: Only the newest month's rows - the current balance in Xero per account (is_account_line true) or Xero's Total row (false).
+
+  - name: xero_trial_balance_lines
+    title: Trial balance (Xero)
+    public: false
+    description: >
+      Xero's Trial Balance per as-at date (last three month ends and the
+      financial-year end): every ledger account with period and year-to-date
+      debit and credit balances.
+    meta:
+      ai_context: >
+        Use for "the balance of account X in Xero" at a month end, or a
+        ledger-wide debit/credit listing. net_balance = debit - credit (assets
+        and expenses positive; liabilities, equity and income negative).
+        Choose one as_at date (rows are snapshots; the latest_trial_balance
+        segment / is_latest gives the newest without a date range); filter
+        is_account_line = true for accounts. For balance sheet headlines use
+        xero_balance_sheet_positions; for P&L use
+        xero_profit_and_loss_analytics.
+    sql: >
+      SELECT
+        line.*,
+        line.as_at = MAX(line.as_at) OVER (PARTITION BY line.tenant_id) AS is_latest
+      FROM source_xero_official.xo_trial_balance_lines AS line
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {xero_organisation}.tenant_id"
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: as_at
+        sql: as_at
+        type: time
+        title: Trial balance date
+        description: Snapshot date - use one.
+      - name: report_updated_at
+        sql: report_updated_at
+        type: time
+        title: Xero report updated at
+      - name: synced_at
+        sql: synced_at
+        type: time
+        public: false
+      - name: section
+        sql: section
+        type: string
+        title: Section
+      - name: row_title
+        sql: row_title
+        type: string
+        title: Line title
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+      - name: account_code
+        sql: account_code
+        type: string
+        title: Account code
+      - name: account_name
+        sql: account_name
+        type: string
+        title: Account
+      - name: account_type
+        sql: account_type
+        type: string
+        title: Xero account type
+      - name: account_class
+        sql: account_class
+        type: string
+        title: Account class
+      - name: system_account
+        sql: system_account
+        type: string
+        title: Xero system role
+      - name: is_account_line
+        sql: is_account_line
+        type: boolean
+        title: Account row
+      - name: is_total_line
+        sql: is_total_line
+        type: boolean
+        public: false
+      - name: is_latest
+        sql: is_latest
+        type: boolean
+        title: Latest snapshot
+        description: True only for lines of the newest as_at date landed, which may be the current month's partial position; say which as_at date you are reporting.
+
+    measures:
+      - name: line_count
+        type: count
+        title: Lines
+      - name: debit
+        type: sum
+        sql: debit
+        format: currency
+        title: Debit
+      - name: credit
+        type: sum
+        sql: credit
+        format: currency
+        title: Credit
+      - name: ytd_debit
+        type: sum
+        sql: ytd_debit
+        format: currency
+        title: YTD debit
+      - name: ytd_credit
+        type: sum
+        sql: ytd_credit
+        format: currency
+        title: YTD credit
+      - name: net_balance
+        type: sum
+        sql: net_balance
+        format: currency
+        title: Net balance (debit - credit)
+      - name: ytd_net_balance
+        type: sum
+        sql: ytd_net_balance
+        format: currency
+        title: YTD net balance (debit - credit)
+
+    segments:
+      - name: latest_trial_balance
+        sql: "{CUBE}.is_latest"
+        title: Latest trial balance date
+        description: Only the newest as_at snapshot - use for current ledger balances instead of a date range.

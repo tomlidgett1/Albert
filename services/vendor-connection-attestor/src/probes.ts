@@ -96,7 +96,7 @@ function parseJson(response: ProbeHttpResponse): unknown {
     throw new ProbeFailure("vendor_identity_http_error", "Vendor identity endpoint did not return 200.");
   }
   try {
-    return JSON.parse(response.body.toString("utf8"));
+    return JSON.parse(Buffer.from(response.body).toString("utf8"));
   } catch {
     throw new ProbeFailure("response_json_invalid", "Vendor identity response is malformed.");
   }
@@ -236,7 +236,7 @@ export async function strictHttpsProbe(
     throw new ProbeFailure("vendor_dns_unsafe", "Vendor hostname did not resolve exclusively to public addresses.");
   }
   const selected = publicAddresses[0]!;
-  const authorization = `Bearer ${accessToken.toString("utf8")}`;
+  const authorization = `Bearer ${Buffer.from(accessToken).toString("utf8")}`;
   const requestedAt = new Date().toISOString();
   return await new Promise<ProbeHttpResponse>((resolve, reject) => {
     const request = httpsRequest({

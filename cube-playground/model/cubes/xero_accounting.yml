@@ -1,0 +1,2725 @@
+cubes:
+  # ---------------------------------------------------------------------------
+  # Xero accounting cubes: the transactional finance surface.
+  #
+  # Source: source_xero_official.xo_* security-barrier views over the
+  # per-connection Fivetran Connector SDK schemas. Views stamp tenant_id,
+  # enforce the signed capability check and preserve the official Xero API
+  # field semantics.
+  #
+  # Document model recap: an Invoice is either a sales invoice (ACCREC, money
+  # owed to the business) or a bill (ACCPAY, money the business owes).
+  # Payments settle invoices; credit notes offset them via allocations. Bank
+  # transactions are spend/receive money recorded directly against a bank
+  # account. Manual journals are direct GL postings.
+  # ---------------------------------------------------------------------------
+
+  - name: xero_invoices
+    title: Invoices and bills (Xero)
+    public: false
+    description: >
+      One row per Xero invoice document: sales invoices (type ACCREC, revenue,
+      money owed to the business) and bills (type ACCPAY, expenses, money the
+      business owes suppliers). Carries issue/due dates, totals, GST, amounts
+      due/paid/credited and status (DRAFT, SUBMITTED, AUTHORISED, PAID, VOIDED,
+      DELETED).
+    meta:
+      ai_context: >
+        The core AR/AP surface. "Revenue invoiced", "sales invoices", "what do
+        customers owe me", "debtors" = document_kind 'Sales invoice'
+        (invoice_type ACCREC). "Bills", "what do I owe suppliers", "creditors"
+        = document_kind 'Bill' (ACCPAY). Money still owing = amount_due with
+        status AUTHORISED; exclude DRAFT/DELETED/VOIDED for financial totals.
+        Overdue and ageing questions use days_overdue / ageing_band (derived
+        from due_on and amount_due; Xero's aged reports API is not available).
+        issued_on is the business date. For per-line account/item breakdowns
+        use xero_invoice_line_items.
+    sql: SELECT * FROM source_xero_official.xo_invoices
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_contacts}.tenant_id
+          AND {CUBE}.contact_id = {xero_contacts}.contact_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: invoice_id
+        sql: invoice_id
+        type: string
+        public: false
+      - name: invoice_number
+        sql: invoice_number
+        type: string
+        title: Invoice number
+        description: The user-facing invoice or bill number.
+      - name: invoice_type
+        sql: invoice_type
+        type: string
+        title: Invoice type code
+        description: "ACCREC = sales invoice (receivable); ACCPAY = bill (payable)."
+      - name: document_kind
+        sql: document_kind
+        type: string
+        title: Document kind
+        description: "'Sales invoice' or 'Bill' (human-readable invoice_type)."
+      - name: reference
+        sql: reference
+        type: string
+        description: Free-text reference on the document.
+      - name: status
+        sql: status
+        type: string
+        title: Status
+        description: "DRAFT, SUBMITTED, AUTHORISED, PAID, VOIDED or DELETED. Only AUTHORISED and PAID are financially real."
+      - name: line_amount_types
+        sql: line_amount_types
+        type: string
+        description: Whether line amounts are tax Exclusive, Inclusive or NoTax.
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Customer / supplier
+        description: The contact the document is issued to (customer) or from (supplier).
+      - name: issued_on
+        sql: issued_on
+        type: time
+        title: Issue date
+        description: Document date. Business date for revenue/expense analysis.
+      - name: due_on
+        sql: due_on
+        type: time
+        title: Due date
+      - name: fully_paid_on
+        sql: fully_paid_on
+        type: time
+        title: Fully paid date
+        description: When the document was fully settled; null while outstanding.
+      - name: subtotal
+        sql: subtotal
+        type: number
+        description: Total excluding GST.
+      - name: total_tax_amount
+        sql: total_tax
+        type: number
+        title: GST on document
+      - name: total_amount
+        sql: total
+        type: number
+        title: Document total
+        description: Total including GST.
+      - name: amount_due_value
+        sql: amount_due
+        type: number
+        title: Amount still owing
+      - name: amount_paid_value
+        sql: amount_paid
+        type: number
+      - name: amount_credited_value
+        sql: amount_credited
+        type: number
+      - name: currency_code
+        sql: currency_code
+        type: string
+      - name: currency_rate
+        sql: currency_rate
+        type: number
+        public: false
+      - name: is_discounted
+        sql: is_discounted
+        type: boolean
+      - name: sent_to_contact
+        sql: sent_to_contact
+        type: boolean
+        description: True once the invoice was emailed/marked sent to the contact.
+      - name: repeating_invoice_id
+        sql: repeating_invoice_id
+        type: string
+        public: false
+      - name: branding_theme_id
+        sql: branding_theme_id
+        type: string
+        public: false
+      - name: has_attachments
+        sql: has_attachments
+        type: boolean
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+      - name: days_overdue
+        type: number
+        title: Days overdue
+        description: >
+          Whole days past the due date for documents still carrying an amount
+          due (0 when not yet due or nothing owing). Derived from due_on;
+          replaces Xero's aged receivables/payables reports.
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.amount_due, 0) > 0 AND {CUBE}.due_on IS NOT NULL
+            THEN GREATEST(0, (CURRENT_DATE - {CUBE}.due_on::date))
+            ELSE 0
+          END
+      - name: ageing_band
+        type: string
+        title: Ageing band
+        description: >
+          Standard AR/AP ageing bucket for documents with an amount due:
+          Current (not yet due), 1-30, 31-60, 61-90, 90+ days overdue.
+          'Settled' when nothing is owing.
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.amount_due, 0) = 0 THEN 'Settled'
+            WHEN {CUBE}.due_on IS NULL OR {CUBE}.due_on::date >= CURRENT_DATE THEN 'Current'
+            WHEN CURRENT_DATE - {CUBE}.due_on::date <= 30 THEN '1-30 days'
+            WHEN CURRENT_DATE - {CUBE}.due_on::date <= 60 THEN '31-60 days'
+            WHEN CURRENT_DATE - {CUBE}.due_on::date <= 90 THEN '61-90 days'
+            ELSE '90+ days'
+          END
+      - name: days_to_pay
+        type: number
+        title: Days to pay
+        description: >
+          Whole days between the issue date and the fully-paid date; null while
+          the document is still outstanding. Basis for average debtor/creditor
+          days.
+        sql: >
+          CASE
+            WHEN {CUBE}.fully_paid_on IS NOT NULL AND {CUBE}.issued_on IS NOT NULL
+            THEN ({CUBE}.fully_paid_on::date - {CUBE}.issued_on::date)
+          END
+
+    measures:
+      - name: avg_days_to_pay
+        type: avg
+        sql: >
+          CASE
+            WHEN {CUBE}.fully_paid_on IS NOT NULL AND {CUBE}.issued_on IS NOT NULL
+            THEN ({CUBE}.fully_paid_on::date - {CUBE}.issued_on::date)
+          END
+        title: Average days to pay
+        description: >
+          Average days from issue to full settlement across paid documents.
+          Filter to sales invoices for debtor days, bills for creditor days.
+      - name: invoice_count
+        type: count
+        title: Documents
+        description: Number of invoice documents (both sales invoices and bills).
+      - name: total_invoiced
+        type: sum
+        sql: total
+        format: currency
+        title: Total value (incl. GST)
+        description: Sum of document totals. Filter by document_kind and exclude DRAFT/VOIDED/DELETED for financial reporting.
+      - name: total_excl_tax
+        type: sum
+        sql: subtotal
+        format: currency
+        title: Total value (excl. GST)
+      - name: total_gst
+        type: sum
+        sql: total_tax
+        format: currency
+        title: GST
+        description: GST on the documents (collected on sales invoices, paid on bills).
+      - name: total_amount_due
+        type: sum
+        sql: amount_due
+        format: currency
+        title: Amount outstanding
+        description: Total still owing across the selected documents.
+      - name: total_amount_paid
+        type: sum
+        sql: amount_paid
+        format: currency
+        title: Amount paid
+      - name: total_amount_credited
+        type: sum
+        sql: amount_credited
+        format: currency
+        title: Amount credited
+      - name: overdue_amount
+        type: sum
+        sql: amount_due
+        format: currency
+        title: Overdue amount
+        description: Amount due on documents past their due date (AUTHORISED only).
+        filters:
+          - sql: "{CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0 AND {CUBE}.due_on IS NOT NULL AND {CUBE}.due_on::date < CURRENT_DATE"
+      - name: overdue_invoice_count
+        type: count
+        title: Overdue documents
+        filters:
+          - sql: "{CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0 AND {CUBE}.due_on IS NOT NULL AND {CUBE}.due_on::date < CURRENT_DATE"
+      - name: avg_invoice_value
+        type: avg
+        sql: total
+        format: currency
+        title: Average document value
+
+      # ---- Headline balances (what Xero's dashboard tiles show) ----------
+      # These are computed from the invoice documents themselves, so they move
+      # the moment an invoice or payment syncs. The xero_contacts
+      # *_outstanding snapshots only refresh when the CONTACT record changes,
+      # so they go stale after payments; never use them for headline totals.
+      - name: receivable_outstanding
+        type: sum
+        sql: amount_due
+        format: currency
+        title: Owed to us (invoices awaiting payment)
+        description: >
+          Amount still owing on approved (AUTHORISED) sales invoices - Xero's
+          "Invoices owed to you" tile. Excludes drafts and invoices awaiting
+          approval.
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'AUTHORISED'"
+      - name: receivable_overdue
+        type: sum
+        sql: amount_due
+        format: currency
+        title: Overdue owed to us
+        description: Amount due on approved sales invoices past their due date.
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0 AND {CUBE}.due_on IS NOT NULL AND {CUBE}.due_on::date < CURRENT_DATE"
+      - name: receivable_open_count
+        type: count
+        title: Sales invoices awaiting payment
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0"
+      - name: receivable_overdue_count
+        type: count
+        title: Overdue sales invoices
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0 AND {CUBE}.due_on IS NOT NULL AND {CUBE}.due_on::date < CURRENT_DATE"
+      - name: payable_outstanding
+        type: sum
+        sql: amount_due
+        format: currency
+        title: Owed to suppliers (bills awaiting payment)
+        description: >
+          Amount still owing on approved (AUTHORISED) supplier bills - Xero's
+          "Bills to pay" tile. Excludes draft bills and bills awaiting
+          approval (report those separately with draft_bills_total /
+          submitted_bills_total).
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'AUTHORISED'"
+      - name: payable_overdue
+        type: sum
+        sql: amount_due
+        format: currency
+        title: Overdue owed to suppliers
+        description: Amount due on approved bills past their due date.
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0 AND {CUBE}.due_on IS NOT NULL AND {CUBE}.due_on::date < CURRENT_DATE"
+      - name: payable_open_count
+        type: count
+        title: Bills awaiting payment
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0"
+      - name: payable_overdue_count
+        type: count
+        title: Overdue bills
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0 AND {CUBE}.due_on IS NOT NULL AND {CUBE}.due_on::date < CURRENT_DATE"
+      - name: draft_bills_total
+        type: sum
+        sql: total
+        format: currency
+        title: Draft bills value
+        description: Value of supplier bills still in DRAFT (not yet approved, not in "bills to pay").
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'DRAFT'"
+      - name: draft_bill_count
+        type: count
+        title: Draft bills
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'DRAFT'"
+      - name: submitted_bills_total
+        type: sum
+        sql: total
+        format: currency
+        title: Bills awaiting approval value
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'SUBMITTED'"
+      - name: submitted_bill_count
+        type: count
+        title: Bills awaiting approval
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCPAY' AND {CUBE}.status = 'SUBMITTED'"
+      - name: draft_sales_invoices_total
+        type: sum
+        sql: total
+        format: currency
+        title: Draft sales invoices value
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'DRAFT'"
+      - name: draft_sales_invoice_count
+        type: count
+        title: Draft sales invoices
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'DRAFT'"
+      - name: submitted_sales_invoices_total
+        type: sum
+        sql: total
+        format: currency
+        title: Sales invoices awaiting approval value
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'SUBMITTED'"
+      - name: submitted_sales_invoice_count
+        type: count
+        title: Sales invoices awaiting approval
+        filters:
+          - sql: "{CUBE}.invoice_type = 'ACCREC' AND {CUBE}.status = 'SUBMITTED'"
+
+    segments:
+      - name: sales_invoices
+        sql: "{CUBE}.invoice_type = 'ACCREC'"
+        description: Sales invoices (accounts receivable).
+      - name: bills
+        sql: "{CUBE}.invoice_type = 'ACCPAY'"
+        description: Supplier bills (accounts payable).
+      - name: financially_real
+        sql: "{CUBE}.status IN ('AUTHORISED', 'PAID')"
+        description: Approved documents only (excludes drafts, voided and deleted).
+      - name: outstanding
+        sql: "{CUBE}.status = 'AUTHORISED' AND COALESCE({CUBE}.amount_due, 0) > 0"
+        description: Approved documents with money still owing.
+
+  - name: xero_invoice_line_items
+    title: Invoice line items (Xero)
+    public: false
+    description: >
+      One row per line on a Xero invoice or bill: description, quantity, unit
+      price, line amount, GST and the GL account and inventory item it was
+      coded to. Carries the parent document's type, status, date and contact.
+    meta:
+      ai_context: >
+        The line-level detail behind invoices and bills: "what did we sell",
+        "spend by account/category", "which products appear on invoices".
+        total_line_amount is normalized ex-GST for both Inclusive and Exclusive
+        source documents; total_line_amount_including_tax is the GST-inclusive
+        equivalent. invoice_type ACCREC = sales lines, ACCPAY = bill lines;
+        exclude DRAFT/VOIDED/DELETED parent status for financial
+        totals. account_code/account_name (via join) give the GL coding;
+        item_name gives the inventory item when the line references one.
+    sql: >
+      SELECT
+        line.*,
+        invoice.line_amount_types AS source_line_amount_types,
+        invoice.currency_code AS source_currency_code,
+        CASE
+          WHEN invoice.line_amount_types = 'Inclusive'
+            THEN line.line_amount - COALESCE(line.tax_amount, 0)
+          ELSE line.line_amount
+        END AS line_amount_ex_tax,
+        CASE
+          WHEN invoice.line_amount_types = 'Inclusive' THEN line.line_amount
+          ELSE line.line_amount + COALESCE(line.tax_amount, 0)
+        END AS line_amount_including_tax
+      FROM source_xero_official.xo_invoice_line_items AS line
+      JOIN source_xero_official.xo_invoices AS invoice
+        ON invoice.tenant_id = line.tenant_id
+       AND invoice.invoice_id = line.invoice_id
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_invoices
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_invoices}.tenant_id
+          AND {CUBE}.invoice_id = {xero_invoices}.invoice_id
+      - name: xero_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_accounts}.tenant_id
+          AND {CUBE}.account_id = {xero_accounts}.account_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: line_item_id
+        sql: line_item_id
+        type: string
+        public: false
+      - name: invoice_id
+        sql: invoice_id
+        type: string
+        public: false
+      - name: invoice_type
+        sql: invoice_type
+        type: string
+        description: "ACCREC = sales line; ACCPAY = bill line."
+      - name: invoice_status
+        sql: invoice_status
+        type: string
+        description: Status of the parent document.
+      - name: issued_on
+        sql: issued_on
+        type: time
+        title: Document date
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Customer / supplier
+      - name: description
+        sql: description
+        type: string
+        title: Line description
+      - name: quantity
+        sql: quantity
+        type: number
+      - name: unit_amount
+        sql: unit_amount
+        type: number
+        title: Unit price
+        description: >
+          Source unit amount. Whether it includes tax follows line_amount_types;
+          use normalized line total measures for aggregation.
+      - name: line_amount_value
+        sql: line_amount_ex_tax
+        type: number
+        title: Line amount (excl. GST)
+        description: Source LineAmount normalized to exclude tax exactly once.
+      - name: line_amount_including_tax_value
+        sql: line_amount_including_tax
+        type: number
+        title: Line amount (incl. GST)
+        description: Source LineAmount normalized to include tax exactly once.
+      - name: source_line_amount_value
+        sql: line_amount
+        type: number
+        public: false
+      - name: line_amount_types
+        sql: source_line_amount_types
+        type: string
+        title: Source tax basis
+        description: Inclusive, Exclusive or NoTax for the parent invoice/bill.
+      - name: currency_code
+        sql: source_currency_code
+        type: string
+        title: Line currency
+        description: Document currency of this invoice or bill line.
+      - name: tax_amount_value
+        sql: tax_amount
+        type: number
+        title: GST on line
+      - name: tax_type
+        sql: tax_type
+        type: string
+        description: Xero tax type code applied to the line (e.g. OUTPUT, INPUT, EXEMPTEXPENSES).
+      - name: account_code
+        sql: account_code
+        type: string
+        title: Account code
+        description: GL account code the line is coded to.
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+      - name: item_code
+        sql: item_code
+        type: string
+        description: Inventory item code when the line references one.
+      - name: item_id
+        sql: item_id
+        type: string
+        public: false
+      - name: item_name
+        sql: item_name
+        type: string
+        title: Item
+
+    measures:
+      - name: line_count
+        type: count
+        title: Lines
+        description: Number of invoice or bill lines in the selection.
+      - name: total_line_amount
+        type: sum
+        sql: line_amount_ex_tax
+        format: currency
+        title: Line total (excl. GST)
+        description: >
+          Sum of line values normalized to exclude GST. Filter/group one
+          currency_code and financially-real parent statuses.
+      - name: total_line_amount_including_tax
+        type: sum
+        sql: line_amount_including_tax
+        format: currency
+        title: Line total (incl. GST)
+        description: >
+          Sum of line values normalized to include GST. Filter/group one
+          currency_code and financially-real parent statuses.
+      - name: total_line_tax
+        type: sum
+        sql: tax_amount
+        format: currency
+        title: GST
+        description: Tax component recorded by Xero on selected lines.
+      - name: total_quantity
+        type: sum
+        sql: quantity
+        title: Quantity
+        description: Sum of source line quantities; credit/return quantities may be negative.
+
+    segments:
+      - name: sales_lines
+        sql: "{CUBE}.invoice_type = 'ACCREC'"
+      - name: bill_lines
+        sql: "{CUBE}.invoice_type = 'ACCPAY'"
+
+  - name: xero_payments
+    title: Payments (Xero)
+    public: false
+    description: >
+      One row per Xero payment: money applied to an invoice, bill, credit
+      note, prepayment or overpayment, with the bank account it moved through,
+      the date, amount, reconciliation state and the settled document's
+      contact.
+    meta:
+      ai_context: >
+        Cash applied against documents. "When did X pay", "payments received /
+        made", "cash in vs out" = amount here split by payment_type (ACCRECPAYMENT
+        = customer payment received, ACCPAYPAYMENT = supplier payment made).
+        paid_on is the business date. status DELETED payments should be
+        excluded from totals. For direct bank spend/receive money that never
+        touches an invoice use xero_bank_transactions.
+    sql: SELECT * FROM source_xero_official.xo_payments
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_invoices
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_invoices}.tenant_id
+          AND {CUBE}.invoice_id = {xero_invoices}.invoice_id
+      - name: xero_contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_contacts}.tenant_id
+          AND {CUBE}.contact_id = {xero_contacts}.contact_id
+      - name: xero_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_accounts}.tenant_id
+          AND {CUBE}.account_id = {xero_accounts}.account_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: payment_id
+        sql: payment_id
+        type: string
+        public: false
+      - name: paid_on
+        sql: paid_on
+        type: time
+        title: Payment date
+      - name: amount_value
+        sql: amount
+        type: number
+        title: Payment amount
+      - name: bank_amount_value
+        sql: bank_amount
+        type: number
+        description: Amount in the bank account's currency.
+      - name: currency_rate
+        sql: currency_rate
+        type: number
+        public: false
+      - name: payment_type
+        sql: payment_type
+        type: string
+        title: Payment type
+        description: >
+          ACCRECPAYMENT = customer payment received; ACCPAYPAYMENT = payment
+          made to a supplier; ARCREDITPAYMENT/APCREDITPAYMENT refund credit
+          notes; AROVERPAYMENTPAYMENT/APPREPAYMENTPAYMENT settle
+          overpayments/prepayments.
+      - name: status
+        sql: status
+        type: string
+        description: AUTHORISED or DELETED.
+      - name: is_reconciled
+        sql: is_reconciled
+        type: boolean
+        title: Reconciled
+      - name: reference
+        sql: reference
+        type: string
+      - name: invoice_id
+        sql: invoice_id
+        type: string
+        public: false
+      - name: invoice_number
+        sql: invoice_number
+        type: string
+        description: The settled document's number.
+      - name: invoice_type
+        sql: invoice_type
+        type: string
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Customer / supplier
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+      - name: account_code
+        sql: account_code
+        type: string
+        description: The bank/clearing account the payment moved through.
+      - name: batch_payment_id
+        sql: batch_payment_id
+        type: string
+        public: false
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+
+    measures:
+      - name: payment_count
+        type: count
+        title: Payments
+      - name: total_payments
+        type: sum
+        sql: amount
+        format: currency
+        title: Payments total
+        description: Sum of payment amounts (filter by payment_type for received vs made).
+      - name: payments_received
+        type: sum
+        sql: amount
+        format: currency
+        title: Customer payments received
+        filters:
+          - sql: "{CUBE}.payment_type = 'ACCRECPAYMENT' AND {CUBE}.status <> 'DELETED'"
+      - name: payments_made
+        type: sum
+        sql: amount
+        format: currency
+        title: Supplier payments made
+        filters:
+          - sql: "{CUBE}.payment_type = 'ACCPAYPAYMENT' AND {CUBE}.status <> 'DELETED'"
+      - name: unreconciled_count
+        type: count
+        title: Unreconciled payments
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_reconciled, false) AND {CUBE}.status <> 'DELETED'"
+
+  - name: xero_credit_notes
+    title: Credit notes (Xero)
+    public: false
+    description: >
+      One row per Xero credit note: ACCRECCREDIT (issued to a customer,
+      reduces receivables) or ACCPAYCREDIT (received from a supplier, reduces
+      payables), with totals, remaining credit and status.
+    meta:
+      ai_context: >
+        Credits and refunds. "Credit notes issued", "refunds to customers" =
+        document_kind 'Customer credit note'; supplier credits = 'Supplier
+        credit note'. remaining_credit is what has not yet been allocated to
+        an invoice or refunded. Allocations to specific invoices live in
+        xero_credit_note_allocations.
+    sql: SELECT * FROM source_xero_official.xo_credit_notes
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_contacts}.tenant_id
+          AND {CUBE}.contact_id = {xero_contacts}.contact_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: credit_note_id
+        sql: credit_note_id
+        type: string
+        public: false
+      - name: credit_note_number
+        sql: credit_note_number
+        type: string
+      - name: credit_note_type
+        sql: credit_note_type
+        type: string
+        description: "ACCRECCREDIT (customer) or ACCPAYCREDIT (supplier)."
+      - name: document_kind
+        sql: document_kind
+        type: string
+        title: Credit note kind
+      - name: status
+        sql: status
+        type: string
+      - name: reference
+        sql: reference
+        type: string
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Customer / supplier
+      - name: issued_on
+        sql: issued_on
+        type: time
+        title: Issue date
+      - name: fully_paid_on
+        sql: fully_paid_on
+        type: time
+      - name: subtotal
+        sql: subtotal
+        type: number
+      - name: total_tax_amount
+        sql: total_tax
+        type: number
+      - name: total_amount
+        sql: total
+        type: number
+      - name: remaining_credit_value
+        sql: remaining_credit
+        type: number
+        title: Remaining credit
+      - name: currency_code
+        sql: currency_code
+        type: string
+      - name: currency_rate
+        sql: currency_rate
+        type: number
+        public: false
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+
+    measures:
+      - name: credit_note_count
+        type: count
+        title: Credit notes
+      - name: total_credited
+        type: sum
+        sql: total
+        format: currency
+        title: Credit note total
+      - name: total_remaining_credit
+        type: sum
+        sql: remaining_credit
+        format: currency
+        title: Unallocated credit
+
+    segments:
+      - name: customer_credit_notes
+        sql: "{CUBE}.credit_note_type = 'ACCRECCREDIT'"
+      - name: supplier_credit_notes
+        sql: "{CUBE}.credit_note_type = 'ACCPAYCREDIT'"
+
+  - name: xero_credit_note_line_items
+    title: Credit note lines (Xero)
+    public: false
+    description: One row per line on a Xero credit note, with GL account coding.
+    sql: SELECT * FROM source_xero_official.xo_credit_note_line_items
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_credit_notes
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_credit_notes}.tenant_id
+          AND {CUBE}.credit_note_id = {xero_credit_notes}.credit_note_id
+      - name: xero_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_accounts}.tenant_id
+          AND {CUBE}.account_id = {xero_accounts}.account_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: line_item_id
+        sql: line_item_id
+        type: string
+        public: false
+      - name: credit_note_id
+        sql: credit_note_id
+        type: string
+        public: false
+      - name: credit_note_type
+        sql: credit_note_type
+        type: string
+      - name: issued_on
+        sql: issued_on
+        type: time
+      - name: contact_name
+        sql: contact_name
+        type: string
+      - name: description
+        sql: description
+        type: string
+      - name: quantity
+        sql: quantity
+        type: number
+      - name: unit_amount
+        sql: unit_amount
+        type: number
+      - name: line_amount_value
+        sql: line_amount
+        type: number
+      - name: tax_amount_value
+        sql: tax_amount
+        type: number
+      - name: tax_type
+        sql: tax_type
+        type: string
+      - name: account_code
+        sql: account_code
+        type: string
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+    measures:
+      - name: line_count
+        type: count
+      - name: total_line_amount
+        type: sum
+        sql: line_amount
+        format: currency
+
+  - name: xero_credit_note_allocations
+    title: Credit note allocations (Xero)
+    public: false
+    description: >
+      One row per allocation of a credit note against an invoice: which
+      invoice the credit was applied to, when and how much.
+    sql: SELECT * FROM source_xero_official.xo_credit_note_allocations
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_credit_notes
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_credit_notes}.tenant_id
+          AND {CUBE}.credit_note_id = {xero_credit_notes}.credit_note_id
+      - name: xero_invoices
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_invoices}.tenant_id
+          AND {CUBE}.invoice_id = {xero_invoices}.invoice_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: allocation_id
+        sql: allocation_id
+        type: string
+        public: false
+      - name: credit_note_id
+        sql: credit_note_id
+        type: string
+        public: false
+      - name: invoice_id
+        sql: invoice_id
+        type: string
+        public: false
+      - name: invoice_number
+        sql: invoice_number
+        type: string
+      - name: allocated_on
+        sql: allocated_on
+        type: time
+    measures:
+      - name: allocation_count
+        type: count
+      - name: total_allocated
+        type: sum
+        sql: amount
+        format: currency
+
+  - name: xero_bank_transactions
+    title: Bank transactions (Xero)
+    public: false
+    description: >
+      One row per Xero bank transaction: spend money / receive money recorded
+      directly against a bank account (including overpayment and prepayment
+      variants), with contact, bank account, totals, GST and reconciliation
+      state. This is the day-to-day cash activity that never touches an
+      invoice.
+    meta:
+      ai_context: >
+        Direct bank activity. "Money in vs money out", "spending from the bank
+        account", "cash received" = total here split by money_direction
+        ('Money in' for RECEIVE types, 'Money out' for SPEND types).
+        occurred_on is the business date; exclude status DELETED. Per-line GL
+        coding lives in xero_bank_transaction_line_items. Payments applied to
+        invoices are in xero_payments instead.
+    sql: SELECT * FROM source_xero_official.xo_bank_transactions
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_contacts}.tenant_id
+          AND {CUBE}.contact_id = {xero_contacts}.contact_id
+      - name: xero_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_accounts}.tenant_id
+          AND {CUBE}.bank_account_id = {xero_accounts}.account_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: bank_transaction_id
+        sql: bank_transaction_id
+        type: string
+        public: false
+      - name: transaction_type
+        sql: transaction_type
+        type: string
+        description: "SPEND, RECEIVE, SPEND-OVERPAYMENT, RECEIVE-PREPAYMENT etc."
+      - name: money_direction
+        sql: money_direction
+        type: string
+        title: Direction
+        description: "'Money in' or 'Money out'."
+      - name: status
+        sql: status
+        type: string
+        description: AUTHORISED or DELETED.
+      - name: is_reconciled
+        sql: is_reconciled
+        type: boolean
+        title: Reconciled
+      - name: reference
+        sql: reference
+        type: string
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Payee / payer
+      - name: bank_account_id
+        sql: bank_account_id
+        type: string
+        public: false
+      - name: bank_account_code
+        sql: bank_account_code
+        type: string
+        public: false
+      - name: bank_account_name
+        sql: bank_account_name
+        type: string
+        title: Bank account
+      - name: occurred_on
+        sql: occurred_on
+        type: time
+        title: Transaction date
+      - name: subtotal
+        sql: subtotal
+        type: number
+      - name: total_tax_amount
+        sql: total_tax
+        type: number
+      - name: total_amount
+        sql: total
+        type: number
+      - name: currency_code
+        sql: currency_code
+        type: string
+      - name: line_amount_types
+        sql: line_amount_types
+        type: string
+        public: false
+      - name: batch_payment_id
+        sql: batch_payment_id
+        type: string
+        public: false
+      - name: overpayment_id
+        sql: overpayment_id
+        type: string
+        public: false
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+
+    measures:
+      - name: transaction_count
+        type: count
+        title: Bank transactions
+        description: >
+          Number of bank-transaction documents in the selection. Filter status
+          AUTHORISED for financial activity; DELETED rows remain audit history.
+      - name: total_value
+        type: sum
+        sql: total
+        format: currency
+        title: Total value
+        description: >
+          Raw bank-transaction total in currency_code. Never add different
+          currencies; use money_in/money_out with one currency selected.
+      - name: money_in
+        type: sum
+        sql: total
+        format: currency
+        title: Money in
+        description: >
+          AUTHORISED RECEIVE-type bank transactions in currency_code. This is
+          direct bank activity, not accounting revenue and not invoice payments.
+        filters:
+          - sql: "{CUBE}.transaction_type LIKE 'RECEIVE%' AND {CUBE}.status <> 'DELETED'"
+      - name: money_out
+        type: sum
+        sql: total
+        format: currency
+        title: Money out
+        description: >
+          AUTHORISED SPEND-type bank transactions in currency_code. This is
+          direct cash activity, not automatically a P&L expense.
+        filters:
+          - sql: "{CUBE}.transaction_type LIKE 'SPEND%' AND {CUBE}.status <> 'DELETED'"
+      - name: gst_total
+        type: sum
+        sql: total_tax
+        format: currency
+        title: GST
+        description: >
+          Tax component recorded on selected bank transactions in currency_code.
+          It is not the organisation's BAS or GST control-account balance.
+      - name: unreconciled_count
+        type: count
+        title: Unreconciled transactions
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_reconciled, false) AND {CUBE}.status <> 'DELETED'"
+
+    segments:
+      - name: money_in_transactions
+        sql: "{CUBE}.transaction_type LIKE 'RECEIVE%'"
+      - name: money_out_transactions
+        sql: "{CUBE}.transaction_type LIKE 'SPEND%'"
+
+  - name: xero_bank_transaction_line_items
+    title: Bank transaction lines (Xero)
+    public: false
+    description: >
+      One row per line on a Xero bank transaction, with the GL account each
+      slice of the spend/receive was coded to.
+    meta:
+      ai_context: >
+        Category-level bank activity: use total_line_amount for ex-tax spend or
+        total_line_amount_including_tax for cash value, grouped by account_code
+        (join xero_accounts for name). transaction_type SPEND% = outgoings,
+        RECEIVE% = inflows. Filter transaction_status AUTHORISED and one currency.
+    sql: >
+      SELECT
+        line.*,
+        transaction.line_amount_types AS source_line_amount_types,
+        transaction.currency_code AS source_currency_code,
+        transaction.status AS transaction_status,
+        CASE
+          WHEN transaction.line_amount_types = 'Inclusive'
+            THEN line.line_amount - COALESCE(line.tax_amount, 0)
+          ELSE line.line_amount
+        END AS line_amount_ex_tax,
+        CASE
+          WHEN transaction.line_amount_types = 'Inclusive' THEN line.line_amount
+          ELSE line.line_amount + COALESCE(line.tax_amount, 0)
+        END AS line_amount_including_tax
+      FROM source_xero_official.xo_bank_transaction_line_items AS line
+      JOIN source_xero_official.xo_bank_transactions AS transaction
+        ON transaction.tenant_id = line.tenant_id
+       AND transaction.bank_transaction_id = line.bank_transaction_id
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_bank_transactions
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_bank_transactions}.tenant_id
+          AND {CUBE}.bank_transaction_id = {xero_bank_transactions}.bank_transaction_id
+      - name: xero_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_accounts}.tenant_id
+          AND {CUBE}.account_id = {xero_accounts}.account_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: line_item_id
+        sql: line_item_id
+        type: string
+        public: false
+      - name: bank_transaction_id
+        sql: bank_transaction_id
+        type: string
+        public: false
+      - name: transaction_type
+        sql: transaction_type
+        type: string
+        description: SPEND/RECEIVE and their prepayment/overpayment variants.
+      - name: transaction_status
+        sql: transaction_status
+        type: string
+        description: AUTHORISED or DELETED; financial analysis uses AUTHORISED.
+      - name: occurred_on
+        sql: occurred_on
+        type: time
+        title: Transaction date
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Payee / payer
+      - name: bank_account_name
+        sql: bank_account_name
+        type: string
+        title: Bank account
+      - name: description
+        sql: description
+        type: string
+      - name: quantity
+        sql: quantity
+        type: number
+      - name: unit_amount
+        sql: unit_amount
+        type: number
+        description: Source unit amount; tax inclusion follows line_amount_types.
+      - name: line_amount_value
+        sql: line_amount_ex_tax
+        type: number
+        title: Line amount (excl. GST)
+        description: Source LineAmount normalized to exclude tax exactly once.
+      - name: line_amount_including_tax_value
+        sql: line_amount_including_tax
+        type: number
+        title: Line amount (incl. GST)
+        description: Source LineAmount normalized to include tax exactly once.
+      - name: source_line_amount_value
+        sql: line_amount
+        type: number
+        public: false
+      - name: line_amount_types
+        sql: source_line_amount_types
+        type: string
+        title: Source tax basis
+        description: Inclusive, Exclusive or NoTax for the parent bank transaction.
+      - name: currency_code
+        sql: source_currency_code
+        type: string
+        title: Line currency
+        description: Currency of the parent bank transaction.
+      - name: tax_amount_value
+        sql: tax_amount
+        type: number
+      - name: tax_type
+        sql: tax_type
+        type: string
+      - name: account_code
+        sql: account_code
+        type: string
+        title: Account code
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+    measures:
+      - name: line_count
+        type: count
+        description: Number of bank-transaction coding lines in the selection.
+      - name: total_line_amount
+        type: sum
+        sql: line_amount_ex_tax
+        format: currency
+        title: Line total (excl. GST)
+        description: >
+          Sum normalized to exclude GST. Filter transaction_status AUTHORISED
+          and one currency_code.
+      - name: total_line_amount_including_tax
+        type: sum
+        sql: line_amount_including_tax
+        format: currency
+        title: Line total (incl. GST)
+        description: >
+          Cash-value line total normalized to include GST. Filter one currency.
+      - name: total_line_tax
+        type: sum
+        sql: tax_amount
+        format: currency
+        title: GST
+        description: Tax component recorded by Xero on selected bank lines.
+
+  - name: xero_bank_transfers
+    title: Bank transfers (Xero)
+    public: false
+    description: >
+      One row per transfer between two of the organisation's own bank
+      accounts. Not income or spending; excluded from cash in/out analysis.
+    sql: SELECT * FROM source_xero_official.xo_bank_transfers
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: bank_transfer_id
+        sql: bank_transfer_id
+        type: string
+        public: false
+      - name: transferred_on
+        sql: transferred_on
+        type: time
+        title: Transfer date
+      - name: reference
+        sql: reference
+        type: string
+      - name: status
+        sql: status
+        type: string
+      - name: from_account_name
+        sql: from_account_name
+        type: string
+        title: From account
+      - name: to_account_name
+        sql: to_account_name
+        type: string
+        title: To account
+      - name: from_is_reconciled
+        sql: from_is_reconciled
+        type: boolean
+      - name: to_is_reconciled
+        sql: to_is_reconciled
+        type: boolean
+      - name: created_at
+        sql: created_at
+        type: time
+        public: false
+    measures:
+      - name: transfer_count
+        type: count
+        title: Transfers
+      - name: total_transferred
+        type: sum
+        sql: amount
+        format: currency
+        title: Amount transferred
+
+  - name: xero_cash_movements
+    title: Cash movements (Xero bank activity)
+    public: false
+    description: >
+      One row per movement of money through the organisation's bank accounts,
+      exactly as Xero's dashboard "Cash in and out" tile and Bank Summary
+      report count it: direct spend/receive-money bank transactions (incl.
+      overpayment and prepayment variants) UNION payments applied to invoices,
+      bills, credit notes and overpayments. Transfers between the business's
+      own bank accounts are excluded, as Xero excludes them. Amounts are in
+      the bank account currency.
+    meta:
+      ai_context: >
+        THE answer for "cash in and out", "money in and out of the bank",
+        "how much came in / went out", "bank activity", "cash flow summary"
+        over a period: cash_in, cash_out and net_cash_movement over
+        occurred_on. This reproduces Xero's dashboard figures to the cent
+        (verified Mar-Aug 2026). It is cash, not accrual P&L: use
+        xero_profit_and_loss_analytics for income and expenses. Direction is
+        fixed per row ('Cash in' / 'Cash out'); source_kind says whether the
+        movement was a direct bank transaction or an invoice/bill payment.
+        "Cash in/out and how many are unreconciled" is one query: add
+        unreconciled_count alongside cash_in / cash_out. Never add bank_* and
+        payment_* members on top of these - they are already combined here.
+    sql: >
+      SELECT bt.tenant_id,
+             'bank:' || bt.row_key AS row_key,
+             'Bank transaction' AS source_kind,
+             bt.transaction_type AS movement_type,
+             CASE WHEN bt.transaction_type LIKE 'RECEIVE%' THEN 'Cash in' ELSE 'Cash out' END AS direction,
+             bt.occurred_on AS occurred_on,
+             bt.contact_id,
+             bt.contact_name,
+             bt.bank_account_id,
+             bt.bank_account_code,
+             bt.bank_account_name,
+             bt.reference,
+             bt.total AS amount,
+             bt.currency_code,
+             bt.is_reconciled
+        FROM source_xero_official.xo_bank_transactions bt
+       WHERE bt.transaction_type NOT LIKE '%TRANSFER%'
+         AND COALESCE(bt.status, '') <> 'DELETED'
+      UNION ALL
+      SELECT p.tenant_id,
+             'payment:' || p.row_key AS row_key,
+             CASE
+               WHEN p.payment_type = 'ACCRECPAYMENT' THEN 'Invoice payment received'
+               WHEN p.payment_type = 'ACCPAYPAYMENT' THEN 'Bill payment made'
+               WHEN p.payment_type LIKE 'AP%' THEN 'Supplier refund received'
+               ELSE 'Customer refund paid'
+             END AS source_kind,
+             p.payment_type AS movement_type,
+             CASE
+               WHEN p.payment_type IN ('ACCRECPAYMENT', 'APCREDITPAYMENT', 'APOVERPAYMENTPAYMENT', 'APPREPAYMENTPAYMENT') THEN 'Cash in'
+               ELSE 'Cash out'
+             END AS direction,
+             p.paid_on AS occurred_on,
+             p.contact_id,
+             p.contact_name,
+             p.account_id AS bank_account_id,
+             p.account_code AS bank_account_code,
+             a.account_name AS bank_account_name,
+             p.reference,
+             COALESCE(p.bank_amount, p.amount) AS amount,
+             a.currency_code,
+             p.is_reconciled
+        FROM source_xero_official.xo_payments p
+        LEFT JOIN source_xero_official.xo_accounts a
+          ON a.tenant_id = p.tenant_id AND a.account_id = p.account_id
+       WHERE COALESCE(p.status, '') <> 'DELETED'
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_contacts}.tenant_id
+          AND {CUBE}.contact_id = {xero_contacts}.contact_id
+      - name: xero_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_accounts}.tenant_id
+          AND {CUBE}.bank_account_id = {xero_accounts}.account_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: occurred_on
+        sql: occurred_on
+        type: time
+        title: Movement date
+        description: Bank transaction date or payment date (business date).
+      - name: direction
+        sql: direction
+        type: string
+        title: Direction
+        description: "'Cash in' or 'Cash out'."
+      - name: source_kind
+        sql: source_kind
+        type: string
+        title: Movement source
+        description: >
+          Bank transaction, Invoice payment received, Bill payment made,
+          Supplier refund received or Customer refund paid.
+      - name: movement_type
+        sql: movement_type
+        type: string
+        title: Xero type
+        description: Xero's own type code (SPEND, RECEIVE, ACCPAYPAYMENT, ACCRECPAYMENT, ...).
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Payee / payer
+      - name: bank_account_id
+        sql: bank_account_id
+        type: string
+        public: false
+      - name: bank_account_code
+        sql: bank_account_code
+        type: string
+        public: false
+      - name: bank_account_name
+        sql: bank_account_name
+        type: string
+        title: Bank account
+      - name: reference
+        sql: reference
+        type: string
+      - name: amount_value
+        sql: amount
+        type: number
+        title: Amount
+      - name: currency_code
+        sql: currency_code
+        type: string
+      - name: is_reconciled
+        sql: is_reconciled
+        type: boolean
+        title: Reconciled
+
+    measures:
+      - name: movement_count
+        type: count
+        title: Cash movements
+        description: Number of bank movements (transactions plus payments) in the selection.
+      - name: cash_in
+        type: sum
+        sql: amount
+        format: currency
+        title: Cash in
+        description: >
+          Money received into the bank: receive-money transactions, customer
+          invoice payments and refunds received from suppliers. Matches Xero's
+          dashboard "Cash in" for the period. Transfers between own accounts
+          excluded.
+        filters:
+          - sql: "{CUBE}.direction = 'Cash in'"
+      - name: cash_out
+        type: sum
+        sql: amount
+        format: currency
+        title: Cash out
+        description: >
+          Money paid out of the bank: spend-money transactions, supplier bill
+          payments and refunds paid to customers. Matches Xero's dashboard
+          "Cash out" for the period. Transfers between own accounts excluded.
+        filters:
+          - sql: "{CUBE}.direction = 'Cash out'"
+      - name: net_cash_movement
+        type: number
+        sql: "COALESCE({cash_in}, 0) - COALESCE({cash_out}, 0)"
+        format: currency
+        title: Net cash movement
+        description: Cash in minus cash out for the period (Xero's "Difference").
+      - name: total_amount
+        type: sum
+        sql: amount
+        format: currency
+        title: Total movement value
+        description: Unsigned total of the selected movements; use cash_in/cash_out for direction.
+      - name: unreconciled_count
+        type: count
+        title: Unreconciled cash movements
+        description: >
+          Bank transactions and payments in the selection not yet reconciled
+          against a bank statement line; ask it alongside cash_in / cash_out
+          for "how many are unreconciled".
+        filters:
+          - sql: "NOT COALESCE({CUBE}.is_reconciled, false)"
+
+    segments:
+      - name: cash_in_movements
+        sql: "{CUBE}.direction = 'Cash in'"
+      - name: cash_out_movements
+        sql: "{CUBE}.direction = 'Cash out'"
+
+  - name: xero_batch_payments
+    title: Batch payments (Xero)
+    public: false
+    description: >
+      One row per Xero batch payment: several invoice/bill payments bundled
+      into a single bank transaction.
+    sql: SELECT * FROM source_xero_official.xo_batch_payments
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: batch_payment_id
+        sql: batch_payment_id
+        type: string
+        public: false
+      - name: paid_on
+        sql: paid_on
+        type: time
+        title: Payment date
+      - name: batch_type
+        sql: batch_type
+        type: string
+        description: PAYBATCH (bills paid) or RECBATCH (invoices received).
+      - name: status
+        sql: status
+        type: string
+      - name: is_reconciled
+        sql: is_reconciled
+        type: boolean
+      - name: details
+        sql: details
+        type: string
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+    measures:
+      - name: batch_count
+        type: count
+        title: Batches
+      - name: total_batch_amount
+        type: sum
+        sql: total_amount
+        format: currency
+        title: Batch total
+
+  - name: xero_batch_payment_members
+    title: Batch payment members (Xero)
+    public: false
+    description: One row per payment inside a batch payment, linked to its invoice.
+    sql: SELECT * FROM source_xero_official.xo_batch_payment_members
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_batch_payments
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_batch_payments}.tenant_id
+          AND {CUBE}.batch_payment_id = {xero_batch_payments}.batch_payment_id
+      - name: xero_invoices
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_invoices}.tenant_id
+          AND {CUBE}.invoice_id = {xero_invoices}.invoice_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: payment_id
+        sql: payment_id
+        type: string
+        public: false
+      - name: batch_payment_id
+        sql: batch_payment_id
+        type: string
+        public: false
+      - name: paid_on
+        sql: paid_on
+        type: time
+      - name: details
+        sql: details
+        type: string
+      - name: invoice_id
+        sql: invoice_id
+        type: string
+        public: false
+    measures:
+      - name: member_count
+        type: count
+      - name: total_amount
+        type: sum
+        sql: amount
+        format: currency
+
+  - name: xero_manual_journals
+    title: Manual journals (Xero)
+    public: false
+    description: >
+      One row per Xero manual journal: a direct general-ledger posting with a
+      narration, status and balanced debit/credit totals. Includes payroll
+      posting journals and adjustments.
+    meta:
+      ai_context: >
+        Direct GL entries. "Journal entries", "adjustments", "payroll
+        journals" live here; journal_on is the posting date, status POSTED is
+        the financially real filter. Line-level account detail is in
+        xero_manual_journal_lines (debit_amount / credit_amount split).
+    sql: SELECT * FROM source_xero_official.xo_manual_journals
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: manual_journal_id
+        sql: manual_journal_id
+        type: string
+        public: false
+      - name: narration
+        sql: narration
+        type: string
+        title: Narration
+        description: "The journal's description (e.g. 'Payroll: weekly pay run')."
+      - name: status
+        sql: status
+        type: string
+        description: DRAFT, POSTED, VOIDED or DELETED. POSTED is financially real.
+      - name: journal_on
+        sql: journal_on
+        type: time
+        title: Journal date
+      - name: line_amount_types
+        sql: line_amount_types
+        type: string
+        public: false
+      - name: show_on_cash_basis_reports
+        sql: show_on_cash_basis_reports
+        type: boolean
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+    measures:
+      - name: journal_count
+        type: count
+        title: Journals
+      - name: total_debits
+        type: sum
+        sql: debit_total
+        format: currency
+        title: Debit total
+      - name: total_credits
+        type: sum
+        sql: credit_total
+        format: currency
+        title: Credit total
+    segments:
+      - name: posted_journals
+        sql: "{CUBE}.status = 'POSTED'"
+
+  - name: xero_manual_journal_lines
+    title: Manual journal lines (Xero)
+    public: false
+    description: >
+      One row per line on a manual journal: the GL account, description and
+      the signed line amount split into debit_amount (positive lines) and
+      credit_amount (negative lines).
+    meta:
+      ai_context: >
+        Account-level journal activity, including payroll cost postings.
+        "Wages posted to the GL", "journal activity by account" = debits /
+        credits grouped by account_code (join xero_accounts for names).
+        Filter journal_status = 'POSTED' for real postings.
+    sql: SELECT * FROM source_xero_official.xo_manual_journal_lines
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_manual_journals
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_manual_journals}.tenant_id
+          AND {CUBE}.manual_journal_id = {xero_manual_journals}.manual_journal_id
+      - name: xero_accounts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_accounts}.tenant_id
+          AND {CUBE}.account_id = {xero_accounts}.account_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: manual_journal_id
+        sql: manual_journal_id
+        type: string
+        public: false
+      - name: narration
+        sql: narration
+        type: string
+      - name: journal_status
+        sql: journal_status
+        type: string
+      - name: journal_on
+        sql: journal_on
+        type: time
+        title: Journal date
+      - name: description
+        sql: description
+        type: string
+      - name: line_amount_value
+        sql: line_amount
+        type: number
+        description: Signed amount (positive = debit, negative = credit).
+      - name: tax_amount_value
+        sql: tax_amount
+        type: number
+      - name: tax_type
+        sql: tax_type
+        type: string
+      - name: account_code
+        sql: account_code
+        type: string
+        title: Account code
+      - name: account_id
+        sql: account_id
+        type: string
+        public: false
+    measures:
+      - name: line_count
+        type: count
+      - name: total_debits
+        type: sum
+        sql: debit_amount
+        format: currency
+        title: Debits
+      - name: total_credits
+        type: sum
+        sql: credit_amount
+        format: currency
+        title: Credits
+      - name: net_amount
+        type: sum
+        sql: line_amount
+        format: currency
+        title: Net (signed) amount
+
+  - name: xero_overpayments
+    title: Overpayments (Xero)
+    public: false
+    description: >
+      One row per Xero overpayment: money received or paid beyond what was
+      owed, held as credit until allocated or refunded.
+    sql: SELECT * FROM source_xero_official.xo_overpayments
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_contacts}.tenant_id
+          AND {CUBE}.contact_id = {xero_contacts}.contact_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: overpayment_id
+        sql: overpayment_id
+        type: string
+        public: false
+      - name: overpayment_type
+        sql: overpayment_type
+        type: string
+        description: >
+          RECEIVE-OVERPAYMENT means a customer overpaid us, so they hold
+          credit with us. SPEND-OVERPAYMENT means we overpaid a supplier, so
+          we hold credit with them. When asked "does anyone have credit",
+          check BOTH directions and report which way the credit runs.
+      - name: status
+        sql: status
+        type: string
+        description: "AUTHORISED (credit still open), PAID (fully allocated or refunded) or VOIDED."
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: contact_name
+        sql: contact_name
+        type: string
+      - name: occurred_on
+        sql: occurred_on
+        type: time
+        title: Date
+      - name: total_amount
+        sql: total
+        type: number
+      - name: remaining_credit_value
+        sql: remaining_credit
+        type: number
+        title: Remaining credit
+      - name: currency_code
+        sql: currency_code
+        type: string
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+    measures:
+      - name: overpayment_count
+        type: count
+      - name: total_overpaid
+        type: sum
+        sql: total
+        format: currency
+      - name: total_remaining_credit
+        type: sum
+        sql: remaining_credit
+        format: currency
+        title: Remaining credit
+        description: Unallocated credit still on the books. Excludes voided overpayments.
+        filters:
+          - sql: "{CUBE}.status <> 'VOIDED'"
+
+  - name: xero_overpayment_allocations
+    title: Overpayment allocations (Xero)
+    public: false
+    description: One row per allocation of an overpayment against an invoice.
+    sql: SELECT * FROM source_xero_official.xo_overpayment_allocations
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_overpayments
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_overpayments}.tenant_id
+          AND {CUBE}.overpayment_id = {xero_overpayments}.overpayment_id
+      - name: xero_invoices
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_invoices}.tenant_id
+          AND {CUBE}.invoice_id = {xero_invoices}.invoice_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: allocation_id
+        sql: allocation_id
+        type: string
+        public: false
+      - name: overpayment_id
+        sql: overpayment_id
+        type: string
+        public: false
+      - name: invoice_id
+        sql: invoice_id
+        type: string
+        public: false
+      - name: invoice_number
+        sql: invoice_number
+        type: string
+      - name: allocated_on
+        sql: allocated_on
+        type: time
+    measures:
+      - name: allocation_count
+        type: count
+      - name: total_allocated
+        type: sum
+        sql: amount
+        format: currency
+
+  - name: xero_repeating_invoices
+    title: Repeating invoices (Xero)
+    public: false
+    description: >
+      One row per Xero repeating invoice template: the recurring schedule
+      (period/unit, next scheduled date) and the template's contact and
+      totals. These generate real invoices on schedule.
+    meta:
+      ai_context: >
+        Recurring revenue and recurring bills. "Subscriptions", "recurring
+        invoices", "regular bills" and expected recurring amounts come from
+        here; the actual generated documents live in xero_invoices
+        (repeating_invoice_id links them).
+    sql: SELECT * FROM source_xero_official.xo_repeating_invoices
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_contacts}.tenant_id
+          AND {CUBE}.contact_id = {xero_contacts}.contact_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: repeating_invoice_id
+        sql: repeating_invoice_id
+        type: string
+        public: false
+      - name: invoice_type
+        sql: invoice_type
+        type: string
+        description: "ACCREC (recurring sales invoice) or ACCPAY (recurring bill)."
+      - name: status
+        sql: status
+        type: string
+        description: DRAFT or AUTHORISED (active).
+      - name: reference
+        sql: reference
+        type: string
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Customer / supplier
+      - name: subtotal
+        sql: subtotal
+        type: number
+      - name: total_tax_amount
+        sql: total_tax
+        type: number
+      - name: total_amount
+        sql: total
+        type: number
+        title: Amount per occurrence
+      - name: currency_code
+        sql: currency_code
+        type: string
+      - name: schedule_period
+        sql: schedule_period
+        type: number
+        description: Repeats every N units.
+      - name: schedule_unit
+        sql: schedule_unit
+        type: string
+        description: WEEKLY or MONTHLY.
+      - name: schedule_due_day
+        sql: schedule_due_day
+        type: number
+        public: false
+      - name: schedule_due_date_type
+        sql: schedule_due_date_type
+        type: string
+        public: false
+      - name: schedule_starts_on
+        sql: schedule_starts_on
+        type: time
+      - name: schedule_ends_on
+        sql: schedule_ends_on
+        type: time
+      - name: next_scheduled_on
+        sql: next_scheduled_on
+        type: time
+        title: Next occurrence
+      - name: approved_for_sending
+        sql: approved_for_sending
+        type: boolean
+    measures:
+      - name: template_count
+        type: count
+        title: Repeating templates
+      - name: total_per_cycle
+        type: sum
+        sql: total
+        format: currency
+        title: Recurring amount per cycle
+
+  - name: xero_repeating_invoice_line_items
+    title: Repeating invoice lines (Xero)
+    public: false
+    description: One row per line on a repeating invoice template.
+    sql: SELECT * FROM source_xero_official.xo_repeating_invoice_line_items
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_repeating_invoices
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_repeating_invoices}.tenant_id
+          AND {CUBE}.repeating_invoice_id = {xero_repeating_invoices}.repeating_invoice_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: line_item_id
+        sql: line_item_id
+        type: string
+        public: false
+      - name: repeating_invoice_id
+        sql: repeating_invoice_id
+        type: string
+        public: false
+      - name: invoice_type
+        sql: invoice_type
+        type: string
+      - name: contact_name
+        sql: contact_name
+        type: string
+      - name: description
+        sql: description
+        type: string
+      - name: quantity
+        sql: quantity
+        type: number
+      - name: unit_amount
+        sql: unit_amount
+        type: number
+      - name: line_amount_value
+        sql: line_amount
+        type: number
+      - name: tax_amount_value
+        sql: tax_amount
+        type: number
+      - name: tax_type
+        sql: tax_type
+        type: string
+      - name: account_code
+        sql: account_code
+        type: string
+      - name: item_code
+        sql: item_code
+        type: string
+    measures:
+      - name: line_count
+        type: count
+      - name: total_line_amount
+        type: sum
+        sql: line_amount
+        format: currency
+
+  - name: xero_contacts
+    title: Contacts (Xero customers and suppliers)
+    public: false
+    description: >
+      One row per Xero contact: customers and suppliers with payment terms,
+      status and the AR/AP balance snapshot Xero stored when the contact
+      record was last edited (outstanding and overdue).
+    meta:
+      ai_context: >
+        The customer/supplier list (names, email, terms, customer/supplier
+        flags). The *_outstanding / *_overdue values are snapshots taken at
+        the contact's last edit, not live balances: most contacts carry none
+        and the rest can be years stale, so never answer "who owes me" / "who
+        do I owe" from them. Those are one query on xero_invoices: segments
+        sales_invoices + outstanding (or bills + outstanding) grouped by
+        contact_name with total_amount_due and overdue_amount. Contact names
+        here may differ from names in other tools (Deputy, Lightspeed); never
+        join across tools by exact string.
+    sql: SELECT * FROM source_xero_official.xo_contacts
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Contact
+      - name: first_name
+        sql: first_name
+        type: string
+        public: false
+      - name: last_name
+        sql: last_name
+        type: string
+        public: false
+      - name: email
+        sql: email
+        type: string
+        public: false
+      - name: contact_number
+        sql: contact_number
+        type: string
+        public: false
+      - name: status
+        sql: status
+        type: string
+        description: ACTIVE or ARCHIVED.
+      - name: is_customer
+        sql: is_customer
+        type: boolean
+        title: Is a customer
+        description: True once the contact has been invoiced.
+      - name: is_supplier
+        sql: is_supplier
+        type: boolean
+        title: Is a supplier
+        description: True once a bill has been received from the contact.
+      - name: default_currency
+        sql: default_currency
+        type: string
+        description: >
+          Contact's default document currency. Xero's contact balance snapshot
+          is not converted to organisation base currency.
+      - name: receivable_outstanding_value
+        sql: receivable_outstanding
+        type: number
+        title: Receivable outstanding (snapshot)
+        description: Snapshot at the contact's last edit of what this contact owed, in default_currency; not a live balance.
+      - name: receivable_overdue_value
+        sql: receivable_overdue
+        type: number
+        title: Receivable overdue (snapshot)
+        description: Snapshot at the contact's last edit of the overdue amount this contact owed, in default_currency; not a live balance.
+      - name: payable_outstanding_value
+        sql: payable_outstanding
+        type: number
+        title: Payable outstanding (snapshot)
+        description: Snapshot at the contact's last edit of what was owed to this contact, in default_currency; not a live balance.
+      - name: payable_overdue_value
+        sql: payable_overdue
+        type: number
+        title: Payable overdue (snapshot)
+        description: Snapshot at the contact's last edit of the overdue amount owed to this contact, in default_currency; not a live balance.
+      - name: sales_payment_terms_day
+        sql: sales_payment_terms_day
+        type: number
+        public: false
+      - name: sales_payment_terms_type
+        sql: sales_payment_terms_type
+        type: string
+        public: false
+      - name: bills_payment_terms_day
+        sql: bills_payment_terms_day
+        type: number
+        public: false
+      - name: bills_payment_terms_type
+        sql: bills_payment_terms_type
+        type: string
+        public: false
+      - name: updated_at
+        sql: updated_at
+        type: time
+        public: false
+    measures:
+      - name: contact_count
+        type: count
+        title: Contacts
+        description: Number of Xero contact records in the selection.
+      - name: customer_count
+        type: count
+        title: Customers
+        description: Contacts Xero marks as customers because they have sales activity.
+        filters:
+          - sql: "COALESCE({CUBE}.is_customer, false)"
+      - name: supplier_count
+        type: count
+        title: Suppliers
+        description: Contacts Xero marks as suppliers because they have purchase activity.
+        filters:
+          - sql: "COALESCE({CUBE}.is_supplier, false)"
+      - name: total_receivable_outstanding
+        type: sum
+        sql: receivable_outstanding
+        format: currency
+        title: Total owed by customers (stale snapshot)
+        description: >
+          Sum of the per-contact receivable snapshots taken at each contact's
+          last edit; not a live balance and not headline AR. Valid only within
+          one contact default currency.
+      - name: total_receivable_overdue
+        type: sum
+        sql: receivable_overdue
+        format: currency
+        title: Overdue owed by customers (stale snapshot)
+        description: Sum of overdue receivable snapshots taken at each contact's last edit; not a live balance.
+      - name: total_payable_outstanding
+        type: sum
+        sql: payable_outstanding
+        format: currency
+        title: Total owed to suppliers (stale snapshot)
+        description: >
+          Sum of the per-contact payable snapshots taken at each contact's last
+          edit; not a live balance and not headline AP. Valid only within one
+          contact default currency.
+      - name: total_payable_overdue
+        type: sum
+        sql: payable_overdue
+        format: currency
+        title: Overdue owed to suppliers (stale snapshot)
+        description: Sum of overdue payable snapshots taken at each contact's last edit; not a live balance.
+    segments:
+      - name: customers
+        sql: "COALESCE({CUBE}.is_customer, false)"
+      - name: suppliers
+        sql: "COALESCE({CUBE}.is_supplier, false)"
+      - name: active_contacts
+        sql: "{CUBE}.status = 'ACTIVE'"
+
+  - name: xero_contact_addresses
+    title: Contact addresses (Xero)
+    public: false
+    description: One row per address (street / postal) on a Xero contact.
+    sql: SELECT * FROM source_xero_official.xo_contact_addresses
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_contacts}.tenant_id
+          AND {CUBE}.contact_id = {xero_contacts}.contact_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: address_type
+        sql: address_type
+        type: string
+        description: STREET or POBOX (postal).
+      - name: address_line1
+        sql: address_line1
+        type: string
+        public: false
+      - name: city
+        sql: city
+        type: string
+        title: City / suburb
+      - name: region
+        sql: region
+        type: string
+        title: State
+      - name: postal_code
+        sql: postal_code
+        type: string
+      - name: country
+        sql: country
+        type: string
+      - name: attention_to
+        sql: attention_to
+        type: string
+        public: false
+    measures:
+      - name: address_count
+        type: count
+
+  - name: xero_contact_phones
+    title: Contact phones (Xero)
+    public: false
+    description: One row per phone number on a Xero contact.
+    sql: SELECT * FROM source_xero_official.xo_contact_phones
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+      - name: xero_contacts
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_contacts}.tenant_id
+          AND {CUBE}.contact_id = {xero_contacts}.contact_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: contact_id
+        sql: contact_id
+        type: string
+        public: false
+      - name: phone_type
+        sql: phone_type
+        type: string
+        description: DEFAULT, MOBILE, DDI or FAX.
+      - name: phone_number
+        sql: phone_number
+        type: string
+        public: false
+      - name: phone_area_code
+        sql: phone_area_code
+        type: string
+        public: false
+      - name: phone_country_code
+        sql: phone_country_code
+        type: string
+        public: false
+    measures:
+      - name: phone_count
+        type: count
+
+  - name: xero_pnl_lines
+    title: Document-coded profit activity (Xero, incomplete)
+    public: false
+    description: >
+      Partial document-coded profit activity unioned from invoice/bill lines,
+      spend/receive bank transaction lines, posted manual-journal lines and
+      credit-note lines. It excludes Xero system journals such as payroll and
+      automatic depreciation, so it is not a Profit and Loss statement and its
+      profit impact is not Net Profit. Retained only for backward-compatible
+      document-level drill-down.
+    meta:
+      ai_context: >
+        NEVER use this cube for Profit and Loss, Net Profit, Gross Profit,
+        margins, total income or total expenses. It is an intentionally partial
+        backward-compatibility surface and omits system-posted wages, super,
+        payroll tax and depreciation. Use xero_profit_and_loss_analytics for
+        headline statement figures and xero_profit_and_loss_account_analytics
+        for account breakdowns. Do not repair these rows by subtracting payroll:
+        the authoritative Xero report already includes it exactly once.
+    sql: SELECT * FROM source_xero_official.xo_pnl_lines
+
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: source_kind
+        sql: source_kind
+        type: string
+        title: Source document type
+        description: "invoice_line, bank_line, journal_line or credit_note_line."
+      - name: occurred_on
+        sql: occurred_on
+        type: time
+        title: Date
+        description: The document or journal date (the business date for the P&L).
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Contact
+        description: Customer or supplier where the source document carries one; null on journals.
+      - name: description
+        sql: description
+        type: string
+        title: Line description
+      - name: account_code
+        sql: account_code
+        type: string
+        title: Account code
+      - name: account_name
+        sql: account_name
+        type: string
+        title: Account
+        description: The chart-of-accounts name the line is coded to (a P&L statement row).
+      - name: account_class
+        sql: account_class
+        type: string
+        title: Account class
+        description: REVENUE or EXPENSE (only P&L accounts appear here).
+      - name: account_type
+        sql: account_type
+        type: string
+        title: Account type
+        description: "REVENUE, SALES, OTHERINCOME, EXPENSE, DIRECTCOSTS, OVERHEADS or DEPRECIATN: use for gross-profit style groupings."
+      - name: reporting_code
+        sql: reporting_code
+        type: string
+        title: Reporting code
+        description: Xero's statutory reporting code for the account, when set.
+
+    measures:
+      - name: pnl_line_count
+        type: count
+        title: Partial document activity lines
+      - name: total_revenue
+        sql: revenue_amount
+        type: sum
+        format: currency
+        title: Partial document revenue
+        description: >
+          GST-exclusive REVENUE-class activity visible on the supported source
+          documents. Not total Xero income; use xero_profit_and_loss_analytics.
+      - name: total_expenses
+        sql: expense_amount
+        type: sum
+        format: currency
+        title: Partial document expenses
+        description: >
+          GST-exclusive EXPENSE-class activity visible on supported documents.
+          Excludes system payroll and depreciation journals and is not total expense.
+      - name: net_profit
+        sql: profit_impact
+        type: sum
+        format: currency
+        title: Incomplete document profit impact (deprecated)
+        description: >
+          Backward-compatible partial revenue-minus-expense activity. This is
+          NOT Net Profit because system wages, super and depreciation are
+          absent. New queries must use xero_profit_and_loss_analytics.net_profit.
+
+  - name: xero_gst_lines
+    title: GST lines (Xero)
+    public: false
+    description: >
+      Every tax-bearing document line: GST on invoices, bills, spend/receive
+      bank transactions and credit notes, split into gst_collected (on income
+      documents) and gst_paid (on purchases, including capital/asset purchases).
+      Credit notes reverse their document direction.
+    meta:
+      ai_context: >
+        Document-line GST only: GST on invoice, bill, bank-transaction and
+        credit-note lines over occurred_on, by tax_type, account or contact.
+        It is NOT the BAS or GST position and must never be presented as one:
+        this organisation reports GST on a CASH basis and its register sales
+        are posted as BASEXCLUDED manual journals, so gst_collected here
+        covers only directly invoiced sales (tens of dollars a month against
+        ~$40k of sales). GST position = the balance sheet GST control
+        account (xero_balance_sheet_positions gst_balance at one as_at, the
+        latest for "now"); the change between two as_at dates is the GST
+        accrued over that span. gst_paid is document-dated input tax on bills
+        and spend money (indicative on a cash basis). The organisation's GST
+        basis is on xero_organisation.
+    sql: SELECT * FROM source_xero_official.xo_gst_lines
+    joins:
+      - name: xero_organisation
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {xero_organisation}.tenant_id
+    dimensions:
+      - name: row_key
+        sql: row_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: source_kind
+        sql: source_kind
+        type: string
+        title: Source document type
+        description: "invoice_line, bank_line or credit_note_line."
+      - name: occurred_on
+        sql: occurred_on
+        type: time
+        title: Date
+      - name: contact_name
+        sql: contact_name
+        type: string
+        title: Contact
+      - name: description
+        sql: description
+        type: string
+        title: Line description
+      - name: tax_type
+        sql: tax_type
+        type: string
+        title: Tax type
+        description: "Xero tax type code, e.g. INPUT (GST on purchases), OUTPUT (GST on income)."
+      - name: account_code
+        sql: account_code
+        type: string
+        title: Account code
+      - name: account_name
+        sql: account_name
+        type: string
+        title: Account
+      - name: account_class
+        sql: account_class
+        type: string
+        title: Account class
+        description: Any class can appear here, including ASSET (GST on capital purchases is claimable).
+    measures:
+      - name: gst_line_count
+        type: count
+        title: GST line count
+      - name: total_taxable_amount
+        sql: taxable_amount
+        type: sum
+        format: currency
+        title: Taxable amount
+        description: GST-exclusive value of the underlying lines.
+      - name: total_gst_collected
+        sql: gst_collected
+        type: sum
+        format: currency
+        title: GST collected (invoice lines only)
+        description: GST on sales-invoice and receive-money lines only; excludes register sales posted as BASEXCLUDED journals, so it is not the GST collected for the BAS.
+      - name: total_gst_paid
+        sql: gst_paid
+        type: sum
+        format: currency
+        title: GST paid
+        description: GST paid on bills, spend money and capital purchases (claimable input credits).
+      - name: total_net_gst
+        sql: net_gst
+        type: sum
+        format: currency
+        title: Net GST (document lines only)
+        description: Document-line GST collected minus GST paid; not the BAS position (use the balance sheet GST control balance).

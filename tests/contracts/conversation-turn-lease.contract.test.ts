@@ -4,7 +4,8 @@ import test from "node:test";
 
 const migration = read("infra/migrations/control-plane/0026_m8_durable_conversation_turn_leases.sql");
 const bootstrap = read("infra/bootstrap/control_plane_role.sql");
-const route = read("app/api/conversation/route.ts");
+const route = read("app/api/v3-conversation/route.ts");
+const config = read("packages/config/src/env.ts");
 const renewal = read("infra/migrations/control-plane/0084_m8_renewable_conversation_turn_leases.sql");
 
 test("a running turn holds a durable lease it must keep renewing", () => {
@@ -19,14 +20,14 @@ test("a running turn holds a durable lease it must keep renewing", () => {
   assert.match(route, /renewConversationTurnLease/u);
   assert.match(route, /clearInterval\(leaseRenewal\)/u);
   // Renewal must land well inside the lease, or one slow call lapses it.
-  const interval = /LEASE_RENEWAL_INTERVAL_MS=(\d[\d_]*)/u.exec(route);
+  const interval = /LEASE_RENEWAL_INTERVAL_MS\s*=\s*(\d[\d_]*)/u.exec(route);
   assert.ok(interval, "the route must define its lease renewal interval");
   assert.ok(Number(interval[1]!.replaceAll("_", "")) < 6 * 60 * 1_000);
 });
 
 test("a configured turn deadline stays optional and never shortens the lease", () => {
-  assert.match(route, /ALBERT_TURN_TIMEOUT_MS/u);
-  assert.match(route, /parsed<30_000/u);
+  assert.match(config, /ALBERT_TURN_TIMEOUT_MS/u);
+  assert.match(config, /timeout < 30_000 \|\| timeout > 300_000/u);
 });
 
 test("begin reaps an expired runner under the conversation lock", () => {

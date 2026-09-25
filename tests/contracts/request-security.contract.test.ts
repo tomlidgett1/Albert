@@ -9,6 +9,7 @@ import {
   readBoundedJsonBody,
 } from "../../services/control-plane/src/request-security";
 import { ControlPlaneError } from "../../services/control-plane/src/web-repository";
+import { bearerAccessToken } from "../../utils/supabase/bearer";
 
 function status(error: unknown): number | undefined {
   return error instanceof ControlPlaneError ? error.status : undefined;
@@ -187,7 +188,11 @@ test("every cookie-authenticated JSON mutation route uses the bounded reader", (
   const mutationRoutes = [
     "app/api/admin/pipeline/[tenantId]/sample/route.ts",
     "app/api/connections/review/route.ts",
-    "app/api/conversation/route.ts",
+    "app/api/v3-conversation/route.ts",
+    "app/api/codex-conversation/route.ts",
+    "app/api/swarm/route.ts",
+    "app/api/swarm/agent/route.ts",
+    "app/api/swarm/synthesis/route.ts",
     "app/api/oauth/disconnect/route.ts",
     "app/api/oauth/select/route.ts",
     "app/api/organisations/members/route.ts",
@@ -207,4 +212,92 @@ test("every cookie-authenticated JSON mutation route uses the bounded reader", (
     );
     assert.doesNotMatch(source, /request\.json\(\)/u, `${route} buffers JSON without a byte limit`);
   }
+});
+
+// ADR 0144: server-to-server API clients authenticate with a bearer access
+// token and never with cookies, so the CSRF origin guard does not apply to
+// them. Anything short of a JWT-shaped bearer keeps the cookie path's guard.
+const accessTokenShape = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhcGktY2xpZW50In0.c2lnbmF0dXJlLXNpZw";
+
+test("a JWT-shaped bearer token is the only way past the same-origin guard", () => {
+  assert.equal(bearerAccessToken(`Bearer ${accessTokenShape}`), accessTokenShape);
+  assert.equal(bearerAccessToken(`bearer ${accessTokenShape}`), accessTokenShape);
+  for (const rejected of [
+    null,
+    "",
+    "Bearer",
+    "Bearer ",
+    `Basic ${accessTokenShape}`,
+    "Bearer albert_pk_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+    "Bearer a.b.c",
+    `Bearer ${accessTokenShape} extra`,
+    `Bearer ${accessTokenShape}.more`,
+    `Bearer ${"a".repeat(9_000)}.${"b".repeat(8)}.${"c".repeat(8)}`,
+  ]) {
+    assert.equal(bearerAccessToken(rejected), null, `accepted ${String(rejected).slice(0, 40)}`);
+  }
+});
+
+test("bearer-authenticated mutations skip the origin guard but keep the content-type guard", () => {
+  const previous = process.env.ALBERT_PUBLIC_ORIGIN;
+  const previousNodeEnvironment = process.env.NODE_ENV;
+  mutableEnvironment.ALBERT_PUBLIC_ORIGIN = "https://albert.example";
+  mutableEnvironment.NODE_ENV = "production";
+  try {
+    // No Origin at all: a server-side client.
+    assert.doesNotThrow(() => assertSameOriginMutation(new Request("https://albert.example/api/omni-conversation", {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessTokenShape}`, "content-type": "application/json" },
+    })));
+    assert.throws(
+      () => assertSameOriginMutation(new Request("https://albert.example/api/omni-conversation", {
+        method: "POST",
+        headers: { authorization: `Bearer ${accessTokenShape}`, "content-type": "text/plain" },
+      })),
+      (error) => status(error) === 415,
+    );
+    // A malformed bearer is not a credential: the request stays on the cookie
+    // path and a missing or foreign Origin is still rejected.
+    assert.throws(
+      () => assertSameOriginMutation(new Request("https://albert.example/api/omni-conversation", {
+        method: "POST",
+        headers: { authorization: "Bearer not-a-jwt", "content-type": "application/json" },
+      })),
+      (error) => status(error) === 403,
+    );
+    assert.throws(
+      () => assertSameOriginMutation(new Request("https://albert.example/api/omni-conversation", {
+        method: "POST",
+        headers: {
+          authorization: "Basic dXNlcjpwYXNz",
+          origin: "https://evil.example",
+          "content-type": "application/json",
+        },
+      })),
+      (error) => status(error) === 403,
+    );
+    // Cookie-authenticated requests are unchanged.
+    assert.throws(
+      () => assertSameOriginMutation(new Request("https://albert.example/api/omni-conversation", {
+        method: "POST",
+        headers: { origin: "https://evil.example", "content-type": "application/json" },
+      })),
+      (error) => status(error) === 403,
+    );
+  } finally {
+    if (previous === undefined) delete mutableEnvironment.ALBERT_PUBLIC_ORIGIN;
+    else mutableEnvironment.ALBERT_PUBLIC_ORIGIN = previous;
+    if (previousNodeEnvironment === undefined) delete mutableEnvironment.NODE_ENV;
+    else mutableEnvironment.NODE_ENV = previousNodeEnvironment;
+  }
+});
+
+test("bearer requests never read session cookies", () => {
+  const server = readFileSync("utils/supabase/server.ts", "utf8");
+  const bearerBranch = server.slice(server.indexOf("if (accessToken)"), server.indexOf("const cookieStore"));
+  assert.match(bearerBranch, /persistSession: false/u);
+  assert.match(bearerBranch, /Authorization: `Bearer \$\{accessToken\}`/u);
+  assert.doesNotMatch(bearerBranch, /cookies\(\)/u);
+  const repository = readFileSync("services/control-plane/src/web-repository.ts", "latin1");
+  assert.match(repository, /supabase\.auth\.getUser\(accessToken\)/u);
 });

@@ -1,4 +1,4 @@
-import type { AlbertPreferenceOptionId } from "../../../packages/agent/src/semantic-tools.js";
+import type { AlbertPreferenceOptionId } from "../../../packages/agent/src/v3-contracts.js";
 
 export type ClarificationPromptRouteContract = Readonly<{
   route: "clarification";

@@ -6,6 +6,7 @@ import {
   requireUser,
 } from "@/services/control-plane/src/web-repository";
 import { isInternalOperator } from "@/services/control-plane/src/operator-repository";
+import { isAnalyticalQueryLogViewer } from "@/services/control-plane/src/query-log-repository";
 import { assertSameOriginMutation, readBoundedJsonBody } from "@/services/control-plane/src/request-security";
 
 const bootstrapSchema = z.object({
@@ -23,9 +24,10 @@ function errorResponse(error: unknown) {
 export async function GET() {
   try {
     const { user } = await requireUser();
-    const [sessionState, internalOperator] = await Promise.all([
+    const [sessionState, internalOperator, queryLogsViewer] = await Promise.all([
       currentTenantSessionState(),
       isInternalOperator(),
+      isAnalyticalQueryLogViewer(),
     ]);
     return Response.json({
       user: {
@@ -42,6 +44,7 @@ export async function GET() {
       },
       context: sessionState.context,
       internalOperator,
+      queryLogsViewer,
       deletionReceipt: sessionState.deletionReceipt,
       needsBootstrap: sessionState.needsBootstrap,
     });

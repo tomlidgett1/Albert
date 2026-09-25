@@ -12,6 +12,14 @@ test("post-auth redirects allow only canonical dashboard destinations", () => {
     safeDashboardRedirect("/dash?view=Connections", origin),
     "/dash?view=Connections",
   );
+  assert.equal(
+    safeDashboardRedirect("/dash?view=MyData", origin),
+    "/dash?view=MyData",
+  );
+  assert.equal(
+    safeDashboardRedirect("/dash?view=TestChart", origin),
+    "/dash?view=TestChart",
+  );
 });
 
 test("post-auth redirects reject browser-normalized and cross-origin inputs", () => {

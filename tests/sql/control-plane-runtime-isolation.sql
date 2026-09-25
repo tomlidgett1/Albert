@@ -11,7 +11,7 @@ BEGIN
       FROM pg_catalog.pg_roles
      WHERE rolname IN (
        'albert_sync_control','albert_webhook_control','albert_transform_control',
-       'albert_semantic_control','albert_deletion_control'
+       'albert_semantic_control','albert_anthropic_control','albert_deletion_control'
      )
   LOOP
     IF role_record.rolcanlogin OR role_record.rolsuper OR role_record.rolcreaterole
@@ -21,8 +21,8 @@ BEGIN
   END LOOP;
   IF (SELECT count(*) FROM pg_catalog.pg_roles WHERE rolname IN (
     'albert_sync_control','albert_webhook_control','albert_transform_control',
-    'albert_semantic_control','albert_deletion_control'
-  )) <> 5 THEN
+    'albert_semantic_control','albert_anthropic_control','albert_deletion_control'
+  )) <> 6 THEN
     RAISE EXCEPTION 'one or more constrained control roles are missing';
   END IF;
 END;
@@ -156,7 +156,8 @@ BEGIN
   END IF;
 
   IF pg_has_role('albert_webhook_control','albert_sync_control','MEMBER')
-     OR pg_has_role('albert_sync_control','albert_semantic_control','MEMBER') THEN
+     OR pg_has_role('albert_sync_control','albert_semantic_control','MEMBER')
+     OR pg_has_role('albert_anthropic_control','albert_semantic_control','MEMBER') THEN
     RAISE EXCEPTION 'constrained runtime groups are unexpectedly nested';
   END IF;
 END;

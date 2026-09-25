@@ -1,0 +1,86 @@
+cubes:
+  - name: stripe_customers
+    title: Customers (Stripe)
+    public: false
+    description: >
+      One row per Stripe Customer. Email and name are contact fields; only
+      return them when the owner asks for a named customer.
+    meta:
+      ai_context: >
+        Customer list and delinquency. Lifetime spend is not stored here; join
+        from charges or invoices. Do not dump email lists unless asked.
+    sql: SELECT * FROM source_stripe.st_customer
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: name, sql: name, type: string, title: Customer }
+      - { name: email, sql: email, type: string }
+      - { name: phone, sql: phone, type: string }
+      - { name: description, sql: description, type: string }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: address_city, sql: address_city, type: string, title: City }
+      - { name: address_state, sql: address_state, type: string, title: State }
+      - { name: address_country, sql: address_country, type: string, title: Country }
+      - { name: delinquent, sql: delinquent, type: boolean }
+      - { name: livemode, sql: livemode, type: boolean }
+      - { name: is_deleted, sql: is_deleted, type: boolean }
+      - { name: created, sql: created, type: time, title: Created at }
+    measures:
+      - { name: customer_count, type: count, title: Customers }
+      - name: delinquent_customers
+        type: count
+        filters: [{ sql: "{CUBE}.delinquent" }]
+      - name: customer_balance
+        sql: "source_stripe.stripe_major_units({CUBE}.balance, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Customer balance
+
+  - name: stripe_checkout_sessions
+    title: Checkout sessions (Stripe)
+    public: false
+    description: One row per Stripe Checkout Session.
+    sql: SELECT * FROM source_stripe.st_checkout_session
+    joins:
+      - name: stripe_customers
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_customers}.tenant_id AND {CUBE}.customer_id = {stripe_customers}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: status, sql: status, type: string }
+      - { name: mode, sql: mode, type: string }
+      - { name: payment_status, sql: payment_status, type: string }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: created, sql: created, type: time }
+    measures:
+      - { name: session_count, type: count, title: Checkout sessions }
+      - name: complete_sessions
+        type: count
+        filters: [{ sql: "{CUBE}.status = 'complete'" }]
+      - name: checkout_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount_total, {CUBE}.currency)"
+        type: sum
+        format: currency
+        filters: [{ sql: "{CUBE}.status = 'complete'" }]
+
+  - name: stripe_accounts
+    title: Account (Stripe)
+    public: false
+    description: The connected Stripe account row from Fivetran's account table.
+    sql: SELECT * FROM source_stripe.st_account
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: business_profile_name, sql: business_profile_name, type: string, title: Business name }
+      - { name: email, sql: email, type: string }
+      - { name: country, sql: country, type: string }
+      - { name: default_currency, sql: "upper(default_currency)", type: string }
+      - { name: type, sql: "type", type: string }
+      - { name: charges_enabled, sql: charges_enabled, type: boolean }
+      - { name: payouts_enabled, sql: payouts_enabled, type: boolean }
+    measures:
+      - { name: account_count, type: count }

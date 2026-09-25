@@ -1,0 +1,1388 @@
+cubes:
+  # Shopify reference cubes deliberately normalise from the row-as-json rather
+  # than binding every member to one physical spelling. The connector catalogue
+  # remains authoritative; these COALESCE aliases make the Cube projection
+  # tolerant of reviewed API-name aliases (for example id vs product_id) while
+  # the shopify_fields cube preserves every source-native field verbatim.
+
+  - name: shopify_shop
+    title: Shopify shop
+    public: false
+    description: One row for each connected Shopify shop and its reporting configuration.
+    meta:
+      ai_context: >
+        Shop configuration only. Currency is the shop/base currency; never infer
+        a legal entity or accounting basis from this record.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'shop_id', to_jsonb(t)->>'id') AS cc_shop_id,
+             COALESCE(to_jsonb(t)->>'name', to_jsonb(t)->>'shop_name') AS cc_name,
+             COALESCE(to_jsonb(t)->>'myshopify_domain', to_jsonb(t)->>'domain') AS cc_domain,
+             to_jsonb(t)->>'primary_domain_host' AS cc_primary_domain_host,
+             COALESCE(to_jsonb(t)->>'currency_code', to_jsonb(t)->>'currency') AS cc_currency,
+             COALESCE(to_jsonb(t)->>'iana_timezone', to_jsonb(t)->>'timezone') AS cc_timezone,
+             to_jsonb(t)->>'timezone_abbreviation' AS cc_timezone_abbreviation,
+             COALESCE(to_jsonb(t)->>'plan_display_name', to_jsonb(t)->>'plan_name') AS cc_plan,
+             NULLIF(to_jsonb(t)->>'created_at', '')::timestamptz AS cc_created_at,
+             NULLIF(to_jsonb(t)->>'updated_at', '')::timestamptz AS cc_updated_at
+      FROM source_shopify.shopify_shop t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: shop_id
+        sql: cc_shop_id
+        type: string
+      - name: shop_name
+        sql: cc_name
+        type: string
+      - name: myshopify_domain
+        sql: cc_domain
+        type: string
+      - name: primary_domain_host
+        sql: cc_primary_domain_host
+        type: string
+      - name: shop_currency
+        sql: cc_currency
+        type: string
+      - name: shop_timezone
+        sql: cc_timezone
+        type: string
+      - name: timezone_abbreviation
+        sql: cc_timezone_abbreviation
+        type: string
+      - name: plan_name
+        sql: cc_plan
+        type: string
+      - name: customer_accounts
+        sql: "to_jsonb({CUBE})->>'customer_accounts'"
+        type: string
+      - name: email
+        sql: "to_jsonb({CUBE})->>'email'"
+        type: string
+        public: false
+      - name: contact_email
+        sql: "to_jsonb({CUBE})->>'contact_email'"
+        type: string
+        public: false
+      - name: billing_address
+        sql: "to_jsonb({CUBE})->>'billing_address'"
+        type: string
+        public: false
+      - name: created_at
+        sql: cc_created_at
+        type: time
+      - name: updated_at
+        sql: cc_updated_at
+        type: time
+    measures:
+      - name: shop_count
+        type: count
+
+  - name: shopify_locations
+    title: Shopify locations
+    public: false
+    description: One row per Shopify selling, fulfilment, or inventory location.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'location_id', to_jsonb(t)->>'id') AS cc_location_id,
+             COALESCE(to_jsonb(t)->>'name', to_jsonb(t)->>'location_name') AS cc_name,
+             to_jsonb(t)->>'address' AS cc_address,
+             NULLIF(to_jsonb(t)->>'created_at', '')::timestamptz AS cc_created_at,
+             NULLIF(to_jsonb(t)->>'updated_at', '')::timestamptz AS cc_updated_at
+      FROM source_shopify.shopify_locations t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+    joins:
+      - name: shopify_shop
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_shop}.tenant_id
+          AND {CUBE}.connection_id = {shopify_shop}.connection_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: location_id
+        sql: cc_location_id
+        type: string
+      - name: legacy_resource_id
+        sql: "to_jsonb({CUBE})->>'legacy_resource_id'"
+        type: string
+      - name: location_name
+        sql: cc_name
+        type: string
+      - name: active
+        sql: "COALESCE((to_jsonb({CUBE})->>'active')::boolean, true)"
+        type: boolean
+      - name: fulfils_online_orders
+        sql: >
+          COALESCE(
+            (to_jsonb({CUBE})->>'fulfills_online_orders')::boolean,
+            (to_jsonb({CUBE})->>'fulfils_online_orders')::boolean,
+            false
+          )
+        type: boolean
+      - name: has_active_inventory
+        sql: "COALESCE((to_jsonb({CUBE})->>'has_active_inventory')::boolean, false)"
+        type: boolean
+      - name: ships_inventory
+        sql: "COALESCE((to_jsonb({CUBE})->>'ships_inventory')::boolean, false)"
+        type: boolean
+      - name: has_unfulfilled_orders
+        sql: "COALESCE((to_jsonb({CUBE})->>'has_unfulfilled_orders')::boolean, false)"
+        type: boolean
+      - name: address
+        sql: cc_address
+        type: string
+        public: false
+      - name: city
+        sql: "COALESCE(({CUBE}.cc_address::jsonb)->>'city', '')"
+        type: string
+      - name: province_code
+        sql: "COALESCE(({CUBE}.cc_address::jsonb)->>'provinceCode', ({CUBE}.cc_address::jsonb)->>'province_code', '')"
+        type: string
+      - name: country_code
+        sql: "COALESCE(({CUBE}.cc_address::jsonb)->>'countryCodeV2', ({CUBE}.cc_address::jsonb)->>'country_code', '')"
+        type: string
+      - name: postcode
+        sql: "COALESCE(({CUBE}.cc_address::jsonb)->>'zip', '')"
+        type: string
+      - name: created_at
+        sql: cc_created_at
+        type: time
+      - name: updated_at
+        sql: cc_updated_at
+        type: time
+    measures:
+      - name: location_count
+        type: count
+      - name: active_locations
+        type: count
+        filters:
+          - sql: "COALESCE({CUBE}.active, true)"
+      - name: online_fulfilment_locations
+        type: count
+        filters:
+          - sql: "COALESCE((to_jsonb({CUBE})->>'fulfills_online_orders')::boolean, false)"
+
+  - name: shopify_products
+    title: Shopify products
+    public: false
+    description: One row per Shopify product family, including merchandising status and inventory summary.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'product_id', to_jsonb(t)->>'id') AS cc_product_id,
+             COALESCE(to_jsonb(t)->>'title', to_jsonb(t)->>'name') AS cc_title,
+             COALESCE(to_jsonb(t)->>'product_type', to_jsonb(t)->>'type') AS cc_product_type,
+             COALESCE(to_jsonb(t)->>'category_name', to_jsonb(t)->>'category_full_name') AS cc_category,
+             NULLIF(COALESCE(to_jsonb(t)->>'total_inventory', to_jsonb(t)->>'inventory_quantity'), '')::numeric AS cc_inventory,
+             NULLIF(to_jsonb(t)->>'created_at', '')::timestamptz AS cc_created_at,
+             NULLIF(to_jsonb(t)->>'updated_at', '')::timestamptz AS cc_updated_at,
+             NULLIF(to_jsonb(t)->>'published_at', '')::timestamptz AS cc_published_at
+      FROM source_shopify.shopify_products t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+    joins:
+      - name: shopify_shop
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_shop}.tenant_id
+          AND {CUBE}.connection_id = {shopify_shop}.connection_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: product_id
+        sql: cc_product_id
+        type: string
+      - name: legacy_resource_id
+        sql: "to_jsonb({CUBE})->>'legacy_resource_id'"
+        type: string
+      - name: title
+        sql: cc_title
+        type: string
+      - name: handle
+        sql: "to_jsonb({CUBE})->>'handle'"
+        type: string
+      - name: description
+        sql: "to_jsonb({CUBE})->>'description'"
+        type: string
+      - name: description_html
+        sql: "to_jsonb({CUBE})->>'description_html'"
+        type: string
+        public: false
+      - name: vendor
+        sql: "to_jsonb({CUBE})->>'vendor'"
+        type: string
+      - name: product_type
+        sql: cc_product_type
+        type: string
+      - name: category
+        sql: cc_category
+        type: string
+      - name: category_id
+        sql: "to_jsonb({CUBE})->>'category_id'"
+        type: string
+      - name: status
+        sql: "UPPER(COALESCE(to_jsonb({CUBE})->>'status', 'UNKNOWN'))"
+        type: string
+      - name: tags
+        sql: "COALESCE(to_jsonb({CUBE})->>'tags', '[]')"
+        type: string
+        description: Source-native tag list; use the exhaustive fields view for individual tag elements.
+      - name: template_suffix
+        sql: "to_jsonb({CUBE})->>'template_suffix'"
+        type: string
+      - name: total_inventory
+        sql: cc_inventory
+        type: number
+      - name: tracks_inventory
+        sql: "COALESCE((to_jsonb({CUBE})->>'tracks_inventory')::boolean, false)"
+        type: boolean
+      - name: online_store_url
+        sql: "to_jsonb({CUBE})->>'online_store_url'"
+        type: string
+      - name: seo_title
+        sql: "to_jsonb({CUBE})->>'seo_title'"
+        type: string
+      - name: seo_description
+        sql: "to_jsonb({CUBE})->>'seo_description'"
+        type: string
+      - name: created_at
+        sql: cc_created_at
+        type: time
+      - name: updated_at
+        sql: cc_updated_at
+        type: time
+      - name: published_at
+        sql: cc_published_at
+        type: time
+    measures:
+      - name: product_count
+        type: count
+      - name: active_products
+        type: count
+        filters:
+          - sql: "UPPER(COALESCE({CUBE}.status, '')) = 'ACTIVE'"
+      - name: published_products
+        type: count
+        filters:
+          - sql: "{CUBE}.published_at IS NOT NULL"
+      - name: tracked_product_inventory
+        type: sum
+        sql: total_inventory
+        filters:
+          - sql: "COALESCE({CUBE}.tracks_inventory, false)"
+
+  - name: shopify_product_variants
+    title: Shopify product variants
+    public: false
+    description: One row per sellable Shopify variant, including SKU, price, availability and inventory identity.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'variant_id', to_jsonb(t)->>'id') AS cc_variant_id,
+             COALESCE(to_jsonb(t)->>'product_id', to_jsonb(t)->>'parent_product_id') AS cc_product_id,
+             COALESCE(to_jsonb(t)->>'title', to_jsonb(t)->>'display_name') AS cc_title,
+             NULLIF(COALESCE(to_jsonb(t)->>'price', to_jsonb(t)->>'price_amount'), '')::numeric AS cc_price,
+             NULLIF(COALESCE(to_jsonb(t)->>'compare_at_price', to_jsonb(t)->>'compare_at_price_amount'), '')::numeric AS cc_compare_price,
+             NULLIF(COALESCE(to_jsonb(t)->>'inventory_quantity', to_jsonb(t)->>'total_inventory'), '')::numeric AS cc_inventory,
+             NULLIF(to_jsonb(t)->>'created_at', '')::timestamptz AS cc_created_at,
+             NULLIF(to_jsonb(t)->>'updated_at', '')::timestamptz AS cc_updated_at
+      FROM source_shopify.shopify_product_variants t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+        AND EXISTS (
+          SELECT 1 FROM source_shopify.shopify_products p
+          WHERE p.tenant_id=t.tenant_id AND p.connection_id=t.connection_id
+            AND p.id=t.product_id AND NOT p.tombstone
+        )
+    joins:
+      - name: shopify_products
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_products}.tenant_id
+          AND {CUBE}.connection_id = {shopify_products}.connection_id
+          AND {CUBE}.cc_product_id = {shopify_products}.cc_product_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: variant_id
+        sql: cc_variant_id
+        type: string
+      - name: legacy_resource_id
+        sql: "to_jsonb({CUBE})->>'legacy_resource_id'"
+        type: string
+      - name: product_id
+        sql: cc_product_id
+        type: string
+        public: false
+      - name: category_id
+        sql: "to_jsonb({CUBE})->>'category_id'"
+        type: string
+      - name: category_name
+        sql: "to_jsonb({CUBE})->>'category_name'"
+        type: string
+      - name: title
+        sql: cc_title
+        type: string
+      - name: display_name
+        sql: "to_jsonb({CUBE})->>'display_name'"
+        type: string
+      - name: sku
+        sql: "to_jsonb({CUBE})->>'sku'"
+        type: string
+      - name: barcode
+        sql: "to_jsonb({CUBE})->>'barcode'"
+        type: string
+      - name: price
+        sql: cc_price
+        type: number
+        format: currency
+      - name: compare_at_price
+        sql: cc_compare_price
+        type: number
+        format: currency
+      - name: inventory_quantity
+        sql: cc_inventory
+        type: number
+      - name: inventory_policy
+        sql: "to_jsonb({CUBE})->>'inventory_policy'"
+        type: string
+      - name: taxable
+        sql: "COALESCE((to_jsonb({CUBE})->>'taxable')::boolean, false)"
+        type: boolean
+      - name: tax_code
+        sql: "to_jsonb({CUBE})->>'tax_code'"
+        type: string
+      - name: available_for_sale
+        sql: "COALESCE((to_jsonb({CUBE})->>'available_for_sale')::boolean, false)"
+        type: boolean
+      - name: sellable_online_quantity
+        sql: "NULLIF(to_jsonb({CUBE})->>'sellable_online_quantity', '')::numeric"
+        type: number
+      - name: position
+        sql: "NULLIF(to_jsonb({CUBE})->>'position', '')::numeric"
+        type: number
+      - name: created_at
+        sql: cc_created_at
+        type: time
+      - name: updated_at
+        sql: cc_updated_at
+        type: time
+    measures:
+      - name: variant_count
+        type: count
+      - name: available_variants
+        type: count
+        filters:
+          - sql: "COALESCE({CUBE}.available_for_sale, false)"
+      - name: variant_inventory
+        type: sum
+        sql: inventory_quantity
+      - name: average_price
+        type: avg
+        sql: price
+        format: currency
+      - name: retail_inventory_value
+        type: sum
+        sql: "COALESCE({CUBE}.inventory_quantity, 0) * COALESCE({CUBE}.price, 0)"
+        format: currency
+
+  - name: shopify_customers
+    title: Shopify customers
+    public: false
+    description: >
+      One row per Shopify customer. Direct contact data remains private; the
+      curated surface exposes identity-safe customer behaviour and consent state.
+    meta:
+      ai_context: >
+        Customer lifetime totals are source snapshots. Do not sum them across
+        historical observations. Email and phone are never exposed by a public view.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'customer_id', to_jsonb(t)->>'id') AS cc_customer_id,
+             COALESCE(to_jsonb(t)->>'display_name', CONCAT_WS(' ', to_jsonb(t)->>'first_name', to_jsonb(t)->>'last_name')) AS cc_display_name,
+             NULLIF(COALESCE(to_jsonb(t)->>'orders_count', to_jsonb(t)->>'number_of_orders'), '')::numeric AS cc_orders_count,
+             NULLIF(COALESCE(to_jsonb(t)->>'total_spent', to_jsonb(t)->>'amount_spent'), '')::numeric AS cc_total_spent,
+             NULLIF(to_jsonb(t)->>'created_at', '')::timestamptz AS cc_created_at,
+             NULLIF(to_jsonb(t)->>'updated_at', '')::timestamptz AS cc_updated_at,
+             NULL::timestamptz AS cc_last_order_at
+      FROM source_shopify.shopify_customers t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+    joins:
+      - name: shopify_shop
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_shop}.tenant_id
+          AND {CUBE}.connection_id = {shopify_shop}.connection_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: customer_id
+        sql: cc_customer_id
+        type: string
+      - name: legacy_resource_id
+        sql: "to_jsonb({CUBE})->>'legacy_resource_id'"
+        type: string
+      - name: display_name
+        sql: cc_display_name
+        type: string
+        public: false
+      - name: first_name
+        sql: "to_jsonb({CUBE})->>'first_name'"
+        type: string
+        public: false
+      - name: last_name
+        sql: "to_jsonb({CUBE})->>'last_name'"
+        type: string
+        public: false
+      - name: email
+        sql: "to_jsonb({CUBE})->>'email'"
+        type: string
+        public: false
+      - name: phone
+        sql: "to_jsonb({CUBE})->>'phone'"
+        type: string
+        public: false
+      - name: customer_state
+        sql: "UPPER(COALESCE(to_jsonb({CUBE})->>'state', 'UNKNOWN'))"
+        type: string
+      - name: verified_email
+        sql: "COALESCE((to_jsonb({CUBE})->>'verified_email')::boolean, false)"
+        type: boolean
+      - name: valid_email_address
+        sql: "COALESCE((to_jsonb({CUBE})->>'valid_email_address')::boolean, false)"
+        type: boolean
+      - name: locale
+        sql: "to_jsonb({CUBE})->>'locale'"
+        type: string
+      - name: tax_exempt
+        sql: "COALESCE((to_jsonb({CUBE})->>'tax_exempt')::boolean, false)"
+        type: boolean
+      - name: tags
+        sql: "COALESCE(to_jsonb({CUBE})->>'tags', '[]')"
+        type: string
+      - name: note
+        sql: "to_jsonb({CUBE})->>'note'"
+        type: string
+        public: false
+      - name: orders_count
+        sql: cc_orders_count
+        type: number
+      - name: lifetime_spend
+        sql: cc_total_spent
+        type: number
+        format: currency
+      - name: created_at
+        sql: cc_created_at
+        type: time
+      - name: updated_at
+        sql: cc_updated_at
+        type: time
+      - name: is_repeat_customer
+        sql: "COALESCE({CUBE}.cc_orders_count, 0) >= 2"
+        type: boolean
+    measures:
+      - name: customer_count
+        type: count
+      - name: purchasing_customers
+        type: count
+        filters:
+          - sql: "COALESCE({CUBE}.cc_orders_count, 0) > 0"
+      - name: repeat_customers
+        type: count
+        filters:
+          - sql: "COALESCE({CUBE}.cc_orders_count, 0) >= 2"
+      - name: total_customer_lifetime_spend
+        type: sum
+        sql: cc_total_spent
+        format: currency
+      - name: average_customer_lifetime_spend
+        type: avg
+        sql: cc_total_spent
+        format: currency
+      - name: repeat_customer_rate_pct
+        type: number
+        sql: "100.0 * {repeat_customers} / NULLIF({purchasing_customers}, 0)"
+        format: percent
+
+  - name: shopify_inventory_levels
+    title: Shopify inventory levels
+    public: false
+    description: >
+      Current inventory quantities for one inventory item at one Shopify location.
+      Quantity states are separate source buckets and must not be added together.
+    meta:
+      ai_context: >
+        `on_hand` is physical stock; `available` is sellable stock. Committed,
+        incoming, reserved and damaged are states, not extra stock. This is a
+        current-state surface unless the source explicitly supplies snapshot_at.
+    sql: >
+      SELECT t.*,
+             COALESCE(to_jsonb(t)->>'inventory_level_id', CONCAT_WS(':', to_jsonb(t)->>'inventory_item_id', to_jsonb(t)->>'location_id')) AS cc_inventory_level_id,
+             to_jsonb(t)->>'inventory_item_id' AS cc_inventory_item_id,
+             to_jsonb(t)->>'variant_id' AS cc_variant_id,
+             to_jsonb(t)->>'location_id' AS cc_location_id,
+             NULLIF(to_jsonb(t)->>'available', '')::numeric AS cc_available,
+             NULLIF(COALESCE(to_jsonb(t)->>'on_hand', to_jsonb(t)->>'quantity_on_hand'), '')::numeric AS cc_on_hand,
+             NULLIF(to_jsonb(t)->>'committed', '')::numeric AS cc_committed,
+             NULLIF(to_jsonb(t)->>'incoming', '')::numeric AS cc_incoming,
+             NULLIF(to_jsonb(t)->>'reserved', '')::numeric AS cc_reserved,
+             NULLIF(to_jsonb(t)->>'damaged', '')::numeric AS cc_damaged,
+             NULLIF(to_jsonb(t)->>'safety_stock', '')::numeric AS cc_safety_stock,
+             NULLIF(to_jsonb(t)->>'quality_control', '')::numeric AS cc_quality_control,
+             NULLIF(COALESCE(to_jsonb(t)->>'snapshot_at', to_jsonb(t)->>'updated_at'), '')::timestamptz AS cc_snapshot_at,
+             (
+               SELECT NULLIF(to_jsonb(v)->>'price', '')::numeric
+               FROM source_shopify.shopify_product_variants v
+               WHERE v.tenant_id=t.tenant_id AND v.connection_id=t.connection_id
+                 AND v.id=t.variant_id AND NOT v.tombstone
+               LIMIT 1
+             ) AS cc_variant_price
+      FROM source_shopify.shopify_inventory_levels t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM source_shopify.shopify_product_variants v
+          JOIN source_shopify.shopify_products p
+            ON p.tenant_id=v.tenant_id AND p.connection_id=v.connection_id
+           AND p.id=v.product_id AND NOT p.tombstone
+          WHERE v.tenant_id=t.tenant_id AND v.connection_id=t.connection_id
+            AND v.id=t.variant_id AND NOT v.tombstone
+        )
+    joins:
+      - name: shopify_product_variants
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_product_variants}.tenant_id
+          AND {CUBE}.connection_id = {shopify_product_variants}.connection_id
+          AND {CUBE}.cc_variant_id = {shopify_product_variants}.cc_variant_id
+      - name: shopify_locations
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_locations}.tenant_id
+          AND {CUBE}.connection_id = {shopify_locations}.connection_id
+          AND {CUBE}.cc_location_id = {shopify_locations}.cc_location_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: inventory_level_id
+        sql: cc_inventory_level_id
+        type: string
+      - name: inventory_item_id
+        sql: cc_inventory_item_id
+        type: string
+      - name: variant_id
+        sql: cc_variant_id
+        type: string
+        public: false
+      - name: location_id
+        sql: cc_location_id
+        type: string
+        public: false
+      - name: can_deactivate
+        sql: "COALESCE((to_jsonb({CUBE})->>'can_deactivate')::boolean, false)"
+        type: boolean
+      - name: available
+        sql: cc_available
+        type: number
+      - name: on_hand
+        sql: cc_on_hand
+        type: number
+      - name: committed
+        sql: cc_committed
+        type: number
+      - name: incoming
+        sql: cc_incoming
+        type: number
+      - name: reserved
+        sql: cc_reserved
+        type: number
+      - name: damaged
+        sql: cc_damaged
+        type: number
+      - name: safety_stock
+        sql: cc_safety_stock
+        type: number
+      - name: quality_control
+        sql: cc_quality_control
+        type: number
+      - name: snapshot_at
+        sql: cc_snapshot_at
+        type: time
+      - name: stock_state
+        sql: >
+          CASE
+            WHEN COALESCE({CUBE}.cc_available, 0) < 0 THEN 'Oversold'
+            WHEN COALESCE({CUBE}.cc_available, 0) = 0 THEN 'Out of stock'
+            WHEN COALESCE({CUBE}.cc_available, 0) <= COALESCE({CUBE}.cc_safety_stock, 0) THEN 'Low stock'
+            ELSE 'In stock'
+          END
+        type: string
+    measures:
+      - name: inventory_positions
+        type: count
+      - name: available_units
+        type: sum
+        sql: available
+      - name: units_on_hand
+        type: sum
+        sql: on_hand
+      - name: committed_units
+        type: sum
+        sql: committed
+      - name: incoming_units
+        type: sum
+        sql: incoming
+      - name: reserved_units
+        type: sum
+        sql: reserved
+      - name: damaged_units
+        type: sum
+        sql: damaged
+      - name: out_of_stock_positions
+        type: count
+        filters:
+          - sql: "COALESCE({CUBE}.available, 0) <= 0"
+      - name: low_stock_positions
+        type: count
+        filters:
+          - sql: >
+              COALESCE({CUBE}.available, 0) > 0
+              AND COALESCE({CUBE}.available, 0) <= COALESCE({CUBE}.safety_stock, 0)
+      - name: retail_inventory_value
+        type: sum
+        sql: "COALESCE({CUBE}.cc_available, 0) * COALESCE({CUBE}.cc_variant_price, 0)"
+        format: currency
+        description: Available units valued at the variant's current retail price, not cost.
+
+  - name: shopify_fields
+    title: Shopify exhaustive source fields
+    public: false
+    description: >
+      Official definitions for every indexed Shopify field plus EAV observations
+      for scalar paths returned by Albert's curated Admin GraphQL queries. This is
+      the governed fallback for returned fields not promoted into a typed cube;
+      it never exposes arbitrary metafield literals or claims that ShopifyQL
+      store values were queried. Sensitive values are redacted inside the model.
+    meta:
+      ai_context: >
+        Use for a specifically named Shopify API field absent from curated views.
+        Distinguish `observed_value` from definition-only rows: `safe_value_*` is
+        null when the field was not selected, is sensitive, unsupported, or
+        non-queryable. Field definitions and availability remain answerable
+        without implying an unobserved metafield or ShopifyQL value.
+    sql: >
+      SELECT t.*,
+             t.namespaced_source_key AS cc_field_record_id,
+             COALESCE(to_jsonb(t)->>'definition_kind', 'observed_value') AS cc_definition_kind,
+             to_jsonb(t)->>'root_field' AS cc_root_field,
+             to_jsonb(t)->>'object_type' AS cc_object_type,
+             to_jsonb(t)->>'graphql_id' AS cc_graphql_id,
+             to_jsonb(t)->>'parent_graphql_id' AS cc_parent_graphql_id,
+             to_jsonb(t)->>'schema_path' AS cc_schema_path,
+             to_jsonb(t)->>'field_name' AS cc_field_name,
+             COALESCE(to_jsonb(t)->>'field_type', 'unknown') AS cc_field_type,
+             COALESCE(to_jsonb(t)->>'value_kind', 'null') AS cc_value_kind,
+             COALESCE(to_jsonb(t)->>'value_form', 'leaf') AS cc_value_form,
+             COALESCE(to_jsonb(t)->>'observation_form', 'not_selected') AS cc_observation_form,
+             COALESCE(to_jsonb(t)->>'protected_data_level', 'none') AS cc_protected_data_level,
+             COALESCE(to_jsonb(t)->>'availability', 'available') AS cc_availability,
+             to_jsonb(t)->>'availability_reason' AS cc_availability_reason,
+             COALESCE((to_jsonb(t)->>'deprecated')::boolean, false) AS cc_deprecated,
+             (
+               LOWER(COALESCE(to_jsonb(t)->>'protected_data_level', 'none')) NOT IN ('none', 'public')
+               OR (
+                 COALESCE(to_jsonb(t)->>'definition_kind', 'observed_value') = 'observed_value'
+                 AND to_jsonb(t)->>'root_field' = 'metafieldDefinitions'
+                 AND to_jsonb(t)->>'object_type' = 'Metafield'
+               )
+             ) AS cc_sensitive,
+             (LOWER(COALESCE(to_jsonb(t)->>'availability', 'available')) IN ('available', 'observed', 'observed_curated', 'generic_metafield_ingested')) AS cc_queryable,
+             CASE
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'protected_data_level', 'none')) NOT IN ('none', 'public')
+                 OR (
+                   COALESCE(to_jsonb(t)->>'definition_kind', 'observed_value') = 'observed_value'
+                   AND to_jsonb(t)->>'root_field' = 'metafieldDefinitions'
+                   AND to_jsonb(t)->>'object_type' = 'Metafield'
+                 ) THEN 'protected'
+               WHEN COALESCE((to_jsonb(t)->>'deprecated')::boolean, false) THEN 'deprecated'
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'availability', 'available')) NOT IN ('available', 'observed', 'observed_curated', 'generic_metafield_ingested') THEN 'unavailable'
+               ELSE 'queryable'
+             END AS cc_disposition,
+             CASE
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'protected_data_level', 'none')) NOT IN ('none', 'public')
+                 OR (COALESCE(to_jsonb(t)->>'definition_kind', 'observed_value') = 'observed_value' AND to_jsonb(t)->>'root_field' = 'metafieldDefinitions' AND to_jsonb(t)->>'object_type' = 'Metafield') THEN NULL
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'availability', 'available')) NOT IN ('available', 'observed', 'observed_curated', 'generic_metafield_ingested') THEN NULL
+               ELSE to_jsonb(t)->>'string_value'
+             END AS cc_safe_value_text,
+             CASE
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'protected_data_level', 'none')) NOT IN ('none', 'public')
+                 OR (COALESCE(to_jsonb(t)->>'definition_kind', 'observed_value') = 'observed_value' AND to_jsonb(t)->>'root_field' = 'metafieldDefinitions' AND to_jsonb(t)->>'object_type' = 'Metafield') THEN NULL
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'availability', 'available')) NOT IN ('available', 'observed', 'observed_curated', 'generic_metafield_ingested') THEN NULL
+               ELSE NULLIF(to_jsonb(t)->>'numeric_value', '')::numeric
+             END AS cc_safe_value_number,
+             CASE
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'protected_data_level', 'none')) NOT IN ('none', 'public')
+                 OR (COALESCE(to_jsonb(t)->>'definition_kind', 'observed_value') = 'observed_value' AND to_jsonb(t)->>'root_field' = 'metafieldDefinitions' AND to_jsonb(t)->>'object_type' = 'Metafield') THEN NULL
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'availability', 'available')) NOT IN ('available', 'observed', 'observed_curated', 'generic_metafield_ingested') THEN NULL
+               ELSE NULLIF(to_jsonb(t)->>'boolean_value', '')::boolean
+             END AS cc_safe_value_boolean,
+             CASE
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'protected_data_level', 'none')) NOT IN ('none', 'public')
+                 OR (COALESCE(to_jsonb(t)->>'definition_kind', 'observed_value') = 'observed_value' AND to_jsonb(t)->>'root_field' = 'metafieldDefinitions' AND to_jsonb(t)->>'object_type' = 'Metafield') THEN NULL
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'availability', 'available')) NOT IN ('available', 'observed', 'observed_curated', 'generic_metafield_ingested') THEN NULL
+               ELSE NULLIF(to_jsonb(t)->>'datetime_value', '')::timestamptz
+             END AS cc_safe_value_timestamp,
+             CASE
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'protected_data_level', 'none')) NOT IN ('none', 'public')
+                 OR (COALESCE(to_jsonb(t)->>'definition_kind', 'observed_value') = 'observed_value' AND to_jsonb(t)->>'root_field' = 'metafieldDefinitions' AND to_jsonb(t)->>'object_type' = 'Metafield') THEN NULL
+               WHEN LOWER(COALESCE(to_jsonb(t)->>'availability', 'available')) NOT IN ('available', 'observed', 'observed_curated', 'generic_metafield_ingested') THEN NULL
+               ELSE to_jsonb(t)->>'json_value'
+             END AS cc_safe_value_json
+      FROM source_shopify.shopify_fields t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+        AND (
+          COALESCE(to_jsonb(t)->>'definition_kind', 'observed_value') <> 'observed_value'
+          OR CASE
+            WHEN to_jsonb(t)->>'object_type' = 'Shop' THEN EXISTS (
+              SELECT 1 FROM source_shopify.shopify_shop s
+              WHERE s.tenant_id=t.tenant_id AND s.connection_id=t.connection_id
+                AND s.id=to_jsonb(t)->>'graphql_id' AND NOT s.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'Location' THEN EXISTS (
+              SELECT 1 FROM source_shopify.shopify_locations l
+              WHERE l.tenant_id=t.tenant_id AND l.connection_id=t.connection_id
+                AND l.id=to_jsonb(t)->>'graphql_id' AND NOT l.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'Product' THEN EXISTS (
+              SELECT 1 FROM source_shopify.shopify_products p
+              WHERE p.tenant_id=t.tenant_id AND p.connection_id=t.connection_id
+                AND p.id=to_jsonb(t)->>'graphql_id' AND NOT p.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'ProductVariant' THEN EXISTS (
+              SELECT 1
+              FROM source_shopify.shopify_product_variants v
+              JOIN source_shopify.shopify_products p
+                ON p.tenant_id=v.tenant_id AND p.connection_id=v.connection_id
+               AND p.id=v.product_id AND NOT p.tombstone
+              WHERE v.tenant_id=t.tenant_id AND v.connection_id=t.connection_id
+                AND v.id=to_jsonb(t)->>'graphql_id' AND NOT v.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'Customer' THEN EXISTS (
+              SELECT 1 FROM source_shopify.shopify_customers c
+              WHERE c.tenant_id=t.tenant_id AND c.connection_id=t.connection_id
+                AND c.id=to_jsonb(t)->>'graphql_id' AND NOT c.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'Order' THEN EXISTS (
+              SELECT 1 FROM source_shopify.shopify_orders o
+              WHERE o.tenant_id=t.tenant_id AND o.connection_id=t.connection_id
+                AND o.id=to_jsonb(t)->>'graphql_id' AND NOT o.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'LineItem' THEN EXISTS (
+              SELECT 1
+              FROM source_shopify.shopify_order_lines l
+              JOIN source_shopify.shopify_orders o
+                ON o.tenant_id=l.tenant_id AND o.connection_id=l.connection_id
+               AND o.id=l.order_id AND NOT o.tombstone
+              WHERE l.tenant_id=t.tenant_id AND l.connection_id=t.connection_id
+                AND l.id=to_jsonb(t)->>'graphql_id' AND NOT l.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'OrderTransaction' THEN EXISTS (
+              SELECT 1
+              FROM source_shopify.shopify_transactions x
+              JOIN source_shopify.shopify_orders o
+                ON o.tenant_id=x.tenant_id AND o.connection_id=x.connection_id
+               AND o.id=x.order_id AND NOT o.tombstone
+              WHERE x.tenant_id=t.tenant_id AND x.connection_id=t.connection_id
+                AND x.id=to_jsonb(t)->>'graphql_id' AND NOT x.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'RefundLineItem' THEN EXISTS (
+              SELECT 1
+              FROM source_shopify.shopify_refund_lines r
+              JOIN source_shopify.shopify_orders o
+                ON o.tenant_id=r.tenant_id AND o.connection_id=r.connection_id
+               AND o.id=r.order_id AND NOT o.tombstone
+              WHERE r.tenant_id=t.tenant_id AND r.connection_id=t.connection_id
+                AND r.id=to_jsonb(t)->>'graphql_id' AND NOT r.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'InventoryLevel' THEN EXISTS (
+              SELECT 1
+              FROM source_shopify.shopify_inventory_levels i
+              JOIN source_shopify.shopify_product_variants v
+                ON v.tenant_id=i.tenant_id AND v.connection_id=i.connection_id
+               AND v.id=i.variant_id AND NOT v.tombstone
+              JOIN source_shopify.shopify_products p
+                ON p.tenant_id=v.tenant_id AND p.connection_id=v.connection_id
+               AND p.id=v.product_id AND NOT p.tombstone
+              WHERE i.tenant_id=t.tenant_id AND i.connection_id=t.connection_id
+                AND i.id=to_jsonb(t)->>'graphql_id' AND NOT i.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'Fulfillment' THEN EXISTS (
+              SELECT 1
+              FROM source_shopify.shopify_fulfillments f
+              JOIN source_shopify.shopify_orders o
+                ON o.tenant_id=f.tenant_id AND o.connection_id=f.connection_id
+               AND o.id=f.order_id AND NOT o.tombstone
+              WHERE f.tenant_id=t.tenant_id AND f.connection_id=t.connection_id
+                AND f.id=to_jsonb(t)->>'graphql_id' AND NOT f.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'Return' THEN EXISTS (
+              SELECT 1
+              FROM source_shopify.shopify_returns r
+              JOIN source_shopify.shopify_orders o
+                ON o.tenant_id=r.tenant_id AND o.connection_id=r.connection_id
+               AND o.id=r.order_id AND NOT o.tombstone
+              WHERE r.tenant_id=t.tenant_id AND r.connection_id=t.connection_id
+                AND r.id=to_jsonb(t)->>'graphql_id' AND NOT r.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'DiscountNode' THEN EXISTS (
+              SELECT 1 FROM source_shopify.shopify_discounts d
+              WHERE d.tenant_id=t.tenant_id AND d.connection_id=t.connection_id
+                AND d.id=to_jsonb(t)->>'graphql_id' AND NOT d.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'MetafieldDefinition' THEN EXISTS (
+              SELECT 1 FROM source_shopify.shopify_metafield_definitions d
+              WHERE d.tenant_id=t.tenant_id AND d.connection_id=t.connection_id
+                AND d.id=to_jsonb(t)->>'graphql_id' AND NOT d.tombstone
+            )
+            WHEN to_jsonb(t)->>'object_type' = 'Metafield' THEN EXISTS (
+              SELECT 1 FROM source_shopify.shopify_metafield_values m
+              WHERE m.tenant_id=t.tenant_id AND m.connection_id=t.connection_id
+                AND m.id=to_jsonb(t)->>'graphql_id' AND NOT m.tombstone
+                AND CASE LOWER(COALESCE(m.owner_graphql_type, ''))
+                  WHEN 'product' THEN EXISTS (
+                    SELECT 1 FROM source_shopify.shopify_products p
+                    WHERE p.tenant_id=m.tenant_id AND p.connection_id=m.connection_id
+                      AND p.id=m.owner_id AND NOT p.tombstone
+                  )
+                  WHEN 'productvariant' THEN EXISTS (
+                    SELECT 1
+                    FROM source_shopify.shopify_product_variants v
+                    JOIN source_shopify.shopify_products p
+                      ON p.tenant_id=v.tenant_id AND p.connection_id=v.connection_id
+                     AND p.id=v.product_id AND NOT p.tombstone
+                    WHERE v.tenant_id=m.tenant_id AND v.connection_id=m.connection_id
+                      AND v.id=m.owner_id AND NOT v.tombstone
+                  )
+                  WHEN 'customer' THEN EXISTS (
+                    SELECT 1 FROM source_shopify.shopify_customers c
+                    WHERE c.tenant_id=m.tenant_id AND c.connection_id=m.connection_id
+                      AND c.id=m.owner_id AND NOT c.tombstone
+                  )
+                  WHEN 'order' THEN EXISTS (
+                    SELECT 1 FROM source_shopify.shopify_orders o
+                    WHERE o.tenant_id=m.tenant_id AND o.connection_id=m.connection_id
+                      AND o.id=m.owner_id AND NOT o.tombstone
+                  )
+                  WHEN 'location' THEN EXISTS (
+                    SELECT 1 FROM source_shopify.shopify_locations l
+                    WHERE l.tenant_id=m.tenant_id AND l.connection_id=m.connection_id
+                      AND l.id=m.owner_id AND NOT l.tombstone
+                  )
+                  WHEN 'shop' THEN EXISTS (
+                    SELECT 1 FROM source_shopify.shopify_shop s
+                    WHERE s.tenant_id=m.tenant_id AND s.connection_id=m.connection_id
+                      AND s.id=m.owner_id AND NOT s.tombstone
+                  )
+                  ELSE FALSE
+                END
+            )
+            ELSE FALSE
+          END
+        )
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: field_record_id
+        sql: cc_field_record_id
+        type: string
+      - name: definition_kind
+        sql: cc_definition_kind
+        type: string
+        description: Distinguishes official schema definitions from values observed for this store.
+      - name: root_field
+        sql: cc_root_field
+        type: string
+      - name: object_type
+        sql: cc_object_type
+        type: string
+      - name: graphql_id
+        sql: cc_graphql_id
+        type: string
+      - name: parent_graphql_id
+        sql: cc_parent_graphql_id
+        type: string
+      - name: schema_path
+        sql: cc_schema_path
+        type: string
+      - name: field_name
+        sql: cc_field_name
+        type: string
+      - name: field_type
+        sql: cc_field_type
+        type: string
+      - name: value_kind
+        sql: cc_value_kind
+        type: string
+      - name: value_form
+        sql: cc_value_form
+        type: string
+        description: Literal leaf versus structural composite in the official schema.
+      - name: observation_form
+        sql: cc_observation_form
+        type: string
+        description: Literal selected, structural selected, or not selected by a committed ingestion query.
+      - name: ordinal
+        sql: "NULLIF(to_jsonb({CUBE})->>'ordinal', '')::numeric"
+        type: number
+      - name: json_pointer
+        sql: "to_jsonb({CUBE})->>'json_pointer'"
+        type: string
+      - name: api_version
+        sql: "to_jsonb({CUBE})->>'api_version'"
+        type: string
+      - name: required_scopes
+        sql: "to_jsonb({CUBE})->>'required_scopes'"
+        type: string
+      - name: required_access
+        sql: "to_jsonb({CUBE})->>'required_access'"
+        type: string
+        description: Shopify's exact documented scope, plan, or staff-permission requirement.
+      - name: field_arguments
+        sql: "to_jsonb({CUBE})->>'field_arguments'"
+        type: string
+      - name: field_description
+        sql: "to_jsonb({CUBE})->>'description'"
+        type: string
+      - name: protected_data_level
+        sql: cc_protected_data_level
+        type: string
+      - name: availability
+        sql: cc_availability
+        type: string
+      - name: availability_reason
+        sql: cc_availability_reason
+        type: string
+      - name: deprecated
+        sql: cc_deprecated
+        type: boolean
+      - name: deprecation_reason
+        sql: "to_jsonb({CUBE})->>'deprecation_reason'"
+        type: string
+      - name: documentation_url
+        sql: "to_jsonb({CUBE})->>'documentation_url'"
+        type: string
+      - name: schema_sha256
+        sql: "to_jsonb({CUBE})->>'schema_sha256'"
+        type: string
+      - name: disposition
+        sql: cc_disposition
+        type: string
+      - name: is_sensitive
+        sql: cc_sensitive
+        type: boolean
+      - name: is_queryable
+        sql: cc_queryable
+        type: boolean
+      - name: unsupported_reason
+        sql: >
+          CASE
+            WHEN {CUBE}.cc_deprecated THEN COALESCE(to_jsonb({CUBE})->>'deprecation_reason', 'Deprecated by Shopify')
+            WHEN {CUBE}.cc_availability NOT IN ('available', 'observed', 'observed_curated', 'generic_metafield_ingested')
+              THEN COALESCE({CUBE}.cc_availability_reason, {CUBE}.cc_availability)
+            WHEN {CUBE}.cc_sensitive THEN 'Protected data is redacted'
+            ELSE NULL
+          END
+        type: string
+      - name: safe_value_text
+        sql: cc_safe_value_text
+        type: string
+      - name: safe_value_number
+        sql: cc_safe_value_number
+        type: number
+      - name: safe_value_boolean
+        sql: cc_safe_value_boolean
+        type: boolean
+      - name: safe_value_timestamp
+        sql: cc_safe_value_timestamp
+        type: time
+      - name: safe_value_json
+        sql: cc_safe_value_json
+        type: string
+      - name: observed_at
+        sql: "NULLIF(to_jsonb({CUBE})->>'observed_at', '')::timestamptz"
+        type: time
+      - name: value_state
+        sql: >
+          CASE
+            WHEN {CUBE}.cc_sensitive THEN 'Sensitive — redacted'
+            WHEN NOT {CUBE}.cc_queryable THEN 'Unavailable'
+            WHEN {CUBE}.cc_deprecated THEN 'Available — deprecated'
+            WHEN {CUBE}.cc_safe_value_text IS NULL
+             AND {CUBE}.cc_safe_value_number IS NULL
+             AND {CUBE}.cc_safe_value_boolean IS NULL
+             AND {CUBE}.cc_safe_value_timestamp IS NULL
+             AND {CUBE}.cc_safe_value_json IS NULL THEN 'Null or unobserved'
+            ELSE 'Available'
+          END
+        type: string
+    measures:
+      - name: field_observations
+        type: count
+      - name: source_objects
+        type: count_distinct
+        sql: graphql_id
+      - name: populated_fields
+        type: count
+        filters:
+          - sql: >
+              {CUBE}.cc_safe_value_text IS NOT NULL
+              OR {CUBE}.cc_safe_value_number IS NOT NULL
+              OR {CUBE}.cc_safe_value_boolean IS NOT NULL
+              OR {CUBE}.cc_safe_value_timestamp IS NOT NULL
+              OR {CUBE}.cc_safe_value_json IS NOT NULL
+      - name: sensitive_fields
+        type: count
+        filters:
+          - sql: "{CUBE}.cc_sensitive"
+      - name: unavailable_fields
+        type: count
+        filters:
+          - sql: "NOT {CUBE}.cc_queryable"
+      - name: deprecated_fields
+        type: count
+        filters:
+          - sql: "{CUBE}.cc_deprecated"
+      - name: numeric_total
+        type: sum
+        sql: cc_safe_value_number
+      - name: numeric_average
+        type: avg
+        sql: cc_safe_value_number
+    segments:
+      - name: queryable_fields
+        sql: "{CUBE}.cc_queryable AND NOT {CUBE}.cc_sensitive"
+      - name: protected_fields
+        sql: "{CUBE}.cc_sensitive"
+
+  - name: shopify_metafield_definitions
+    title: Shopify metafield definitions
+    public: false
+    description: One row per merchant metafield definition on Albert's least-privilege owner surfaces.
+    meta:
+      ai_context: >
+        Use this cube to explain namespace/key/type/access and capability metadata.
+        A definition does not prove that any owner has a populated value.
+    sql: >
+      SELECT t.*
+      FROM source_shopify.shopify_metafield_definitions t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: definition_id
+        sql: id
+        type: string
+      - name: definition_name
+        sql: name
+        type: string
+      - name: namespace
+        sql: namespace
+        type: string
+      - name: key
+        sql: key
+        type: string
+      - name: owner_type
+        sql: owner_type
+        type: string
+      - name: type_name
+        sql: type_name
+        type: string
+      - name: type_category
+        sql: type_category
+        type: string
+      - name: description
+        sql: description
+        type: string
+        public: false
+      - name: admin_access
+        sql: admin_access
+        type: string
+      - name: storefront_access
+        sql: storefront_access
+        type: string
+      - name: customer_account_access
+        sql: customer_account_access
+        type: string
+      - name: capabilities
+        sql: capabilities::text
+        type: string
+      - name: constraints
+        sql: constraints::text
+        type: string
+      - name: validations
+        sql: validations::text
+        type: string
+      - name: validation_status
+        sql: validation_status
+        type: string
+      - name: pinned_position
+        sql: pinned_position
+        type: number
+      - name: use_as_collection_condition
+        sql: use_as_collection_condition
+        type: boolean
+      - name: metafields_count
+        sql: metafields_count
+        type: number
+      - name: observed_at
+        sql: observed_at
+        type: time
+    measures:
+      - name: definition_count
+        type: count
+      - name: populated_owner_count
+        type: sum
+        sql: metafields_count
+
+  - name: shopify_metafield_values
+    title: Shopify metafield observations
+    public: false
+    description: >
+      One row per observed metafield. Literal values are deliberately replaced
+      with null inside Cube because any merchant namespace can contain personal
+      or confidential data; identity, type, size and freshness remain queryable.
+    meta:
+      ai_context: >
+        Report whether a metafield exists, where it is attached, its type and
+        freshness. Never claim or reveal its literal through Cube; safe literal
+        interpretation requires a separately approved classification.
+    sql: >
+      SELECT t.tenant_id, t.namespaced_source_key, t.connection_id,
+             t.external_account_reference, t.source_record_id,
+             t.source_version, t.source_updated_at, t.payload_hash,
+             t.payload_batch_id, t.sync_run_id, t.tombstone,
+             t.id, t.legacy_resource_id, t.definition_id, t.owner_id,
+             t.owner_type, t.owner_graphql_type, t.namespace, t.key,
+             t.metafield_type, t.size_in_bytes, t.compare_digest,
+             t.created_at, t.updated_at,
+             NULL::text AS value,
+             NULL::jsonb AS json_value,
+             NULL::numeric AS numeric_value,
+             NULL::boolean AS boolean_value,
+             NULL::timestamptz AS datetime_value
+      FROM source_shopify.shopify_metafield_values t
+      WHERE NOT t.tombstone
+        AND NOT EXISTS (
+          SELECT 1 FROM quality.shopify_connection_queryability_blocks b
+          WHERE b.tenant_id=t.tenant_id AND b.connection_id=t.connection_id
+        )
+    joins:
+      - name: shopify_metafield_definitions
+        relationship: many_to_one
+        sql: >
+          {CUBE}.tenant_id = {shopify_metafield_definitions}.tenant_id
+          AND {CUBE}.connection_id = {shopify_metafield_definitions}.connection_id
+          AND {CUBE}.definition_id = {shopify_metafield_definitions}.definition_id
+    dimensions:
+      - name: row_key
+        sql: namespaced_source_key
+        type: string
+        primary_key: true
+        public: false
+      - name: tenant_id
+        sql: tenant_id
+        type: string
+        public: false
+      - name: connection_id
+        sql: connection_id
+        type: string
+        public: false
+      - name: metafield_id
+        sql: id
+        type: string
+      - name: legacy_resource_id
+        sql: legacy_resource_id
+        type: string
+      - name: definition_id
+        sql: definition_id
+        type: string
+      - name: owner_id
+        sql: owner_id
+        type: string
+      - name: owner_type
+        sql: owner_type
+        type: string
+      - name: owner_graphql_type
+        sql: owner_graphql_type
+        type: string
+      - name: namespace
+        sql: namespace
+        type: string
+      - name: key
+        sql: key
+        type: string
+      - name: metafield_type
+        sql: metafield_type
+        type: string
+      - name: value
+        sql: value
+        type: string
+        public: false
+        description: Always null in Cube; literal values are unclassified sensitive data.
+      - name: json_value
+        sql: json_value::text
+        type: string
+        public: false
+        description: Always null in Cube; literal values are unclassified sensitive data.
+      - name: numeric_value
+        sql: numeric_value
+        type: number
+        public: false
+      - name: boolean_value
+        sql: boolean_value
+        type: boolean
+        public: false
+      - name: datetime_value
+        sql: datetime_value
+        type: time
+        public: false
+      - name: size_in_bytes
+        sql: size_in_bytes
+        type: number
+      - name: compare_digest
+        sql: compare_digest
+        type: string
+        public: false
+      - name: created_at
+        sql: created_at
+        type: time
+      - name: updated_at
+        sql: updated_at
+        type: time
+      - name: value_state
+        sql: "'Observed — literal redacted'"
+        type: string
+    measures:
+      - name: metafield_count
+        type: count
+      - name: owners_with_metafields
+        type: count_distinct
+        sql: owner_id

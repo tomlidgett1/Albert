@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import {
   getServerThemePreference,
   getThemePreference,
@@ -64,6 +65,7 @@ export default function ProtectedOnboardingAcceptance({
   journeyId,
 }: Readonly<{ journeyId: string | null }>) {
   const supabase = useMemo(() => createClient(), []);
+  const router = useRouter();
   const theme = useSyncExternalStore(
     subscribeToThemePreference,
     getThemePreference,
@@ -156,7 +158,7 @@ export default function ProtectedOnboardingAcceptance({
       return;
     }
     const next = `/dash/acceptance?journey=${journeyId}`;
-    window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+    router.push(`/login?next=${encodeURIComponent(next)}`);
   }
 
   async function completeReceipt() {

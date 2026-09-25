@@ -1,12 +1,21 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
-import type {
-  TraceChartEvent,
-  TraceEvent,
-  TraceProvenance,
-  TraceTableEvent,
+import dynamic from "next/dynamic";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import {
+  groundedFlintPlanForChart,
+  type TraceChartEvent,
+  type TraceEvent,
+  type TraceProvenance,
+  type TraceTableEvent,
 } from "@/packages/shared/src";
+import { responseVisibleResultIds } from "../lib/answer-presentation";
+import {
+  getServerThemePreference,
+  getThemePreference,
+  subscribeToThemePreference,
+} from "@/app/theme-preference";
+import { CONNECTOR_LOGOS, CONNECTOR_NAMES } from "./connectors";
 import styles from "../dash.module.css";
 import {
   parseSafeAnswerLineage,
@@ -14,16 +23,19 @@ import {
   type TurnLineageReference,
 } from "./answer-lineage";
 import {
-  formatCompactTraceCell,
   formatTraceCell,
   isExplainableTraceCell,
-  traceCellNumber,
 } from "./analytical-values";
+import { GovernedResultGrid } from "./GovernedResultGrid";
+
+const FlintChartView = dynamic(() => import("./FlintChartView"), {
+  ssr: false,
+});
 
 type AnalyticalTraceProps = {
   events: readonly TraceEvent[];
   streaming?: boolean;
-  runtime?: "fixture" | "openai";
+  runtime?: "fixture" | "openai" | "anthropic";
   lineageReference?: TurnLineageReference;
   onFollowUp?: (prompt: string) => void;
   onClarification?: (label: string, optionId: string) => void;
@@ -42,10 +54,12 @@ type LineageState =
   | Readonly<{ kind: "error"; key: string; message: string }>;
 
 const answerStateDescriptions = {
-  Verified: "Checked against your connected data",
+  Verified: "Checked against governed evidence",
+  Derived: "Calculated deterministically from governed results",
   Qualified: "Useful answer, with a limitation noted below",
   Exploratory: "From your live Lightspeed or Xero data",
   Clarification: "Albert needs one quick choice before continuing",
+  "No data": "The valid question returned no matching records",
   Unavailable: "The required data is not available yet",
 } as const;
 
@@ -58,6 +72,53 @@ function formatTime(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatChartDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.trim();
+  // Date-only ISO values (YYYY-MM-DD) stay calendar dates; datetimes keep a short time.
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/u.test(value.trim());
+  return new Intl.DateTimeFormat("en-AU", dateOnly
+    ? { day: "numeric", month: "short", year: "numeric" }
+    : { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" },
+  ).format(date);
+}
+
+function isPlaceholderChartRange(value: string) {
+  return /^(requested period|unknown|x)$/iu.test(value.trim());
+}
+
+function formatChartDateRange(range: Readonly<{ start: string; end: string; label: string }> | undefined) {
+  if (!range) return "";
+  const start = range.start.trim();
+  const end = range.end.trim();
+  if (start && end && !isPlaceholderChartRange(start) && !isPlaceholderChartRange(end)) {
+    const startLabel = formatChartDate(start);
+    const endLabel = formatChartDate(end);
+    if (isPlaceholderChartRange(startLabel) || isPlaceholderChartRange(endLabel)) return "";
+    return startLabel === endLabel ? startLabel : `${startLabel} – ${endLabel}`;
+  }
+  const label = range.label.trim();
+  return isPlaceholderChartRange(label) ? "" : label;
+}
+
+function ChartTableIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3.5" y="5" width="17" height="14" rx="2" />
+      <path d="M3.5 10h17M10 10v9" />
+    </svg>
+  );
+}
+
+function ChartViewIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 19V5M4 19h16" />
+      <path d="M8 15v-3M12 15V8M16 15v-6" />
+    </svg>
+  );
 }
 
 function formatFinalizedAt(value: string) {
@@ -277,9 +338,13 @@ function ProvenancePanel({
         <ul>
           {provenance.sources.map((source) => (
             <li key={`${source.connector}-${source.label}`}>
-              <span className={styles.traceSourceMark} data-source={source.connector} aria-hidden="true" />
+              <span className={styles.traceSourceLogo} aria-hidden="true">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={CONNECTOR_LOGOS[source.connector]} alt="" width={12} height={12} />
+              </span>
               <div>
-                <strong>{source.label}</strong>
+                <strong>{CONNECTOR_NAMES[source.connector]}</strong>
+                <small>{source.label}</small>
                 <small>Data through {formatTime(source.dataThrough)}</small>
               </div>
             </li>
@@ -354,7 +419,7 @@ function ResultTable({
               <tr key={`${event.resultId}-${rowIndex}`}>
                 {event.columns.map((column) => {
                   const rawValue = row[column.key];
-                  const value = formatTraceCell(rawValue, column);
+                  const value = formatTraceCell(rawValue, column, event.rowFormats?.[rowIndex]);
                   const explainable = isExplainableTraceCell(rawValue, column);
                   return (
                     <td key={column.key} data-numeric={explainable || undefined}>
@@ -391,94 +456,87 @@ function ResultTable({
   );
 }
 
-function ResultChart({ event, table }: { event: TraceChartEvent; table?: TraceTableEvent }) {
-  const valueColumn = table?.columns.find((column) => column.key === event.yKey);
-  const points = useMemo(() => {
-    if (!table) return [];
-    return table.rows.flatMap((row) => {
-      const rawValue = row[event.yKey];
-      const value = traceCellNumber(rawValue);
-      const label = row[event.xKey];
-      return value !== null && label !== null
-        ? [{ label: String(label), rawValue, value }]
-        : [];
-    });
-  }, [event.xKey, event.yKey, table]);
+export function ResultChart({ event, table }: { event: TraceChartEvent; table?: TraceTableEvent }) {
+  const theme = useSyncExternalStore(subscribeToThemePreference, getThemePreference, getServerThemePreference);
+  const appearance = theme === "dark"
+    || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+    ? "dark"
+    : "light";
+  const descriptionId = useId().replaceAll(":", "");
+  const [view, setView] = useState<"chart" | "table">("chart");
+  const plan = useMemo(() => table ? groundedFlintPlanForChart(event, table) : null, [event, table]);
+  const minimumPoints = event.chartType === "line" ? 3 : 2;
+  const hasChart = Boolean(table && plan && plan.data.length >= minimumPoints);
+  const tableCaption = table?.caption?.trim() ?? "";
+  const exploratory = /^Exploratory(?:\s*·\s*|$)/iu.test(tableCaption);
+  const dateRangeLabel = formatChartDateRange(table?.provenance.timeRange);
+  const showTable = view === "table" && Boolean(table);
+  const categoryCount = plan
+    ? new Set(plan.data.map((row) => String(row[event.xKey] ?? ""))).size
+    : 0;
+  const horizontal = Boolean(
+    plan
+    && plan.chart_spec.chartType !== "Line Chart"
+    && plan.chart_spec.encodings.y
+    && "field" in plan.chart_spec.encodings.y
+    && plan.chart_spec.encodings.y.field === event.xKey,
+  );
+  const chartHeight = horizontal
+    ? Math.max(280, Math.min(620, categoryCount * 34 + 96))
+    : 400;
 
-  const width = 620;
-  const height = 236;
-  const padding = { top: 18, right: 18, bottom: 42, left: 24 };
-  const chartWidth = width - padding.left - padding.right;
-  const chartHeight = height - padding.top - padding.bottom;
-  const maxValue = Math.max(0, ...points.map((point) => point.value));
-  const minValue = Math.min(0, ...points.map((point) => point.value));
-  const domainMax = maxValue === 0 && minValue === 0 ? 1 : maxValue;
-  const valueSpan = Math.max(domainMax - minValue, 1);
-  const yFor = (value: number) => padding.top + ((domainMax - value) / valueSpan) * chartHeight;
-  const zeroY = yFor(0);
-  const slotWidth = points.length ? chartWidth / points.length : chartWidth;
-  const linePoints = points.map((point, index) => ({
-    ...point,
-    x: padding.left + slotWidth * index + slotWidth / 2,
-    y: yFor(point.value),
-  }));
-  const linePath = linePoints.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" ");
-  const chartMinimumWidth = Math.max(480, points.length * 68);
-  const shortLabel = (label: string) => label.length > 14 ? `${label.slice(0, 13)}…` : label;
+  if (!table) return null;
 
   return (
     <figure className={styles.traceChartFigure}>
       <div className={styles.traceArtifactHeader}>
         <figcaption>
-          <span>{event.chartType.toUpperCase()} CHART</span>
           <strong>{event.caption}</strong>
         </figcaption>
-        <small>From {table?.caption ?? event.dataRef}</small>
+        {exploratory || dateRangeLabel || table ? (
+          <div className={styles.traceChartMeta}>
+            {exploratory ? (
+              <span className={styles.traceChartPill}>Exploratory</span>
+            ) : null}
+            {dateRangeLabel ? (
+              <span className={styles.traceChartPill} title={dateRangeLabel}>
+                {dateRangeLabel}
+              </span>
+            ) : null}
+            {table ? (
+              <button
+                className={styles.traceChartViewToggle}
+                type="button"
+                aria-pressed={showTable}
+                aria-label={showTable ? "Show the chart" : "Show the table behind this chart"}
+                title={showTable ? "Show the chart" : "Show the table behind this chart"}
+                onClick={() => setView((current) => (current === "chart" ? "table" : "chart"))}
+              >
+                {showTable ? <ChartViewIcon /> : <ChartTableIcon />}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      {points.length ? (
-        <div className={styles.traceChartScroll} tabIndex={0} aria-label="Scrollable chart area">
-          <svg
-            viewBox={`0 0 ${width} ${height}`}
-            role="img"
-            aria-label={event.caption}
-            style={{ minWidth: chartMinimumWidth }}
-          >
-            <line className={styles.traceChartBaseline} x1={padding.left} x2={width - padding.right} y1={zeroY} y2={zeroY} />
-            {event.chartType === "bar" ? points.map((point, index) => {
-              const barWidth = Math.min(58, slotWidth * 0.54);
-              const valueY = yFor(point.value);
-              const barHeight = Math.abs(valueY - zeroY);
-              const x = padding.left + slotWidth * index + (slotWidth - barWidth) / 2;
-              const y = Math.min(valueY, zeroY);
-              const valueLabelY = point.value >= 0
-                ? Math.max(12, y - 7)
-                : Math.min(height - 28, y + barHeight + 14);
-              return (
-                <g key={`${point.label}-${index}`}>
-                  <title>{point.label}: {valueColumn ? formatTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU").format(point.value)}</title>
-                  <rect className={styles.traceChartBar} data-negative={point.value < 0 || undefined} x={x} y={y} width={barWidth} height={barHeight} rx="6" />
-                  <text className={styles.traceChartValue} x={x + barWidth / 2} y={valueLabelY} textAnchor="middle">{valueColumn ? formatCompactTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU", { notation: "compact" }).format(point.value)}</text>
-                  <text className={styles.traceChartLabel} x={x + barWidth / 2} y={height - 14} textAnchor="middle">{shortLabel(point.label)}</text>
-                </g>
-              );
-            }) : (
-              <>
-                <path className={styles.traceChartLine} d={linePath} />
-                {linePoints.map((point, index) => (
-                  <g key={`${point.label}-${index}`}>
-                    <title>{point.label}: {valueColumn ? formatTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU").format(point.value)}</title>
-                    <circle className={styles.traceChartDot} cx={point.x} cy={point.y} r="4" />
-                    <text className={styles.traceChartValue} x={point.x} y={Math.max(12, Math.min(height - 28, point.y - 9))} textAnchor="middle">{valueColumn ? formatCompactTraceCell(point.rawValue, valueColumn) : new Intl.NumberFormat("en-AU", { notation: "compact" }).format(point.value)}</text>
-                    <text className={styles.traceChartLabel} x={point.x} y={height - 14} textAnchor="middle">{shortLabel(point.label)}</text>
-                  </g>
-                ))}
-              </>
-            )}
-          </svg>
+      {showTable && table ? (
+        <GovernedResultGrid table={table} ariaLabel="Chart data" />
+      ) : hasChart && plan ? (
+        <div className={styles.traceChartScroll} aria-label="Chart">
+          <div className={styles.traceChartCanvas}>
+            <p className="sr-only" id={descriptionId}>
+              {event.caption}. {plan.data.length} points as a {plan.chart_spec.chartType}. Exact values are available in the governed source table.
+            </p>
+            <FlintChartView
+              plan={plan}
+              appearance={appearance}
+              title={event.caption}
+              height={chartHeight}
+            />
+          </div>
         </div>
       ) : (
         <p className={styles.traceChartUnavailable}>
-          {table ? "No chartable values were returned by the governed query." : "The governed source table is not available in this trace."}
+          At least {minimumPoints} chartable values are required; the exact result remains available in the governed source table.
         </p>
       )}
     </figure>
@@ -504,6 +562,9 @@ export default function AnalyticalTrace({
     () => [...events].sort((first, second) => first.sequence - second.sequence),
     [events],
   );
+  const presentedResultIds = useMemo(() => {
+    return responseVisibleResultIds(orderedEvents);
+  }, [orderedEvents]);
   const tables = useMemo(
     () => new Map(
       orderedEvents.flatMap((event) => event.type === "table" ? [[event.resultId, event] as const] : []),
@@ -620,7 +681,11 @@ export default function AnalyticalTrace({
           </div>
         </div>
         <div className={styles.traceHeaderMeta}>
-          <span>{runtime === "fixture" ? "Demo dataset" : "OpenAI runtime"}</span>
+          <span>{runtime === "fixture"
+            ? "Demo dataset"
+            : runtime === "anthropic"
+              ? "Claude Opus 5 runtime"
+              : "OpenAI runtime"}</span>
           {auditProvenance ? (
             <button
               type="button"
@@ -682,9 +747,13 @@ export default function AnalyticalTrace({
                 </div>
               ) : null}
 
-              {event.type === "table" ? <ResultTable event={event} onExplain={openExplanation} /> : null}
+              {event.type === "table" && (!presentedResultIds || presentedResultIds.has(event.resultId))
+                ? <ResultTable event={event} onExplain={openExplanation} />
+                : null}
 
-              {event.type === "chart" ? <ResultChart event={event} table={tables.get(event.dataRef)} /> : null}
+              {event.type === "chart" && tables.get(event.dataRef) ? (
+                <ResultChart event={event} table={tables.get(event.dataRef)} />
+              ) : null}
 
               {event.type === "validation" && event.outcome !== "passed" ? (
                 <div className={styles.traceValidation} data-outcome={event.outcome}>
@@ -704,16 +773,7 @@ export default function AnalyticalTrace({
                     <div className={styles.traceFollowUps} aria-label="Suggested follow-up questions">
                       {event.followUps.map((followUp) => (
                         <button key={followUp} type="button" disabled={!onFollowUp} onClick={() => onFollowUp?.(followUp)}>
-                          <svg className={styles.traceFollowUpIcon} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                            <path
-                              d="M5.5 3.5h7v7M12.5 3.5 3.5 12.5"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                          <span>{followUp}</span>
+                          {followUp}
                         </button>
                       ))}
                     </div>
@@ -733,7 +793,7 @@ export default function AnalyticalTrace({
 
               {event.type === "error" ? (
                 <div className={styles.traceError} role="alert">
-                  <strong>{event.recoverable ? "Albert can retry this step" : "Analysis stopped"}</strong>
+                  <strong>Chat failed</strong>
                   <p>{event.message}</p>
                 </div>
               ) : null}

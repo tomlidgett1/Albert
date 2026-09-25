@@ -1,0 +1,137 @@
+cubes:
+  - name: stripe_payouts
+    title: Payouts (Stripe)
+    public: false
+    description: >
+      One row per Stripe Payout to the merchant bank. paid is deposited.
+      arrival_date is when funds are expected.
+    sql: SELECT * FROM source_stripe.st_payout
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: status, sql: status, type: string, title: Payout status }
+      - { name: type, sql: "type", type: string }
+      - { name: method, sql: method, type: string }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: automatic, sql: automatic, type: boolean }
+      - { name: livemode, sql: livemode, type: boolean }
+      - { name: description, sql: description, type: string }
+      - { name: created, sql: created, type: time, title: Created at }
+      - { name: arrival_date, sql: arrival_date, type: time, title: Arrives }
+    measures:
+      - { name: payout_count, type: count, title: Payouts }
+      - name: paid_payouts
+        type: count
+        filters: [{ sql: "{CUBE}.status = 'paid'" }]
+      - name: payout_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Payout amount
+        filters: [{ sql: "{CUBE}.status IN ('paid', 'in_transit', 'pending')" }]
+
+  - name: stripe_balance_transactions
+    title: Balance transactions (Stripe)
+    public: false
+    description: >
+      One row per Stripe Balance Transaction. reporting_category is the finance
+      grouping. net is after Stripe fees. type includes charge, refund, payout,
+      stripe_fee, and adjustment.
+    sql: SELECT * FROM source_stripe.st_balance_transaction
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: type, sql: "type", type: string, title: Balance type }
+      - { name: reporting_category, sql: reporting_category, type: string, title: Reporting category }
+      - { name: status, sql: status, type: string }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: description, sql: description, type: string }
+      - { name: source, sql: source, type: string, public: false }
+      - { name: created, sql: created, type: time, title: Occurred at }
+      - { name: available_on, sql: available_on, type: time, title: Available on }
+    measures:
+      - { name: transaction_count, type: count, title: Balance transactions }
+      - name: gross_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Gross
+      - name: fee_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.fee, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Stripe fees
+      - name: net_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.net, {CUBE}.currency)"
+        type: sum
+        format: currency
+        title: Net
+
+  - name: stripe_payout_balance_links
+    title: Payout balance links (Stripe)
+    public: false
+    description: Junction of payout_id to balance_transaction_id (PAYOUT_BALANCE_TRANSACTION).
+    sql: SELECT * FROM source_stripe.st_payout_balance_transaction
+    joins:
+      - name: stripe_payouts
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_payouts}.tenant_id AND {CUBE}.payout_id = {stripe_payouts}.id"
+      - name: stripe_balance_transactions
+        relationship: many_to_one
+        sql: "{CUBE}.tenant_id = {stripe_balance_transactions}.tenant_id AND {CUBE}.balance_transaction_id = {stripe_balance_transactions}.id"
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: payout_id, sql: payout_id, type: string, public: false }
+      - { name: balance_transaction_id, sql: balance_transaction_id, type: string, public: false }
+    measures:
+      - { name: link_count, type: count }
+
+  - name: stripe_application_fees
+    title: Application fees (Stripe Connect)
+    public: false
+    description: One row per Stripe Application Fee collected by a Connect platform.
+    sql: SELECT * FROM source_stripe.st_application_fee
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: charge_id, sql: charge_id, type: string, public: false }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: livemode, sql: livemode, type: boolean }
+      - { name: created, sql: created, type: time }
+    measures:
+      - { name: fee_count, type: count, title: Application fees }
+      - name: application_fee_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount, {CUBE}.currency)"
+        type: sum
+        format: currency
+      - name: application_fee_refunded
+        sql: "source_stripe.stripe_major_units({CUBE}.amount_refunded, {CUBE}.currency)"
+        type: sum
+        format: currency
+
+  - name: stripe_transfers
+    title: Transfers (Stripe Connect)
+    public: false
+    description: One row per Stripe Transfer to a connected account.
+    sql: SELECT * FROM source_stripe.st_transfer
+    dimensions:
+      - { name: row_key, sql: row_key, type: string, primary_key: true, public: false }
+      - { name: tenant_id, sql: tenant_id, type: string, public: false }
+      - { name: id, sql: id, type: string, public: false }
+      - { name: destination, sql: destination, type: string }
+      - { name: currency, sql: "upper(currency)", type: string }
+      - { name: reversed, sql: reversed, type: boolean }
+      - { name: livemode, sql: livemode, type: boolean }
+      - { name: description, sql: description, type: string }
+      - { name: created, sql: created, type: time }
+    measures:
+      - { name: transfer_count, type: count, title: Transfers }
+      - name: transfer_amount
+        sql: "source_stripe.stripe_major_units({CUBE}.amount, {CUBE}.currency)"
+        type: sum
+        format: currency
+        filters: [{ sql: "NOT COALESCE({CUBE}.reversed, false)" }]

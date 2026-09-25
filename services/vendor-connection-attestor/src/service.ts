@@ -28,11 +28,11 @@ export class VendorConnectionAttestorService {
         buildDigest: this.dependencies.buildDigest,
       });
       const digest = await this.dependencies.store.prepare(challengeId, binding);
-      const signature = sign(
+      const signature = Buffer.from(sign(
         null,
         Buffer.from(digest, "hex"),
         this.dependencies.signingKey,
-      ).toString("base64url");
+      )).toString("base64url");
       const admissionMac = createHmac("sha256", this.dependencies.admissionHmacKey)
         .update(Buffer.from(digest, "hex")).digest("hex");
       const result = await this.dependencies.store.complete(

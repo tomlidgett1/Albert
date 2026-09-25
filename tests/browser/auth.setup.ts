@@ -11,7 +11,7 @@ setup("password login creates the first organisation and rejects an external nex
   await page.goto("/login?next=https%3A%2F%2Fevil.example%2Fsteal-session");
   await page.getByLabel("Email").fill("owner@example.com");
   await page.getByLabel("Password").fill("WorldClassPass123");
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
   await expect(page).toHaveURL(/\/dash$/u);
   await expect(page.getByRole("heading", { name: "New Analysis", level: 1 })).toBeVisible();

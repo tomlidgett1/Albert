@@ -1,0 +1,29 @@
+---
+description: Apply control-plane and analytical SQL migrations immediately after writing them
+alwaysApply: true
+---
+
+# Apply migrations without being asked
+
+After writing any file under `infra/migrations/control-plane/` or `infra/migrations/analytical/`, apply it in the same turn. Do not wait for the user to ask.
+
+## How
+
+1. Run the checksummed runner, not Supabase MCP `apply_migration` and not a raw `psql` apply. MCP and ad-hoc SQL bypass `albert_migrations.applied_migration`.
+2. Use the deployer identity. `CONTROL_PLANE_DATABASE_URL` in `.env.local` is often a runtime role and will fail with `permission denied to set role "albert_control_migration_owner"`.
+3. Map the deployer URL into the runner without printing it:
+
+```bash
+node --env-file=.env.local --import tsx -e '
+process.env.CONTROL_PLANE_DATABASE_URL = process.env.CONTROL_PLANE_MIGRATION_URL || process.env.CONTROL_PLANE_ADMIN_DATABASE_URL;
+process.env.CONTROL_PLANE_MIGRATION_ROLE = "albert_control_migration_owner";
+const { spawn } = await import("node:child_process");
+const child = spawn(process.execPath, ["--import", "tsx", "scripts/migrate.ts", "--target=control-plane"], { env: process.env, stdio: "inherit" });
+child.on("exit", (code) => process.exit(code ?? 1));
+'
+```
+
+For analytical migrations, map `ANALYTICAL_MIGRATION_URL` to `ANALYTICAL_DATABASE_URL` and set `ANALYTICAL_MIGRATION_ROLE=albert_migration_owner` with `--target=analytical`.
+
+4. After new `public` RPCs, `NOTIFY pgrst, 'reload schema'` so PostgREST sees GRANT changes.
+5. Never print connection strings or passwords. Never use `--bootstrap` unless creating a new database.

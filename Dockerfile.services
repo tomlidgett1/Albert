@@ -13,16 +13,38 @@ FROM node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5
 ARG ALBERT_BUILD_SHA=development
 LABEL org.opencontainers.image.revision=$ALBERT_BUILD_SHA
 ENV NODE_ENV=production
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 WORKDIR /app
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,id=albert-services-runtime-npm,target=/root/.npm,sharing=locked npm ci --omit=dev --ignore-scripts \
   && npm cache clean --force
+# Public root used by the dedicated Omni database URL with sslmode=verify-full.
+COPY deploy/certificates/supabase-prod-ca-2021.crt ./certificates/supabase-prod-ca-2021.crt
+# Official Xero MCP server, vendored into the image so the sync worker never
+# has to `npx` download it at first use (a cold machine took >45s and the
+# web timed out with "The official Xero MCP server could not be reached").
+# packages/xero-mcp/src/session.ts launches .albert-vendor/package/dist/index.js.
+COPY deploy/xero-mcp/package.json deploy/xero-mcp/package-lock.json .albert-vendor/
+RUN --mount=type=cache,id=albert-services-runtime-npm,target=/root/.npm,sharing=locked \
+  cd .albert-vendor \
+  && npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+  && ln -s node_modules/@xeroapi/xero-mcp-server package \
+  && node --check package/dist/index.js \
+  && npm cache clean --force \
+  && chown -R node:node /app/.albert-vendor
 COPY --from=build --chown=node:node /workspace/.albert-build/services ./services
-COPY --from=build --chown=node:node /workspace/packages/semantic-registry/registry ./packages/semantic-registry/registry
+COPY --from=build --chown=node:node /workspace/connectors/lightspeed-r/tables.json ./connectors/lightspeed-r/tables.json
+# Connector SDK projects: the sync worker packages and uploads them to
+# Fivetran per tenant (connector.py + generated *_spec.py; tests excluded).
+COPY --from=build --chown=node:node /workspace/connectors/xero-fivetran-sdk/*.py ./connectors/xero-fivetran-sdk/
+COPY --from=build --chown=node:node /workspace/connectors/lightspeed-fivetran-sdk/*.py ./connectors/lightspeed-fivetran-sdk/
 USER node
 
-# Deployments override this command for sync-worker.js, transform-worker.js,
-# deletion-worker.js, webhook-gateway.js, and operator-diagnostic.js. The
+# Deployments override this command for sync-worker.js,
+# deletion-worker.js, webhook-gateway.js, operator-diagnostic.js, and
 # transform-capacity-harness.js entry is operator-invoked only; it is never a
 # long-running process or an HTTP surface.
-CMD ["node", "--enable-source-maps", "services/semantic-query.js"]
+CMD ["node", "--enable-source-maps", "services/sync-worker.js"]

@@ -106,7 +106,7 @@ function jwt(
     exp: Math.floor(now / 1_000) + 300,
     ...overrides,
   })).toString("base64url");
-  return `${header}.${payload}.${sign("RSA-SHA256", Buffer.from(`${header}.${payload}`), privateKey).toString("base64url")}`;
+  return `${header}.${payload}.${Buffer.from(sign("RSA-SHA256", Buffer.from(`${header}.${payload}`), privateKey)).toString("base64url")}`;
 }
 
 test("GitHub OIDC/JWKS verification binds protected environment, workflow SHA, run, and corpus policy", async () => {

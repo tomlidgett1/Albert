@@ -1,0 +1,647 @@
+views:
+  - name: momence_member_analytics
+    title: Momence member analytics
+    description: >
+      Member-profile snapshot with observed engagement bounds, visit counters,
+      contactability indicators, tags and repeat-visitor segmentation.
+    meta:
+      ai_context: >
+        A member is a customer profile, not an active entitlement. Visit values
+        are current source counters and first/last seen are observed activity
+        bounds, not guaranteed signup/churn. Never trend snapshot counters across
+        sync dates or reveal contact PII without an explicit authorized request.
+    cubes:
+      - join_path: momence_members
+        includes:
+          - tenant_id
+          - member_id
+          - full_name
+          - has_email
+          - has_phone_number
+          - first_seen
+          - last_seen
+          - customer_tags
+          - observed_visit_count
+          - session_booking_count
+          - session_visit_count
+          - appointment_booking_count
+          - appointment_visit_count
+          - open_area_visit_count
+          - engagement_band
+          - member_count
+          - members_with_observed_visits
+          - repeat_visitors
+          - observed_visits
+          - observed_session_visits
+          - observed_appointment_visits
+          - observed_open_area_visits
+          - average_observed_visits_per_member
+          - repeat_visitor_rate_pct
+    folders:
+      - { name: Profile, includes: [member_id, full_name, first_seen, last_seen, customer_tags, has_email, has_phone_number] }
+      - { name: Engagement snapshot, includes: [engagement_band, observed_visit_count, session_booking_count, session_visit_count, appointment_booking_count, appointment_visit_count, open_area_visit_count] }
+      - { name: Member metrics, includes: [member_count, members_with_observed_visits, repeat_visitors, observed_visits, average_observed_visits_per_member, repeat_visitor_rate_pct] }
+
+  - name: momence_schedule_analytics
+    title: Momence classes and appointments schedule
+    description: >
+      Schedule-occurrence analytics for yoga classes/sessions and appointment
+      reservations, including instructor, location, capacity, bookings, waitlist,
+      duration, modality, cancellation/draft state and appointment list price.
+    meta:
+      ai_context: >
+        One row is one session or appointment occurrence. Booked places measure
+        reservations, not attendance or captured revenue. Capacity minus bookings
+        is an availability estimate. Keep activity_kind and currency context,
+        exclude cancelled/draft rows for scheduled performance, and never treat
+        teacher assignment as worked hours or payroll.
+    cubes:
+      - join_path: momence_schedule_events
+        includes:
+          - tenant_id
+          - activity_kind
+          - activity_id
+          - activity_name
+          - activity_type
+          - activity_tags
+          - service_name
+          - service_variant_name
+          - starts_at
+          - ends_at
+          - duration_minutes
+          - teacher_name
+          - location_name
+          - is_in_person
+          - is_recurring
+          - is_draft
+          - is_cancelled
+          - capacity
+          - reservations
+          - available_places_estimate
+          - waitlist_capacity
+          - waitlist_reservations
+          - additional_teacher_count
+          - appointment_listed_price
+          - currency_code
+          - schedule_state
+          - activity_occurrences
+          - scheduled_occurrences
+          - session_occurrences
+          - appointment_occurrences
+          - cancelled_occurrences
+          - draft_sessions
+          - booked_places
+          - capacity_places
+          - available_places
+          - waitlist_booking_count
+          - scheduled_minutes
+          - full_or_overbooked_occurrences
+          - capacity_utilization_pct
+    folders:
+      - { name: Activity, includes: [activity_kind, activity_name, activity_type, activity_tags, service_name, service_variant_name, starts_at, ends_at, schedule_state] }
+      - { name: Capacity and demand, includes: [capacity, reservations, available_places_estimate, waitlist_capacity, waitlist_reservations, booked_places, capacity_places, available_places, waitlist_booking_count, capacity_utilization_pct, full_or_overbooked_occurrences] }
+      - { name: Delivery, includes: [teacher_name, location_name, is_in_person, is_recurring, duration_minutes, additional_teacher_count, scheduled_minutes] }
+      - { name: Lifecycle, includes: [is_draft, is_cancelled, scheduled_occurrences, cancelled_occurrences, draft_sessions] }
+
+  - name: momence_attendance_analytics
+    title: Momence bookings and attendance
+    description: >
+      Reservation-record analytics across session bookings and member appointment
+      reservations, with booking/cancellation/check-in state, attendance proxy,
+      member, instructor, location, tickets and appointment payment flags.
+    meta:
+      ai_context: >
+        One row is one reservation record; session ticketsBought can exceed one,
+        while checkedIn remains a booking-level boolean. Use checked-in measures
+        for attendance. No-show is explicitly an Albert ended-and-unresolved proxy,
+        never a Momence no-show flag. Appointment paid/deposit flags are not proof
+        of captured cash; refund and payment questions use their native views.
+    cubes:
+      - join_path: momence_attendance_events
+        includes:
+          - tenant_id
+          - activity_kind
+          - reservation_id
+          - activity_id
+          - activity_name
+          - starts_at
+          - ends_at
+          - booked_at
+          - cancelled_at
+          - checked_in_at
+          - source_attendance_status
+          - attendance_outcome
+          - member_name
+          - teacher_name
+          - location_name
+          - activity_cancelled
+          - checked_in
+          - is_late_cancelled
+          - is_paid
+          - is_deposit_paid
+          - reserved_places
+          - appointment_listed_price
+          - currency_code
+          - reservation_records
+          - active_reservations
+          - eligible_past_reservations
+          - checked_in_reservations
+          - checked_in_past_reservations
+          - cancelled_reservations
+          - late_cancelled_reservations
+          - no_show_proxy_reservations
+          - upcoming_reservations
+          - reserved_place_count
+          - paid_appointment_reservations
+          - deposit_paid_appointment_reservations
+          - reservation_attendance_rate_pct
+          - no_show_proxy_rate_pct
+    folders:
+      - { name: Reservation, includes: [activity_kind, activity_name, starts_at, ends_at, booked_at, cancelled_at, reserved_places, member_name] }
+      - { name: Attendance, includes: [checked_in_at, checked_in, source_attendance_status, attendance_outcome, eligible_past_reservations, checked_in_past_reservations, reservation_attendance_rate_pct, no_show_proxy_reservations, no_show_proxy_rate_pct] }
+      - { name: Delivery, includes: [teacher_name, location_name, activity_cancelled] }
+      - { name: Appointment flags, includes: [is_late_cancelled, is_paid, is_deposit_paid, appointment_listed_price, currency_code] }
+
+  - name: momence_membership_catalogue_analytics
+    title: Momence membership catalogue
+    description: >
+      Membership-plan definitions covering plan type, duration, renewal,
+      activation, trials, prices, tax, usage limits, rollover, dates and tags.
+    meta:
+      ai_context: >
+        This is plan-definition grain. Do not count plans as members or active
+        entitlements. Disabled plans can still have active/historical purchases.
+        Plan price fields have no currency/unit metadata on this response, so show
+        their source values without inventing a currency. Money credits are source
+        credit units, not recognized cash or revenue.
+    cubes:
+      - join_path: momence_membership_plans
+        includes:
+          - tenant_id
+          - membership_id
+          - plan_name
+          - description
+          - membership_type
+          - disabled
+          - featured
+          - auto_renewing
+          - minimum_auto_renews
+          - duration
+          - duration_unit
+          - start_at
+          - end_at
+          - catalogue_state
+          - display_order
+          - activated_on_first_use
+          - activation_deadline_days
+          - has_free_trial
+          - free_trial_duration_days
+          - free_trial_price_source_value
+          - is_intro_offer
+          - price_type
+          - price_source_value
+          - minimum_price_source_value
+          - maximum_price_source_value
+          - recommended_price_source_value
+          - price_includes_tax
+          - tax_rate_percent
+          - event_credits_included
+          - money_credits_included
+          - session_usage_limit
+          - appointment_usage_limit
+          - combined_usage_limit_enabled
+          - combined_usage_limit
+          - usage_limit_renewal_enabled
+          - usage_limit_renewal_duration
+          - usage_limit_renewal_duration_unit
+          - usage_rollover_enabled
+          - usage_rollover_mode
+          - rollover_expiration_duration
+          - rollover_expiration_duration_unit
+          - tags
+          - membership_plans
+          - enabled_membership_plans
+          - auto_renewing_plans
+          - intro_offer_plans
+          - free_trial_plans
+          - event_package_plans
+          - money_package_plans
+      - join_path: momence_membership_plans.momence_locations
+        prefix: true
+        includes: [location_name, city, country_code, timezone]
+    folders:
+      - { name: Definition, includes: [membership_id, plan_name, description, membership_type, catalogue_state, disabled, featured, tags] }
+      - { name: Price and tax, includes: [price_type, price_source_value, minimum_price_source_value, maximum_price_source_value, recommended_price_source_value, price_includes_tax, tax_rate_percent] }
+      - { name: Renewal and activation, includes: [auto_renewing, minimum_auto_renews, duration, duration_unit, activated_on_first_use, activation_deadline_days, start_at, end_at] }
+      - { name: Credits and limits, includes: [event_credits_included, money_credits_included, session_usage_limit, appointment_usage_limit, combined_usage_limit, usage_limit_renewal_enabled, usage_rollover_enabled, usage_rollover_mode] }
+
+  - name: momence_member_entitlement_analytics
+    title: Momence active member entitlements
+    description: >
+      Current active-endpoint bought-membership snapshots by member and plan,
+      including dates, freeze state, current usage period, remaining credits,
+      limits, utilization and declined-renewal risk.
+    meta:
+      ai_context: >
+        This is current entitlement snapshot grain, not all membership purchase or
+        cancellation history. Never sum balances across sync dates. Keep event,
+        money, session and appointment credits in separate units. Frozen means
+        temporarily unusable, not cancelled; declined renewal is risk evidence,
+        not proof that the entitlement ended.
+    cubes:
+      - join_path: momence_member_entitlements
+        includes:
+          - tenant_id
+          - bought_membership_id
+          - membership_name
+          - entitlement_type
+          - entitlement_state
+          - starts_at
+          - ends_at
+          - is_frozen
+          - frozen_at
+          - scheduled_freeze_at
+          - unfrozen_at
+          - scheduled_unfreeze_at
+          - remaining_frozen_minutes
+          - usage_period_starts_at
+          - usage_period_ends_at
+          - event_credits_left
+          - event_credits_total
+          - money_credits_left
+          - money_credits_total
+          - session_usage_limit
+          - sessions_used
+          - appointment_usage_limit
+          - appointments_used
+          - combined_usage_limit
+          - combined_usage
+          - declined_renewal_at
+          - has_declined_renewal
+          - active_endpoint_entitlements
+          - usable_entitlements
+          - frozen_entitlements
+          - expiring_within_30_days
+          - declined_renewal_entitlements
+          - current_event_credits
+          - current_money_credit_units
+          - sessions_used_in_current_limit_period
+          - appointments_used_in_current_limit_period
+          - combined_usage_in_current_limit_period
+          - weighted_usage_limit_utilization_pct
+      - join_path: momence_member_entitlements.momence_members
+        prefix: true
+        includes: [full_name, first_seen, last_seen, engagement_band]
+      - join_path: momence_member_entitlements.momence_membership_plans
+        prefix: true
+        includes: [plan_name, membership_type, auto_renewing, duration, duration_unit]
+    folders:
+      - { name: Entitlement, includes: [bought_membership_id, membership_name, entitlement_type, entitlement_state, starts_at, ends_at] }
+      - { name: Member and plan, includes: [momence_members_full_name, momence_members_engagement_band, momence_membership_plans_plan_name, momence_membership_plans_auto_renewing] }
+      - { name: Current usage, includes: [usage_period_starts_at, usage_period_ends_at, event_credits_left, money_credits_left, session_usage_limit, sessions_used, appointment_usage_limit, appointments_used, combined_usage_limit, combined_usage, weighted_usage_limit_utilization_pct] }
+      - { name: Risk and freeze, includes: [is_frozen, frozen_at, scheduled_freeze_at, scheduled_unfreeze_at, declined_renewal_at, has_declined_renewal, expiring_within_30_days, declined_renewal_entitlements] }
+
+  - name: momence_instructor_analytics
+    title: Momence instructor analytics
+    description: >
+      Distinct teachers observed in Momence session/appointment schedules, with
+      deduplicated current assignment counts, upcoming work and schedule bounds.
+    meta:
+      ai_context: >
+        Instructor identity and service assignment only. This view does not prove
+        employment, rostered/actual labour hours, wage cost or payroll. One
+        occurrence is counted once per teacher; original-teacher history remains
+        separate from current primary/additional assignment counts.
+    cubes:
+      - join_path: momence_instructors
+        includes:
+          - tenant_id
+          - instructor_name
+          - first_name
+          - last_name
+          - assigned_occurrence_count
+          - session_assignment_count
+          - appointment_assignment_count
+          - upcoming_assignment_count
+          - original_teacher_occurrence_count
+          - assigned_location_count
+          - first_scheduled_at
+          - last_scheduled_at
+          - has_upcoming_assignment
+          - instructors
+          - scheduled_instructor_assignments
+          - scheduled_session_instructor_assignments
+          - scheduled_appointment_instructor_assignments
+          - upcoming_instructor_assignments
+          - instructors_with_upcoming_assignments
+
+  - name: momence_location_analytics
+    title: Momence location analytics
+    description: >
+      Momence location reference and schedule footprint, using optional public
+      location profiles plus safe embedded schedule-location fallbacks.
+    meta:
+      ai_context: >
+        Address/timezone/coordinates are available only when the optional public
+        location endpoint succeeds; otherwise id/name come from schedule events
+        and missing detail must stay unknown. Occurrence counts exclude cancelled
+        activities and are schedule activity, not bookings, attendance or revenue.
+    cubes:
+      - join_path: momence_locations
+        includes:
+          - tenant_id
+          - location_name
+          - address
+          - city
+          - country_code
+          - full_address
+          - postcode
+          - timezone
+          - is_physical
+          - has_public_location_profile
+          - scheduled_occurrence_count
+          - session_occurrence_count
+          - appointment_occurrence_count
+          - upcoming_occurrence_count
+          - first_scheduled_at
+          - last_scheduled_at
+          - locations
+          - physical_locations
+          - locations_with_upcoming_activity
+          - scheduled_location_occurrences
+          - upcoming_location_occurrences
+
+  - name: momence_tag_analytics
+    title: Momence tag catalogue
+    description: Tag-definition catalogue for customer badges and classifications used across Momence entities.
+    meta:
+      ai_context: >
+        This view counts tag definitions, not tagged members, plans or sessions.
+        Use curated entity tag dimensions or the source explorer to analyse exact
+        tag assignments without joining unrelated array grains.
+    cubes:
+      - join_path: momence_tags
+        includes: [tenant_id, tag_name, badge_label, badge_color, is_customer_badge, tags, customer_badge_tags]
+
+  - name: momence_sales_analytics
+    title: Momence reported sales
+    description: >
+      Experimental HostSale header records with sale date, reported item/tax/
+      discount values and independently rolled-up embedded tender values.
+    meta:
+      ai_context: >
+        HostSale has no currency, status, void flag, location or canonical order
+        total. Report these as source sale values, never certified revenue. Do not
+        add item and tender totals. Use product sales for item detail and detailed
+        payment/refund views for captured/refunded cash when discoverable.
+    cubes:
+      - join_path: momence_sales
+        includes:
+          - tenant_id
+          - sale_id
+          - sale_at
+          - currency_availability
+          - item_row_count
+          - units_as_reported
+          - tender_row_count
+          - paying_member_count
+          - target_member_count
+          - contains_refund_like_item
+          - sale_records
+          - reported_units
+          - reported_item_value_ex_tax
+          - reported_item_tax
+          - reported_item_value_inc_tax
+          - reported_discount_ex_tax
+          - reported_discount_tax
+          - embedded_tender_value_ex_tax
+          - embedded_tender_tax
+          - embedded_tender_value_inc_tax
+          - sale_records_with_refund_like_items
+          - average_reported_item_value_inc_tax
+
+  - name: momence_product_sales_analytics
+    title: Momence sale item analytics
+    description: >
+      HostSale item grain for memberships, yoga classes, appointments, products,
+      variants, open areas, gift cards, fees and other Momence item types.
+    meta:
+      ai_context: >
+        Use for what was sold and to whom. Paying and target member may differ.
+        Price/tax values lack currency and sale status, so call them reported
+        source values. Refund-like item types do not establish a dated payment
+        refund and should not be netted without the detailed refund view.
+    cubes:
+      - join_path: momence_sale_items
+        includes:
+          - tenant_id
+          - sale_item_id
+          - item_type
+          - item_name
+          - descriptive_item_name
+          - sale_at
+          - quantity
+          - unit_price_ex_tax_source_value
+          - unit_tax_source_value
+          - paying_member_name
+          - target_member_name
+          - session_name
+          - session_starts_at
+          - session_ends_at
+          - appointment_name
+          - product_name
+          - product_variant_name
+          - open_area_name
+          - discount_code
+          - discount_type
+          - currency_availability
+          - sale_item_rows
+          - reported_quantity
+          - reported_line_value_ex_tax
+          - reported_line_tax
+          - reported_line_value_inc_tax
+          - reported_line_discount_ex_tax
+          - reported_line_discount_tax
+          - refund_like_item_rows
+          - refund_like_value_as_reported
+
+  - name: momence_sale_tender_analytics
+    title: Momence sale tender mix
+    description: >
+      Payment-method items embedded on HostSale records, including method type,
+      custom/membership label and source amount/tax values.
+    meta:
+      ai_context: >
+        Useful for sale-linked payment mix, but status and currency are not
+        returned by HostSaleDto. These are embedded tender values, not certified
+        captured cash. Do not combine them with detailed payment-item measures.
+    cubes:
+      - join_path: momence_sale_tenders
+        includes:
+          - tenant_id
+          - sale_id
+          - tender_item_id
+          - payment_method_type
+          - payment_method_name
+          - sale_at
+          - currency_availability
+          - tender_items
+          - tender_amount_ex_tax
+          - tender_tax
+          - tender_amount_inc_tax
+
+  - name: momence_payment_analytics
+    title: Momence discovered payment transactions
+    description: >
+      Detailed payment-transaction headers with status, source, purchase type,
+      currency, captured value, VAT, fees, credits and refund-adjusted values.
+    meta:
+      ai_context: >
+        Only succeeded status counts as captured currency and amounts must be
+        grouped by currency. Money/event credits are separate units. Coverage is
+        partial because detailed IDs are discoverable only from member notes;
+        never claim complete processing totals or interpret missing rows as zero.
+    cubes:
+      - join_path: momence_payment_transactions
+        includes:
+          - tenant_id
+          - payment_transaction_id
+          - payment_status
+          - payment_source
+          - purchase_type
+          - currency_code
+          - created_at
+          - paying_member_name
+          - failure_reason
+          - is_apple_pay
+          - is_google_pay
+          - refund_count
+          - coverage_scope
+          - discovered_payment_transactions
+          - succeeded_payment_transactions
+          - failed_payment_transactions
+          - pending_or_incomplete_payment_transactions
+          - voided_payment_transactions
+          - captured_currency_amount
+          - price_excluding_vat_for_succeeded
+          - vat_for_succeeded
+          - paid_money_credit_units
+          - paid_event_credit_units
+          - refunded_currency_amount
+          - refunded_money_credit_units
+          - refunded_event_credit_units
+          - net_captured_currency_after_refunds
+          - host_covered_processor_fees
+          - host_covered_platform_fees
+          - customer_covered_processor_fees
+          - customer_covered_platform_fees
+          - average_captured_currency_amount
+
+  - name: momence_payment_method_analytics
+    title: Momence discovered payment method items
+    description: >
+      Detailed payment-item grain for method/status, custom modes, currency,
+      price/VAT, fees, credits and used membership or gift-card settlement.
+    meta:
+      ai_context: >
+        Use for method-specific payment success and fee questions. Do not add
+        payment-item value to transaction-header captured value. Currency, money
+        credits and event credits are separate units, and coverage inherits the
+        partial member-note discovery boundary.
+    cubes:
+      - join_path: momence_payment_items
+        includes:
+          - tenant_id
+          - payment_item_id
+          - payment_method
+          - payment_status
+          - currency_code
+          - custom_payment_method
+          - custom_payment_method_mode
+          - transaction_created_at
+          - used_membership_name
+          - used_membership_type
+          - payment_items
+          - succeeded_payment_items
+          - failed_payment_items
+          - succeeded_item_price_ex_vat
+          - succeeded_item_vat
+          - item_paid_money_credit_units
+          - item_paid_event_credit_units
+          - item_host_processor_fees
+          - item_host_platform_fees
+          - item_customer_processor_fees
+          - item_customer_platform_fees
+
+  - name: momence_refund_analytics
+    title: Momence discovered refunds
+    description: >
+      Detailed payment refund events by refund date, method, purchase/source,
+      currency amount and separately typed money-credit/event-credit reversals.
+    meta:
+      ai_context: >
+        Refund created_at is the refund-flow date, not original service or sale
+        date. Do not infer the refunded class/product from payment method alone.
+        Currency and credit units stay separate. Coverage is partial because only
+        payment IDs discoverable through member notes can be retrieved.
+    cubes:
+      - join_path: momence_refunds
+        includes:
+          - tenant_id
+          - refund_id
+          - payment_method
+          - currency_code
+          - purchase_type
+          - payment_source
+          - refund_created_at
+          - refund_events
+          - refunded_currency_amount
+          - refunded_money_credit_units
+          - refunded_event_credit_units
+          - average_currency_refund
+
+  - name: momence_source_explorer
+    title: Momence exhaustive source field explorer
+    description: >
+      Exhaustive typed access to every scalar value ingested from every Momence
+      entity, preserving source stream, stable field path and exact occurrence.
+    meta:
+      ai_context: >
+        Use only when curated Momence views do not expose the requested concept.
+        Filter one exact parent_stream/source_object_type and field_path, then use
+        the matching typed value. Numeric fields are not automatically additive.
+        field_pointer addresses an exact array occurrence. PII, notes, contracts
+        and online-stream credentials require explicit tenant authorization.
+    cubes:
+      - join_path: momence_source_fields
+        includes:
+          - tenant_id
+          - parent_stream
+          - source_object_type
+          - source_record_id
+          - field_path
+          - field_pointer
+          - field_ordinal
+          - value_kind
+          - text_value
+          - numeric_value
+          - boolean_value
+          - timestamp_value
+          - raw_value
+          - potentially_sensitive
+          - value_state
+          - source_updated_at
+          - ingested_at
+          - field_occurrences
+          - source_records
+          - populated_field_occurrences
+          - sensitive_field_occurrences
+          - numeric_value_sum
+          - numeric_value_average
+          - numeric_value_minimum
+          - numeric_value_maximum
+    folders:
+      - { name: Source identity, includes: [parent_stream, source_object_type, source_record_id, field_path, field_pointer, field_ordinal] }
+      - { name: Typed value, includes: [value_kind, text_value, numeric_value, boolean_value, timestamp_value, raw_value, value_state] }
+      - { name: Governance, includes: [potentially_sensitive, source_updated_at, ingested_at] }
+      - { name: Safe after field review, includes: [field_occurrences, source_records, populated_field_occurrences, numeric_value_average, numeric_value_minimum, numeric_value_maximum, numeric_value_sum] }

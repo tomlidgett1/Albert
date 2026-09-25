@@ -1,10 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ANTHROPIC_HAIKU_4_5_RATE_CARD,
   meterOpenAIUsage,
   OPENAI_GPT_5_6_RATE_CARD,
+  OPENAI_GPT_6_RATE_CARD,
   toModelUsageRpcPayload,
+  XAI_GROK_4_6_RATE_CARD,
 } from "../packages/usage-metering/src/index.ts";
+
+test("meters Claude Haiku 4.5 cache, thinking output, and standard processing exactly", () => {
+  const metered = meterOpenAIUsage({
+    model: "claude-haiku-4-5-20251001",
+    fastMode: false,
+    usage: {
+      requests: 1,
+      inputTokens: 1_000,
+      outputTokens: 100,
+      totalTokens: 1_100,
+      requestUsageEntries: [{
+        inputTokens: 1_000,
+        outputTokens: 100,
+        inputTokensDetails: { cached_tokens: 200, cache_write_tokens: 100 },
+        outputTokensDetails: { reasoning_tokens: 80 },
+      }],
+    },
+  });
+
+  assert.equal(metered.estimatedCostUsdMicros, 1_345);
+  assert.equal(metered.cachedInputTokens, 200);
+  assert.equal(metered.cacheWriteInputTokens, 100);
+  assert.equal(metered.rateCardId, ANTHROPIC_HAIKU_4_5_RATE_CARD.id);
+  assert.equal(ANTHROPIC_HAIKU_4_5_RATE_CARD.dataResidencyRegion, "global");
+});
 
 test("meters standard, cached, cache-write, output, and Fast usage exactly", () => {
   const metered = meterOpenAIUsage({
@@ -69,6 +97,44 @@ test("uses the published Terra and Luna short-context rate card", () => {
   assert.equal(OPENAI_GPT_5_6_RATE_CARD.source, "https://developers.openai.com/api/docs/pricing");
 });
 
+test("meters GPT-6 on its global rate card without the AU uplift", () => {
+  const sol = meterOpenAIUsage({
+    model: "gpt-6-sol",
+    fastMode: true,
+    usage: {
+      requests: 1,
+      inputTokens: 1_000,
+      outputTokens: 100,
+      totalTokens: 1_100,
+      requestUsageEntries: [{
+        inputTokens: 1_000,
+        outputTokens: 100,
+        inputTokensDetails: { cached_tokens: 200, cache_write_tokens: 100 },
+      }],
+    },
+  });
+  // Standard cost is 2,690µ and Fast is 2x; the global host adds no uplift.
+  assert.equal(sol.estimatedCostUsdMicros, 5_380);
+  assert.equal(sol.rateCardId, OPENAI_GPT_6_RATE_CARD.id);
+
+  const luna = meterOpenAIUsage({
+    model: "gpt-6-luna",
+    fastMode: false,
+    usage: { requests: 1, inputTokens: 100_000, outputTokens: 10_000, totalTokens: 110_000 },
+  });
+  // $0.01 input + $0.005 output.
+  assert.equal(luna.estimatedCostUsdMicros, 15_000);
+
+  const astra = meterOpenAIUsage({
+    model: "gpt-6-astra",
+    fastMode: false,
+    usage: { requests: 1, inputTokens: 1_000, outputTokens: 100, totalTokens: 1_100 },
+  });
+  // $0.01 input + $0.005 output.
+  assert.equal(astra.estimatedCostUsdMicros, 15_000);
+  assert.equal(OPENAI_GPT_6_RATE_CARD.dataResidencyRegion, "global");
+});
+
 test("rejects usage details that cannot reconcile", () => {
   assert.throws(() => meterOpenAIUsage({
     model: "gpt-5.6-terra",
@@ -130,4 +196,46 @@ test("model usage preserves the control-plane RPC contract", () => {
     estimatedCostUsdMicros: metering.estimatedCostUsdMicros,
     pricingCompleteness: "aggregate_estimate",
   });
+});
+
+test("meters Grok 4.6 on the published xAI rate card with Priority Fast and no AU uplift", () => {
+  const standard = meterOpenAIUsage({
+    model: "grok-4.6",
+    fastMode: false,
+    usage: {
+      requests: 1,
+      inputTokens: 100_000,
+      outputTokens: 0,
+      totalTokens: 100_000,
+    },
+  });
+  const priority = meterOpenAIUsage({
+    model: "grok-4.6",
+    fastMode: true,
+    usage: {
+      requests: 1,
+      inputTokens: 100_000,
+      outputTokens: 0,
+      totalTokens: 100_000,
+    },
+  });
+  const longContext = meterOpenAIUsage({
+    model: "grok-4.6",
+    fastMode: false,
+    usage: {
+      requests: 1,
+      inputTokens: 200_000,
+      outputTokens: 0,
+      totalTokens: 200_000,
+    },
+  });
+
+  // $2 / 1M below 200k. No AU uplift.
+  assert.equal(standard.estimatedCostUsdMicros, 200_000);
+  // Official xAI Priority Processing is 2x standard rates.
+  assert.equal(priority.estimatedCostUsdMicros, 400_000);
+  // Official xAI long-context is ≥ 200k prompt tokens at 2x.
+  assert.equal(longContext.estimatedCostUsdMicros, 800_000);
+  assert.equal(standard.rateCardId, XAI_GROK_4_6_RATE_CARD.id);
+  assert.equal(XAI_GROK_4_6_RATE_CARD.source, "https://docs.x.ai/developers/pricing");
 });

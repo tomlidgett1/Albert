@@ -1,9 +1,9 @@
 import { PutObjectCommand, S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { gzipSync } from "node:zlib";
 
-import { loadRawStorageS3Config } from "../packages/storage/src/s3.ts";
-import { S3RawIngestionObjectStore } from "../packages/storage/src/s3-ingestion.ts";
-import { SupabaseMachineSessionCredentialProvider } from "../packages/storage/src/session-credentials.ts";
+import { loadRawStorageS3Config } from "../packages/storage/src/s3.js";
+import { S3RawIngestionObjectStore } from "../packages/storage/src/s3-ingestion.js";
+import { SupabaseMachineSessionCredentialProvider } from "../packages/storage/src/session-credentials.js";
 
 function dumpError(label: string, error: unknown): void {
   const e = error as Record<string, unknown> & {

@@ -1,0 +1,23 @@
+views:
+  - name: stripe_disputes_analytics
+    title: Stripe disputes analytics
+    description: Current Stripe card-dispute exposure by status, reason and evidence due date.
+    meta:
+      ai_context: >
+        A dispute amount is exposure, not automatically an expense. Open states
+        are warning_needs_response, needs_response and under_review.
+    cubes:
+      - join_path: stripe_disputes
+        includes:
+          - tenant_id
+          - status
+          - reason
+          - currency
+          - created
+          - evidence_due_by
+          - dispute_count
+          - open_disputes
+          - dispute_amount
+      - join_path: stripe_disputes.stripe_charges
+        prefix: true
+        includes: [status, description]

@@ -1,0 +1,210 @@
+{
+  "contract": {
+    "api_version": "2026-07",
+    "openapi_sha256": "123b2630178c376990dd7219f92e068e5f77ac9cd991a80e0fafa97ad8613dd7"
+  },
+  "phases": {
+    "initial": {
+      "sales": {
+        "retry_once_after": ["0"],
+        "pages": {
+          "0": {
+            "data": [
+              {
+                "id": "sale-0001",
+                "state": "closed",
+                "receipt_number": "1001",
+                "created_at": "2026-07-01T00:00:00Z",
+                "updated_at": "2026-07-01T00:01:00Z",
+                "totals": {"price": 11.218181818, "price_incl_tax": 12.34, "tax": 1.121818182, "loyalty": 0, "surcharge": 0},
+                "line_items": [],
+                "payments": [],
+                "taxes": [],
+                "adjustments": [],
+                "attributes": [],
+                "external_applications": [],
+                "ecom_custom_charges": []
+              },
+              {
+                "id": "sale-0002",
+                "state": "closed",
+                "receipt_number": "1002",
+                "created_at": "2026-07-01T00:02:00Z",
+                "updated_at": "2026-07-01T00:03:00Z",
+                "totals": {"price": 18.181818182, "price_incl_tax": 20.00, "tax": 1.818181818, "loyalty": 0, "surcharge": 0},
+                "line_items": [],
+                "payments": [],
+                "taxes": [],
+                "adjustments": [],
+                "attributes": [],
+                "external_applications": [],
+                "ecom_custom_charges": []
+              }
+            ],
+            "version": {"min": 10, "max": 11}
+          },
+          "11": {
+            "data": [
+              {
+                "id": "sale-0003",
+                "state": "closed",
+                "receipt_number": "1003",
+                "created_at": "2026-07-01T00:04:00Z",
+                "updated_at": "2026-07-01T00:05:00Z",
+                "totals": {"price": 27.272727273, "price_incl_tax": 30.00, "tax": 2.727272727, "loyalty": 0, "surcharge": 0},
+                "line_items": [],
+                "payments": [],
+                "taxes": [],
+                "adjustments": [],
+                "attributes": [],
+                "external_applications": [],
+                "ecom_custom_charges": []
+              }
+            ],
+            "version": {"min": 12, "max": 12}
+          },
+          "12": {"data": [], "version": {"min": null, "max": null}}
+        }
+      },
+      "inventory": {
+        "pages": {
+          "0": [
+            {"id": "inventory-0001", "outlet_id": "outlet-0001", "product_id": "product-0001", "current_inventory_level": 4, "quantity_to_procure": 0, "average_cost": 10.125, "reorder_method": "FIXED", "reorder_point": 2, "reorder_amount": 8, "reorder_target": 10, "deleted_at": null, "version": 21},
+            {"id": "inventory-0002", "outlet_id": "outlet-0001", "product_id": "product-0002", "current_inventory_level": 2.5, "quantity_to_procure": 1.5, "average_cost": 7.333333333, "reorder_method": "MIN_MAX", "reorder_point": 3, "reorder_amount": 7.5, "reorder_target": 10, "deleted_at": null, "version": 22}
+          ],
+          "22": []
+        }
+      },
+      "inventory_levels": {
+        "pages": {
+          "0": [
+            {"location_id": "outlet-0001", "product_id": "product-0001", "root_product_id": "product-0001", "name": "Coffee", "current_inventory_level": 4, "quantity_to_procure": 0, "average_cost": 10.125, "total_cost": 40.50},
+            {"location_id": "outlet-0001", "product_id": "product-0002", "root_product_id": "product-0002", "name": "Tea", "current_inventory_level": 2.5, "quantity_to_procure": 1.5, "average_cost": 7.333333333, "total_cost": 18.333333333}
+          ],
+          "2": [
+            {"location_id": "outlet-0002", "product_id": "product-0001", "root_product_id": "product-0001", "name": "Coffee", "current_inventory_level": 6, "quantity_to_procure": 0, "average_cost": 10.125, "total_cost": 60.75}
+          ],
+          "3": []
+        }
+      },
+      "fulfillments": {
+        "pages": {
+          "1": {"data": [
+            {"id": "1947700198720344064", "outlet_id": "outlet-0001", "sale_id": "sale-0001", "type": "PICKUP", "state": "OPEN", "user_ids": [], "note": "", "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-01T00:00:00Z", "version": 1, "line_items": []},
+            {"id": "1947700198720344065", "outlet_id": "outlet-0001", "sale_id": "sale-0002", "type": "DISPATCH", "state": "PACKED", "user_ids": [], "note": "", "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-01T00:00:00Z", "version": 2, "line_items": []}
+          ]},
+          "2": {"data": [
+            {"id": "1947700198720344066", "outlet_id": "outlet-0002", "sale_id": "sale-0003", "type": "PICKUP", "state": "FULFILLED", "user_ids": [], "note": "", "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-01T00:00:00Z", "version": 3, "line_items": []}
+          ]},
+          "3": {"data": []}
+        }
+      },
+      "product_categories": {
+        "pages": {
+          "__start__": {"data": {"categories": [
+            {"id": "category-0001", "name": "Drinks", "leaf_category": false, "parent_category_id": null, "root_category_id": "category-0001", "category_path": []},
+            {"id": "category-0002", "name": "Hot drinks", "leaf_category": true, "parent_category_id": "category-0001", "root_category_id": "category-0001", "category_path": []}
+          ]}, "page_info": {"has_next": true, "last_seen": "category-cursor-1"}},
+          "category-cursor-1": {"data": {"categories": [
+            {"id": "category-0003", "name": "Food", "leaf_category": true, "parent_category_id": null, "root_category_id": "category-0003", "category_path": []}
+          ]}, "page_info": {"has_next": false}}
+        }
+      },
+      "quotes": {
+        "pages": {
+          "0": {"Quotes": [
+            {"id": "9223372036854775000", "status": "CREATED", "short_code": "Q1", "grand_total": 55.55, "total_price": 50.50, "total_tax": 5.05, "loyalty": 0, "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-01T00:00:01Z", "expired_at": "2026-08-01T00:00:00Z", "deleted_at": null, "products": [], "sales_ids": []}
+          ], "HasNext": true, "TotalCount": 2},
+          "9223372036854775000": {"Quotes": [
+            {"id": "9223372036854775001", "status": "CREATED", "short_code": "Q2", "grand_total": 11.11, "total_price": 10.10, "total_tax": 1.01, "loyalty": 0, "created_at": "2026-07-01T00:02:00Z", "updated_at": "2026-07-01T00:02:01Z", "expired_at": "2026-08-01T00:00:00Z", "deleted_at": null, "products": [], "sales_ids": []}
+          ], "HasNext": false, "TotalCount": 2}
+        }
+      },
+      "fulfillment_history": {
+        "pages": {
+          "__start__": {"data": [
+            {"sale_line_item_id": "line-0001", "product_id": "product-0001", "event_type": "CREATED", "quantity_delta": "1", "picked_quantity_delta": "0", "packed_quantity_delta": "0", "fulfilled_delta": "0", "created_at": "2026-07-01T00:00:00Z"},
+            {"sale_line_item_id": "line-0001", "product_id": "product-0001", "event_type": "PICKED", "quantity_delta": "0", "picked_quantity_delta": "1", "packed_quantity_delta": "0", "fulfilled_delta": "0", "created_at": "2026-07-01T00:01:00Z"}
+          ], "next_cursor": "history-cursor-1"},
+          "history-cursor-1": {"data": [
+            {"sale_line_item_id": "line-0001", "product_id": "product-0001", "event_type": "FULFILLED", "quantity_delta": "0", "picked_quantity_delta": "0", "packed_quantity_delta": "0", "fulfilled_delta": "1", "created_at": "2026-07-01T00:02:00Z"}
+          ], "next_cursor": ""}
+        }
+      }
+    },
+    "delta": {
+      "sales": {
+        "pages": {
+          "12": {"data": [
+            {"id": "sale-0001", "state": "closed", "receipt_number": "1001", "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-02T00:01:00Z", "totals": {"price": 13.036363636, "price_incl_tax": 14.34, "tax": 1.303636364, "loyalty": 0, "surcharge": 0}, "line_items": [], "payments": [], "taxes": [], "adjustments": [], "attributes": [], "external_applications": [], "ecom_custom_charges": []},
+            {"id": "sale-0004", "state": "closed", "receipt_number": "1004", "created_at": "2026-07-02T00:02:00Z", "updated_at": "2026-07-02T00:03:00Z", "totals": {"price": 36.363636364, "price_incl_tax": 40.00, "tax": 3.636363636, "loyalty": 0, "surcharge": 0}, "line_items": [], "payments": [], "taxes": [], "adjustments": [], "attributes": [], "external_applications": [], "ecom_custom_charges": []}
+          ], "version": {"min": 13, "max": 14}},
+          "14": {"data": [], "version": {"min": null, "max": null}}
+        }
+      },
+      "inventory": {
+        "pages": {
+          "22": [
+            {"id": "inventory-0001", "outlet_id": "outlet-0001", "product_id": "product-0001", "current_inventory_level": 9, "quantity_to_procure": 0, "average_cost": 10.250, "reorder_method": "FIXED", "reorder_point": 2, "reorder_amount": 8, "reorder_target": 10, "deleted_at": null, "version": 23},
+            {"id": "inventory-0003", "outlet_id": "outlet-0002", "product_id": "product-0003", "current_inventory_level": 1, "quantity_to_procure": 5, "average_cost": 4.125, "reorder_method": "MIN_MAX", "reorder_point": 3, "reorder_amount": 9, "reorder_target": 10, "deleted_at": null, "version": 24}
+          ],
+          "24": []
+        }
+      },
+      "inventory_levels": {
+        "pages": {
+          "0": [
+            {"location_id": "outlet-0001", "product_id": "product-0001", "root_product_id": "product-0001", "name": "Coffee", "current_inventory_level": 9, "quantity_to_procure": 0, "average_cost": 10.250, "total_cost": 92.25},
+            {"location_id": "outlet-0001", "product_id": "product-0002", "root_product_id": "product-0002", "name": "Tea", "current_inventory_level": 2.5, "quantity_to_procure": 1.5, "average_cost": 7.333333333, "total_cost": 18.333333333}
+          ],
+          "2": [
+            {"location_id": "outlet-0002", "product_id": "product-0001", "root_product_id": "product-0001", "name": "Coffee", "current_inventory_level": 6, "quantity_to_procure": 0, "average_cost": 10.125, "total_cost": 60.75}
+          ],
+          "3": []
+        }
+      },
+      "fulfillments": {
+        "pages": {
+          "1": {"data": [
+            {"id": "1947700198720344064", "outlet_id": "outlet-0001", "sale_id": "sale-0001", "type": "PICKUP", "state": "FULFILLED", "user_ids": [], "note": "", "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-02T00:00:00Z", "version": 2, "line_items": []},
+            {"id": "1947700198720344065", "outlet_id": "outlet-0001", "sale_id": "sale-0002", "type": "DISPATCH", "state": "PACKED", "user_ids": [], "note": "", "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-01T00:00:00Z", "version": 2, "line_items": []}
+          ]},
+          "2": {"data": [
+            {"id": "1947700198720344066", "outlet_id": "outlet-0002", "sale_id": "sale-0003", "type": "PICKUP", "state": "FULFILLED", "user_ids": [], "note": "", "created_at": "2026-07-01T00:00:00Z", "updated_at": "2026-07-01T00:00:00Z", "version": 3, "line_items": []}
+          ]},
+          "3": {"data": []}
+        }
+      },
+      "product_categories": {
+        "pages": {
+          "__start__": {"data": {"categories": [
+            {"id": "category-0001", "name": "Drinks", "leaf_category": false, "parent_category_id": null, "root_category_id": "category-0001", "category_path": []},
+            {"id": "category-0002", "name": "Hot drinks", "leaf_category": true, "parent_category_id": "category-0001", "root_category_id": "category-0001", "category_path": []}
+          ]}, "page_info": {"has_next": true, "last_seen": "category-cursor-1"}},
+          "category-cursor-1": {"data": {"categories": [
+            {"id": "category-0003", "name": "Food", "leaf_category": true, "parent_category_id": null, "root_category_id": "category-0003", "category_path": []}
+          ]}, "page_info": {"has_next": false}}
+        }
+      },
+      "quotes": {
+        "pages": {
+          "9223372036854775001": {"Quotes": [
+            {"id": "9223372036854775002", "status": "CREATED", "short_code": "Q3", "grand_total": 22.22, "total_price": 20.20, "total_tax": 2.02, "loyalty": 0, "created_at": "2026-07-02T00:02:00Z", "updated_at": "2026-07-02T00:02:01Z", "expired_at": "2026-08-02T00:00:00Z", "deleted_at": null, "products": [], "sales_ids": []}
+          ], "HasNext": false, "TotalCount": 3}
+        }
+      },
+      "fulfillment_history": {
+        "pages": {
+          "__start__": {"data": [
+            {"sale_line_item_id": "line-0001", "product_id": "product-0001", "event_type": "CREATED", "quantity_delta": "1", "picked_quantity_delta": "0", "packed_quantity_delta": "0", "fulfilled_delta": "0", "created_at": "2026-07-01T00:00:00Z"},
+            {"sale_line_item_id": "line-0001", "product_id": "product-0001", "event_type": "PICKED", "quantity_delta": "0", "picked_quantity_delta": "1", "packed_quantity_delta": "0", "fulfilled_delta": "0", "created_at": "2026-07-01T00:01:00Z"}
+          ], "next_cursor": "history-cursor-1"},
+          "history-cursor-1": {"data": [
+            {"sale_line_item_id": "line-0001", "product_id": "product-0001", "event_type": "FULFILLED", "quantity_delta": "0", "picked_quantity_delta": "0", "packed_quantity_delta": "0", "fulfilled_delta": "1", "created_at": "2026-07-01T00:02:00Z"}
+          ], "next_cursor": ""}
+        }
+      }
+    }
+  }
+}
+

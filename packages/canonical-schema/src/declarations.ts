@@ -81,6 +81,18 @@ export const factDeclarations = Object.freeze([
     refundBehaviour: "subtract", voidBehaviour: "exclude", reversalBehaviour: "event_link",
   },
   {
+    id: "commerce_refund", table: "core.commerce_refund", grain: "one money-level payment refund", primaryKey: ["tenant_id", "id"],
+    relationships: [
+      { dimension: "location", foreignKey: "location_id", cardinality: "many_to_one", nullable: false },
+      { dimension: "worker", foreignKey: "worker_id", cardinality: "many_to_one", nullable: true },
+    ],
+    additiveFields: {
+      refund_amount_inc_tax: "additive", tax_amount: "additive", refund_amount_ex_tax: "additive",
+    },
+    timeRoles: ["refunded_at", "business_date"], defaultTimeRole: "refunded_at",
+    refundBehaviour: "subtract", voidBehaviour: "exclude", reversalBehaviour: "event_link",
+  },
+  {
     id: "commerce_refund_line", table: "core.commerce_refund_line", grain: "one refund allocation linked to one original order line", primaryKey: ["tenant_id", "id"],
     relationships: [
       { dimension: "location", foreignKey: "location_id", cardinality: "many_to_one", nullable: false },
@@ -90,6 +102,13 @@ export const factDeclarations = Object.freeze([
     additiveFields: { quantity: "additive", refund_amount_inc_tax: "additive", tax_amount: "additive", refund_amount_ex_tax: "additive", total_cost_reversed: "additive" },
     timeRoles: ["refunded_at", "business_date"], defaultTimeRole: "refunded_at",
     refundBehaviour: "subtract", voidBehaviour: "not_applicable", reversalBehaviour: "event_link",
+  },
+  {
+    id: "commerce_payment_fee", table: "core.commerce_payment_fee", grain: "one processing-fee assessment or adjustment", primaryKey: ["tenant_id", "id"],
+    relationships: [],
+    additiveFields: { amount: "additive" },
+    timeRoles: ["effective_at", "business_date"], defaultTimeRole: "effective_at",
+    refundBehaviour: "not_applicable", voidBehaviour: "not_applicable", reversalBehaviour: "signed_amount",
   },
   {
     id: "inventory_movement", table: "core.inventory_movement", grain: "one stock quantity-changing event", primaryKey: ["tenant_id", "id"],
@@ -158,6 +177,22 @@ export const factDeclarations = Object.freeze([
     additiveFields: { amount: "additive", tax_amount: "additive" },
     timeRoles: ["transaction_at", "posted_at", "business_date"], defaultTimeRole: "transaction_at",
     refundBehaviour: "not_applicable", voidBehaviour: "exclude", reversalBehaviour: "signed_amount",
+  },
+  {
+    id: "finance_settlement", table: "core.finance_settlement", grain: "one provider payout or settlement", primaryKey: ["tenant_id", "id"],
+    relationships: [
+      { dimension: "location", foreignKey: "location_id", cardinality: "many_to_one", nullable: true },
+    ],
+    additiveFields: { gross_amount: "additive", fee_amount: "additive", net_amount: "additive" },
+    timeRoles: ["initiated_at", "settled_at", "business_date"], defaultTimeRole: "settled_at",
+    refundBehaviour: "not_applicable", voidBehaviour: "not_applicable", reversalBehaviour: "signed_amount",
+  },
+  {
+    id: "finance_settlement_line", table: "core.finance_settlement_line", grain: "one itemized component of one provider settlement", primaryKey: ["tenant_id", "id"],
+    relationships: [],
+    additiveFields: { amount: "additive", fee_amount: "additive" },
+    timeRoles: ["effective_at", "business_date"], defaultTimeRole: "effective_at",
+    refundBehaviour: "subtract", voidBehaviour: "not_applicable", reversalBehaviour: "signed_amount",
   },
   {
     id: "workforce_shift", table: "core.workforce_shift", grain: "one planned work interval", primaryKey: ["tenant_id", "id"],

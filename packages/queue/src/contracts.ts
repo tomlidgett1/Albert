@@ -92,7 +92,7 @@ type SyncJobBase = Readonly<{
   type: SyncJobType;
   tenantId: string;
   connectionId: string;
-  connectorId: "lightspeed-r" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
+  connectorId: "lightspeed-r" | "lightspeed-x" | "xero" | "deputy" | "square" | "shopify" | "stripe" | "momence" | "meta-ads" | "google-ads";
   externalAccountReference: string;
   /** Fences every job and cursor to one immutable OAuth/connection epoch. */
   connectionGeneration: number;
@@ -209,7 +209,7 @@ export interface SyncOrchestrator {
 }
 
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
-const CONNECTORS = new Set(["lightspeed-r", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]);
+const CONNECTORS = new Set(["lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

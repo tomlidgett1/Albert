@@ -1,0 +1,42 @@
+views:
+  - name: square_product_sales_analytics
+    title: Square product sales analytics
+    description: >
+      Completed Square order-line performance by item, variation, SKU, category
+      and store: units, gross line sales, final line value, discounts and tax.
+    meta:
+      ai_context: >
+        Use this for products/items/categories/SKUs and menu mix. Use completed_at
+        as business time. Gift-card load lines are excluded from sales measures.
+        total_line_value includes line tax and apportioned adjustments. This view
+        does not subtract itemised return-line quantity; use Square sales/refunds
+        for headline net revenue and disclose this on return-sensitive item analysis.
+    cubes:
+      - join_path: square_order_lines
+        includes:
+          - tenant_id
+          - item_name
+          - variation_name
+          - category_name
+          - sku
+          - upc
+          - item_type
+          - note
+          - quantity
+          - currency
+          - order_state
+          - completed_at
+          - line_items
+          - units_sold
+          - gross_line_sales
+          - total_line_value
+          - line_discounts
+          - line_tax
+      - join_path: square_order_lines.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]
+    folders:
+      - { name: Product, includes: [item_name, variation_name, category_name, sku, upc, item_type] }
+      - { name: Performance, includes: [units_sold, gross_line_sales, total_line_value, line_discounts, line_tax, line_items] }
+      - { name: Store and time, includes: [completed_at, square_locations_name, square_locations_timezone, square_locations_region] }
+

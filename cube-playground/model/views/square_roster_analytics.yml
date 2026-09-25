@@ -1,0 +1,26 @@
+views:
+  - name: square_roster_analytics
+    title: Square roster analytics
+    description: Published Square scheduled shifts - the planned roster by team member, location and day, with rostered hours.
+    meta:
+      ai_context: >
+        Use for roster questions: who is scheduled to work, this week's roster,
+        rostered/planned hours and upcoming coverage. starts_at/ends_at are the
+        published roster times. This is planned time, not time worked - actual
+        worked hours and labour cost live in square_workforce_analytics.
+    cubes:
+      - join_path: square_scheduled_shifts
+        includes:
+          - tenant_id
+          - shift_notes
+          - starts_at
+          - ends_at
+          - scheduled_shifts
+          - rostered_hours
+          - rostered_team_members
+      - join_path: square_scheduled_shifts.square_team_members
+        prefix: true
+        includes: [display_name, status]
+      - join_path: square_scheduled_shifts.square_locations
+        prefix: true
+        includes: [name, timezone]

@@ -1,0 +1,23 @@
+views:
+  - name: stripe_payouts_analytics
+    title: Stripe payouts analytics
+    description: Stripe Payouts to the merchant bank, with arrival date and status.
+    meta:
+      ai_context: >
+        Use payout_amount over created or arrival_date. paid is deposited.
+        Balance-transaction detail of what made up a payout is
+        stripe_balance_analytics via payout links.
+    cubes:
+      - join_path: stripe_payouts
+        includes:
+          - tenant_id
+          - status
+          - type
+          - method
+          - currency
+          - automatic
+          - created
+          - arrival_date
+          - payout_count
+          - paid_payouts
+          - payout_amount

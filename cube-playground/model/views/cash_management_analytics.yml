@@ -1,0 +1,150 @@
+views:
+  - name: cash_management_analytics
+    title: Cash management analytics
+    description: >
+      The till / cash-handling surface: register count sessions, expected vs
+      counted amounts per tender (cash over/short), withdrawals from the
+      drawer (banking drops, payouts) and the current expected drawer
+      position. Unprefixed members are count-session grain; amounts_* are
+      per-tender reconciliation rows; withdrawals_* are withdrawal events;
+      drawer_* is the live drawer snapshot.
+    meta:
+      ai_context: >
+        Use this view for "till", "cash up", "register balance", "over/short",
+        "cash variance", "banking drops" and "petty cash". Cash over/short =
+        amounts_cash_variance_total (the Cash tender only; negative = short)
+        with amounts_cash_short_counts / amounts_cash_over_counts.
+        amounts_variance_total sums EVERY tender row including Lightspeed's
+        internal Adjustment tender, which dominates it for this tenant (-$6,100
+        of -$6,733 over 90 days), so never present it as cash over/short; group
+        by payment_types_name or amounts_tender_type when a per-tender split is
+        wanted. Default time dimension: counted_at for reconciliations,
+        withdrawals_occurred_at for withdrawals. The drawer_* members are a live
+        snapshot with no time dimension. Sales revenue and payment mix belong in
+        sales_analytics / payments_analytics, not here.
+
+    cubes:
+      # registers owns the view's tenant_id: every grain here (counts,
+      # per-tender amounts, withdrawals, live drawer) reaches registers via a
+      # declared many_to_one chain, so the injected tenant pin always resolves.
+      - join_path: registers
+        includes:
+          - tenant_id
+          - name: name
+            alias: registers_name
+      - join_path: registers.shops
+        prefix: true
+        includes:
+          - name
+      - join_path: register_counts
+        includes:
+          - register_count_id
+          - counted_at
+          - opened_at
+          - notes
+          - count_sessions
+      - join_path: employees
+        prefix: true
+        includes:
+          - full_name
+      - join_path: payment_types
+        prefix: true
+        includes:
+          - name
+      # Aliased to amounts_* so view-qualified SQL aliases stay under
+      # Postgres's 63-character identifier limit.
+      - join_path: register_count_amounts
+        includes:
+          - name: expected_amount
+            alias: amounts_expected_amount
+          - name: counted_amount
+            alias: amounts_counted_amount
+          - name: variance_amount
+            alias: amounts_variance_amount
+          - name: tender_type
+            alias: amounts_tender_type
+          - name: amount_line_count
+            alias: amounts_line_count
+          - name: expected_total
+            alias: amounts_expected_total
+          - name: counted_total
+            alias: amounts_counted_total
+          - name: variance_total
+            alias: amounts_variance_total
+          - name: cash_variance_total
+            alias: amounts_cash_variance_total
+          - name: cash_short_counts
+            alias: amounts_cash_short_counts
+          - name: cash_over_counts
+            alias: amounts_cash_over_counts
+          - name: short_counts
+            alias: amounts_short_counts
+          - name: over_counts
+            alias: amounts_over_counts
+          - name: short_lines
+            alias: amounts_short_lines
+          - name: balanced_lines
+            alias: amounts_balanced_lines
+      - join_path: register_withdraws
+        includes:
+          - name: amount
+            alias: withdrawals_amount
+          - name: occurred_at
+            alias: withdrawals_occurred_at
+          - name: notes
+            alias: withdrawals_notes
+          - name: withdrawal_count
+            alias: withdrawals_count
+          - name: amount_withdrawn
+            alias: withdrawals_amount_withdrawn
+      - join_path: register_calculated
+        includes:
+          - name: payments_taken
+            alias: drawer_payments_taken
+          - name: money_added
+            alias: drawer_money_added
+          - name: money_withdrawn
+            alias: drawer_money_withdrawn
+          - name: expected_in_drawer
+            alias: drawer_expected_in_drawer
+          - name: payments_taken_total
+            alias: drawer_payments_taken_total
+          - name: money_added_total
+            alias: drawer_money_added_total
+          - name: money_withdrawn_total
+            alias: drawer_money_withdrawn_total
+
+    folders:
+      - name: Till reconciliation
+        includes:
+          - count_sessions
+          - counted_at
+          - opened_at
+          - amounts_cash_variance_total
+          - amounts_cash_short_counts
+          - amounts_cash_over_counts
+          - amounts_expected_total
+          - amounts_counted_total
+          - amounts_variance_total
+          - amounts_short_counts
+          - amounts_over_counts
+          - amounts_variance_amount
+          - amounts_tender_type
+      - name: Withdrawals and drops
+        includes:
+          - withdrawals_count
+          - withdrawals_amount_withdrawn
+          - withdrawals_occurred_at
+          - withdrawals_notes
+      - name: Current drawer position
+        includes:
+          - drawer_expected_in_drawer
+          - drawer_payments_taken_total
+          - drawer_money_added_total
+          - drawer_money_withdrawn_total
+      - name: Register, store, staff and tender
+        includes:
+          - registers_name
+          - shops_name
+          - employees_full_name
+          - payment_types_name

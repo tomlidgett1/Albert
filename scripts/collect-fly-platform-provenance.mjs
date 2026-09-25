@@ -56,9 +56,9 @@ function candidateAppNames(rawApps, machinesByApp, candidateSha) {
     matches.push({ name, service: [...identities][0] });
   }
   assert.equal(matches.length, FLY_RUNTIME_CONTRACTS.length,
-    "Fly token must reveal exactly six candidate runtime applications.");
+    `Fly token must reveal exactly ${FLY_RUNTIME_CONTRACTS.length} candidate runtime applications.`);
   assert.deepEqual(matches.map(({ service }) => service).sort(), [...runtimeNames].sort(),
-    "Fly token does not reveal the exact six candidate runtime identities.");
+    "Fly token does not reveal the exact candidate runtime identities.");
   assert.equal(new Set(matches.map(({ name }) => name)).size, matches.length,
     "Fly candidate applications are not distinct.");
   return matches;

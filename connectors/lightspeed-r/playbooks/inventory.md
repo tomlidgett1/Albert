@@ -12,24 +12,22 @@ unanswerable from it. Key columns: `item_id`, `shop_id`, `qoh`,
 `archived` (not `item_archived`), `time_stamp`. Whole-business stock uses
 `shop_id = 0`; never sum `shop_id = 0` with per-shop rows.
 
-**Names and costs are NOT on the stock row at this shop.** Verified live:
-`ls_item_shops.description` and `ls_item_shops.avg_cost` are NULL on every row.
-Always join `ls_items` on `item_id` for the name (`i.description`) and the cost
+**Use the catalogue as the authoritative source for stock names and costs.** Projected
+fields on `ls_item_shops` may be unpopulated. Join `ls_items` on `item_id` for the name (`i.description`) and the cost
 (`COALESCE(i.avg_cost, i.default_cost)`) — valuing stock from the snapshot's own
 `avg_cost` prices the whole shop at $0 and the report looks plausible but says
 nothing.
 
-**Movement — `ls_inventory_logs`.** The only dated stock ledger (~127k rows). Reach for
+**Movement — `ls_inventory_logs`.** The dated stock ledger. Reach for
 it for "where did the stock go", shrinkage, receiving history, and **aged inventory**
 (days since last quantity movement, via `ls_inventory_logs.create_time`). Never scan it
 unfiltered — always bound by `item_id`, `shop_id` or a `create_time` range.
 
 ## Inventory traps
 
-- **Movement dates cluster on system events, so age alone cannot rank items.**
-  Verified live: 360 on-hand items share a last movement of 29 September 2025 and
-  another 306 share 30 June 2026 — bulk imports and stocktakes, not sales. Sorting
-  stale stock by days-since-movement produces mass ties broken arbitrarily, which
+- **Movement dates can cluster on system events, so age alone cannot rank items.**
+  Bulk imports and stocktakes can create mass ties. Sorting stale stock by
+  days-since-movement then breaks those ties arbitrarily, which
   surfaces $4 tubes ahead of $5,000 bikes. Rank stale stock by **value tied up**
   (`qoh * unit_cost DESC` within the stale window); days-since-movement is a
   column in the output, not the sort key. A cluster of identical dates in a result
@@ -39,8 +37,7 @@ unfiltered — always bound by `item_id`, `shop_id` or a `create_time` range.
   out of value rankings (they sort as $0 anyway) and mention them separately when
   they are old — an uncosted stale item is still a stale item.
 
-- **`ls_item_shops.shop_id = 0` is an all-shops rollup, not a shop.** Verified: 17,005
-  rollup rows and 17,005 real shop rows. Whole business → `shop_id = 0`. Per shop →
+- **`ls_item_shops.shop_id = 0` is an all-shops rollup, not a shop.** Whole business → `shop_id = 0`. Per shop →
   `shop_id > 0`. Never both in one aggregate.
 - **Stock value** is `qoh * COALESCE(i.avg_cost, i.default_cost)` (cost basis, from
   the joined `ls_items` row — see above). There is no staged selling price

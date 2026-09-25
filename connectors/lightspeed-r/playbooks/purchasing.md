@@ -2,8 +2,7 @@
 
 Primary tables: `ls_purchase_orders` · `ls_purchase_order_lines` · `ls_vendors` ·
 `ls_item_vendor_nums` (supplier SKUs and buy costs) · `ls_catalog_vendor_items`
-(supplier catalogues). `ls_order_shipments` / `_items` and `ls_vendor_returns` exist
-but are **empty at this shop**.
+(supplier catalogues). Verify tenant coverage before using shipment or return tables.
 
 ## Purchasing rules
 
@@ -24,9 +23,9 @@ but are **empty at this shop**.
 - **Vendor name** is `ls_purchase_orders.name` → prefer joining `ls_vendors` via
   `vendor_id` for the canonical vendor row. Vendors are suppliers;
   `ls_manufacturers` are brands. An item has one manufacturer, many possible vendors.
-- **Receiving history** at this shop is on `ls_inventory_logs` (the shipments tables
-  never synced) — a "what arrived last week" answer uses positive-quantity log entries,
-  disclosed as movement-based.
+- **Receiving history** may come from shipment tables or, when those are not populated,
+  positive-quantity entries in `ls_inventory_logs`. Verify coverage and disclose a
+  movement-based fallback.
 - **`ls_catalog_vendor_items`** is what suppliers *could* ship — not owned, not on
   order, possibly foreign currency. Never mix it into PO or stock figures.
 
@@ -58,8 +57,7 @@ GROUP BY 1, 2, 3, 4
 ORDER BY po.ordered_date DESC NULLS LAST;
 ```
 
-**LEFT JOIN the lines, never inner-join:** verified live, the only open POs at this
-shop are three 2018–19 drafts whose lines were never staged — an inner join silently
-drops them and "what's on order" comes back empty. When the open list is old drafts
-like these, say the shop has nothing currently on order and name the stale drafts,
-rather than reporting zero.
+**LEFT JOIN the lines, never inner-join:** headers can exist without staged lines, and
+an inner join silently drops them. If the open list consists only of old drafts, say
+there is nothing evidently current on order and name the stale drafts rather than
+reporting a bare zero.

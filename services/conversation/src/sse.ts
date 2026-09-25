@@ -73,13 +73,23 @@ export type LiveTraceSseOptions = Readonly<{
   conversationId: string;
   turnId: string;
   signal?: AbortSignal;
+  /**
+   * Keep the server-owned turn and trace persistence alive when the browser
+   * stops consuming the SSE body. Delivery becomes a no-op; the bounded
+   * runtime continues until its own terminal state or deadline.
+   */
+  continueOnClientDisconnect?: boolean;
   run: (stream: LiveTraceStream, signal: AbortSignal) => Promise<void>;
 }>;
 
 /** Streams product trace events as they are persisted by the live runtime. */
 export function createLiveTraceSseResponse(options: LiveTraceSseOptions): Response {
   const runAbort = new AbortController();
-  const abortRun = () => runAbort.abort(options.signal?.reason);
+  let clientDisconnected = false;
+  const abortRun = () => {
+    clientDisconnected = true;
+    if (!options.continueOnClientDisconnect) runAbort.abort(options.signal?.reason);
+  };
   options.signal?.addEventListener("abort", abortRun, { once: true });
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -87,21 +97,23 @@ export function createLiveTraceSseResponse(options: LiveTraceSseOptions): Respon
       const close = () => {
         if (closed) return;
         closed = true;
-        controller.close();
+        try { controller.close(); } catch { /* the browser already released the body */ }
       };
       const heartbeat = setInterval(() => {
-        if (!closed && !runAbort.signal.aborted) controller.enqueue(encoder.encode(": keepalive\n\n"));
+        if (!closed && !clientDisconnected && !runAbort.signal.aborted) {
+          controller.enqueue(encoder.encode(": keepalive\n\n"));
+        }
       }, 15_000);
       const abort = () => close();
       runAbort.signal.addEventListener("abort", abort, { once: true });
       const stream: LiveTraceStream = Object.freeze({
         emit(event) {
-          if (!closed && !runAbort.signal.aborted) {
+          if (!closed && !clientDisconnected && !runAbort.signal.aborted) {
             controller.enqueue(encoder.encode(encodeTraceSseEvent(event)));
           }
         },
         emitConversationTitle(title) {
-          if (!closed && !runAbort.signal.aborted) {
+          if (!closed && !clientDisconnected && !runAbort.signal.aborted) {
             controller.enqueue(encoder.encode(encodeConversationTitleSseEvent({
               conversationId: options.conversationId,
               title,
@@ -122,7 +134,8 @@ export function createLiveTraceSseResponse(options: LiveTraceSseOptions): Respon
       });
     },
     cancel(reason) {
-      runAbort.abort(reason);
+      clientDisconnected = true;
+      if (!options.continueOnClientDisconnect) runAbort.abort(reason);
       options.signal?.removeEventListener("abort", abortRun);
     },
   });

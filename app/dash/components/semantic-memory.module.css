@@ -1,0 +1,73 @@
+.lede {
+  margin: 8px 0 0;
+  max-width: 62ch;
+  color: var(--dash-text-muted);
+  font-size: calc(13px * var(--text-scale));
+  line-height: 1.45;
+}
+.muted { color: var(--dash-text-muted); }
+.error, .notice {
+  width: min(100%, 720px);
+  margin: 0 auto 16px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: calc(13px * var(--text-scale));
+}
+.error { background: light-dark(rgba(220, 38, 38, 0.08), rgba(248, 113, 113, 0.14)); color: light-dark(#991b1b, #fecaca); }
+.notice { background: light-dark(rgba(22, 163, 74, 0.08), rgba(74, 222, 128, 0.14)); color: light-dark(#166534, #bbf7d0); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.primary { font-weight: 600; }
+.form { padding: 14px 16px; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field span { color: var(--dash-text-muted); font-size: calc(12px * var(--text-scale)); }
+.field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.14));
+  background: var(--dash-surface);
+  color: var(--dash-text-heading);
+  font: inherit;
+  font-size: calc(13px * var(--text-scale));
+  line-height: 1.4;
+}
+.rule { padding: 12px 0; display: flex; flex-direction: column; gap: 6px; }
+.rule + .rule { border-top: 1px solid light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.07)); }
+.ruleHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.term { color: var(--dash-text-heading); font-size: calc(13px * var(--text-scale)); font-weight: 600; }
+.meaning { margin: 0; color: var(--dash-text); font-size: calc(13px * var(--text-scale)); line-height: 1.5; }
+.counter { margin: 0; color: var(--dash-text-muted); font-size: calc(12px * var(--text-scale)); }
+.metaLine { margin: 0; color: var(--dash-text-muted); font-size: calc(11.5px * var(--text-scale)); }
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: calc(11px * var(--text-scale));
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.badgeConfirmed { background: light-dark(rgba(22, 163, 74, 0.1), rgba(74, 222, 128, 0.16)); color: light-dark(#166534, #bbf7d0); }
+.badgeProposed { background: light-dark(rgba(217, 119, 6, 0.1), rgba(251, 191, 36, 0.16)); color: light-dark(#92400e, #fde68a); }
+.badgeRetired { background: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.08)); color: var(--dash-text-muted); }
+.retired .term, .retired .meaning { text-decoration: line-through; opacity: 0.7; }
+.ruleActions { display: flex; gap: 6px; margin-left: auto; }
+.ruleActions button {
+  padding: 3px 10px;
+  border-radius: 8px;
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.14));
+  background: var(--dash-surface);
+  color: var(--dash-text);
+  font-size: calc(12px * var(--text-scale));
+  cursor: pointer;
+}
+.ruleActions button:disabled { opacity: 0.5; cursor: default; }
+.binding {
+  display: inline-block;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(11.5px * var(--text-scale));
+  color: var(--dash-text-muted);
+  background: light-dark(rgba(0, 0, 0, 0.045), rgba(255, 255, 255, 0.07));
+  border-radius: 6px;
+  padding: 1px 6px;
+}

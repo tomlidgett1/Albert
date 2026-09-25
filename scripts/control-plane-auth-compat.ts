@@ -48,6 +48,26 @@ const LEGACY_STORAGE_COMPATIBILITY = new Map<string, StorageCompatibilitySpec>([
   })],
 ]);
 
+const AUTHORIZATION_CONNECTOR_BRIDGE = Object.freeze({
+  id: "0085_m1_authorization_only_connector_providers.sql",
+  checksum: "570efd8ac294890cb9808d1ab5b70164e412aeb4bae5ea54c30c3e554d8462ba",
+});
+
+const LIGHTSPEED_X_VENDOR_ATTESTOR_BRIDGE = Object.freeze({
+  id: "0124_m1_lightspeed_x_connector_admission.sql",
+  checksum: "729fcb66c7bbbe66a3ee7b2744eea6fefbbe1e3f8ea9158aa31d036e65efa76b",
+});
+
+const SHOPIFY_CONTINUITY_OWNER_COMPATIBILITY = Object.freeze({
+  id: "0135_m2_shopify_deletion_continuity_block.sql",
+  checksum: "a553066abf7756abb73ae5b29e7826bc736886039f07ef7645bb6c5a2f506445",
+});
+
+const PROTECTED_DOGFOOD_ACL_COMPATIBILITY = Object.freeze({
+  id: "0091_m3_spec_driven_stream_expectations.sql",
+  checksum: "e5fb7f265ccebc5764b804fb8cb75a34dbc988b7c0397730bdb97786c027e692",
+});
+
 const AUTH_USER_REFERENCE = /\s+REFERENCES\s+auth\.users\s*\(\s*id\s*\)\s+ON\s+DELETE\s+(?:SET\s+NULL|CASCADE|RESTRICT)/giu;
 const AUTH_USER_DIRECTORY_JOIN = /JOIN\s+auth\.users\s+AS\s+auth_user\s+ON\s+auth_user\.id\s*=\s*member\.user_id/giu;
 const AUTH_USER_EMAIL_LOOKUP = /SELECT\s+id\s+INTO\s+invited_user\s+FROM\s+auth\.users\s+WHERE\s+lower\(email\)\s*=\s*normalized_email\s+AND\s+email_confirmed_at\s+IS\s+NOT\s+NULL\s+LIMIT\s+1;/giu;
@@ -91,6 +111,70 @@ function assertCount(id: string, dependency: string, actual: number, expected: n
 export function controlPlaneMigrationBody(
   migration: MigrationForAuthCompatibility,
 ): string {
+  if (migration.id === AUTHORIZATION_CONNECTOR_BRIDGE.id) {
+    if (migration.checksum !== AUTHORIZATION_CONNECTOR_BRIDGE.checksum)
+      throw new Error(
+        `${migration.id} changed after its administrator-ownership compatibility review.`,
+      );
+    return "SELECT extensions.albert_install_authorization_connector_providers();";
+  }
+  if (migration.id === LIGHTSPEED_X_VENDOR_ATTESTOR_BRIDGE.id) {
+    if (migration.checksum !== LIGHTSPEED_X_VENDOR_ATTESTOR_BRIDGE.checksum)
+      throw new Error(
+        `${migration.id} changed after its administrator-ownership compatibility review.`,
+      );
+    const challenges = replaceAndCount(
+      migration.body,
+      /ALTER TABLE control_plane\.live_vendor_attestation_challenges[\s\S]*?\n\s*\);/u,
+      "SELECT extensions.albert_install_lightspeed_x_vendor_attestor_provider();",
+    );
+    const results = replaceAndCount(
+      challenges.value,
+      /ALTER TABLE control_plane\.live_vendor_attestation_results[\s\S]*?\n\s*\);/u,
+      "-- Administrator bridge widened live_vendor_attestation_results;",
+    );
+    assertCount(migration.id, "administrator-owned challenge provider check", challenges.count, 1);
+    assertCount(migration.id, "administrator-owned result provider check", results.count, 1);
+    return results.value;
+  }
+  if (migration.id === SHOPIFY_CONTINUITY_OWNER_COMPATIBILITY.id) {
+    if (migration.checksum !== SHOPIFY_CONTINUITY_OWNER_COMPATIBILITY.checksum)
+      throw new Error(
+        `${migration.id} changed after its control-plane owner compatibility review.`,
+      );
+    const owner = replaceAndCount(
+      migration.body,
+      /TO albert_migration_owner;/u,
+      "TO albert_control_migration_owner;",
+    );
+    assertCount(migration.id, "wrong-cell migration-owner grant", owner.count, 1);
+    return owner.value;
+  }
+  if (migration.id === PROTECTED_DOGFOOD_ACL_COMPATIBILITY.id) {
+    if (migration.checksum !== PROTECTED_DOGFOOD_ACL_COMPATIBILITY.checksum)
+      throw new Error(
+        `${migration.id} changed after its protected-dogfood ACL compatibility review.`,
+      );
+
+    // Administrator upgrade 0010 has already transferred the public
+    // acceptance collector to postgres and established this exact deny-all /
+    // operator-only ACL. Historical migration 0091 repeats those two ACL
+    // statements, which a deliberately non-owner migration role cannot issue.
+    // Remove only the checksum-pinned duplicates; the rest of 0091 still runs.
+    const revoke = replaceAndCount(
+      migration.body,
+      /,\s*control_plane\.capture_protected_dogfood_acceptance\(\s*text\s*,\s*text\s*,\s*text\s*,\s*jsonb\s*,\s*text\s*,\s*integer\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*\)\s*(?=FROM PUBLIC)/giu,
+      "\n",
+    );
+    const grant = replaceAndCount(
+      revoke.value,
+      /GRANT EXECUTE ON FUNCTION control_plane\.capture_protected_dogfood_acceptance\(\s*text\s*,\s*text\s*,\s*text\s*,\s*jsonb\s*,\s*text\s*,\s*integer\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*,\s*text\s*\) TO albert_operator_diagnostic_control\s*;/giu,
+      "-- ACL already fixed by administrator upgrade 0010;",
+    );
+    assertCount(migration.id, "administrator-owned collector revoke", revoke.count, 1);
+    assertCount(migration.id, "administrator-owned collector grant", grant.count, 1);
+    return grant.value;
+  }
   const specification = LEGACY_AUTH_COMPATIBILITY.get(migration.id);
   const storageSpecification = LEGACY_STORAGE_COMPATIBILITY.get(migration.id);
   if (!specification && DIRECT_AUTH_DEPENDENCY.test(migration.body)) {

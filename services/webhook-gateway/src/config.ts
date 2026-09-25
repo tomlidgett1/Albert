@@ -14,6 +14,7 @@ export type WebhookGatewayConfig = Readonly<{
   controlPlaneDatabaseUrl: string;
   rawStorage: RawStorageS3Config;
   xeroWebhookSigningKey: string;
+  shopifyClientSecret: string;
   xeroWebhookInboxKeyring: XeroWebhookInboxKeyring;
   xeroWebhookEncryptedRetentionDays: number;
   xeroWebhookMetadataRetentionDays: number;
@@ -97,6 +98,11 @@ export function loadWebhookGatewayConfig(
     throw new Error("Xero inbox and Deputy webhook material must use distinct encryption keys.");
   }
   const xeroWebhookSigningKey = required(source, "XERO_WEBHOOK_SIGNING_KEY");
+  const shopifyClientSecret = required(source, "SHOPIFY_CLIENT_SECRET");
+  if (shopifyClientSecret.length < 16 || shopifyClientSecret.length > 512 ||
+      /[\u0000-\u001f\u007f]/u.test(shopifyClientSecret)) {
+    throw new Error("SHOPIFY_CLIENT_SECRET is invalid.");
+  }
   const webhookAttestationKeyId = required(source, "WEBHOOK_ATTESTATION_KEY_ID");
   if (!/^[a-z][a-z0-9._-]{0,63}$/u.test(webhookAttestationKeyId)) {
     throw new Error("WEBHOOK_ATTESTATION_KEY_ID is invalid.");
@@ -112,6 +118,11 @@ export function loadWebhookGatewayConfig(
   }
   if (xeroInboxKeys.includes(xeroWebhookSigningKey)) {
     throw new Error("The Xero signing key and webhook inbox encryption key must be distinct.");
+  }
+  if (xeroInboxKeys.includes(shopifyClientSecret) || deputyKeys.has(shopifyClientSecret) ||
+      shopifyClientSecret === xeroWebhookSigningKey ||
+      shopifyClientSecret === webhookAttestationSecret) {
+    throw new Error("The Shopify client secret must be independent from webhook infrastructure keys.");
   }
   if (deputyKeys.has(xeroWebhookSigningKey)) {
     throw new Error("The Xero signing key and Deputy webhook encryption keys must be distinct.");
@@ -169,6 +180,7 @@ export function loadWebhookGatewayConfig(
       passwordEnvironmentName: "ALBERT_RAW_STORAGE_WEBHOOK_PASSWORD",
     }),
     xeroWebhookSigningKey,
+    shopifyClientSecret,
     xeroWebhookInboxKeyring,
     xeroWebhookEncryptedRetentionDays,
     xeroWebhookMetadataRetentionDays,

@@ -1,0 +1,20 @@
+views:
+  - name: square_cash_activity_analytics
+    title: Square cash drawer activity analytics
+    description: Cash payment/refund, paid-in, paid-out and other events returned for Square cash drawers.
+    meta:
+      ai_context: >
+        Use for drawer activity types and amounts over created_at. Square's event
+        object does not echo its parent shift or location identifier, so Albert
+        joins it through separately governed request parent_context while keeping
+        payload_json exact. Use the parent shift path for store/device grouping;
+        always group/filter currency before aggregating event_amount.
+    cubes:
+      - join_path: square_cash_drawer_events
+        includes: [tenant_id, event_type, description, currency, created_at, drawer_events, event_amount]
+      - join_path: square_cash_drawer_events.square_cash_drawer_shifts
+        prefix: true
+        includes: [state, description, device_name, opened_at, ended_at, closed_at]
+      - join_path: square_cash_drawer_events.square_cash_drawer_shifts.square_locations
+        prefix: true
+        includes: [name, business_name, timezone, country, region]

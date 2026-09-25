@@ -1,0 +1,23 @@
+views:
+  - name: stripe_refunds_analytics
+    title: Stripe refunds analytics
+    description: Stripe Refund objects by reason, status and charge. Succeeded refunds are completed money-out.
+    meta:
+      ai_context: >
+        Use refunded_amount over created. Status succeeded is completed.
+        Charge status stays on the original charge; do not net refunds into
+        stripe_payments_analytics in one query.
+    cubes:
+      - join_path: stripe_refunds
+        includes:
+          - tenant_id
+          - status
+          - reason
+          - currency
+          - created
+          - refund_count
+          - succeeded_refunds
+          - refunded_amount
+      - join_path: stripe_refunds.stripe_charges
+        prefix: true
+        includes: [status, description, created]

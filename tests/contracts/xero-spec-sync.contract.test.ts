@@ -10,6 +10,7 @@ import {
   projectRowFields,
   projectStreamRows,
   resolveFanOutIds,
+  resolveSyntheticValue,
   templatedParents,
   unwrapEnvelope,
 } from "../../connectors/xero/spec-sync.js";
@@ -331,4 +332,54 @@ test("a row with no vendor id prefers its declared key over its position", () =>
   });
   assert.ok(rows[0]!.sourceRecordId.includes("ViewAccounts"));
   assert.ok(rows[1]!.sourceRecordId.includes("DeleteDraftBill"));
+});
+
+test("synthetic columns resolve constants, request parameters and fan-out parents", () => {
+  // Left unresolved these are null, and where one is part of the declared key
+  // the rows collide — the four yearly 1099 passes overwrote each other.
+  const constant = column("settings_scope", "synthetic:constant 'AU_PAYROLL' — GET /Settings returns one record");
+  assert.equal(
+    resolveSyntheticValue(constant, null, {}),
+    "AU_PAYROLL",
+  );
+
+  const reportYear = column("report_year", "synthetic:the reportYear request parameter the scan issued for this fetch");
+  assert.equal(resolveSyntheticValue(reportYear, null, { reportYear: "2025" }), "2025");
+  assert.equal(resolveSyntheticValue(reportYear, null, {}), undefined,
+    "an unsupplied parameter must stay null rather than invent a value");
+
+  const parentId = column("parent_id", "synthetic:the {Guid} segment of the fan-out path — the parent record's id");
+  assert.equal(resolveSyntheticValue(parentId, null, { Guid: "inv-1", parentId: "inv-1" }), "inv-1");
+
+  const employee = column("employee_id", "synthetic:EmployeeID path parameter of GET /Employees/{EmployeeID}/PaymentMethods");
+  assert.equal(resolveSyntheticValue(employee, null, { EmployeeID: "emp-7" }), "emp-7");
+
+  const branch = column("term_scope", "synthetic:discriminator for which PaymentTerm branch this row materialises");
+  assert.equal(resolveSyntheticValue(branch, "Organisation.PaymentTerms.Bills", {}), "Bills");
+});
+
+test("a 1099 row carries the year the scan asked for, so yearly passes stay distinct", () => {
+  const table = tableOf({
+    id: "xero_1099_reports",
+    recordIdField: null,
+    primaryKey: ["report_year"],
+    sourceObjects: ["accounting:Report"],
+    source: { ...tableOf({ id: "x" }).source, endpointOp: "GET /Reports/TenNinetyNine", envelope: "Reports", arrayKey: "Reports" },
+    columns: [
+      column("report_year", "synthetic:the reportYear request parameter the scan issued for this fetch"),
+      column("report_name", "accounting:Report.ReportName"),
+    ],
+  });
+  const of = (year: string) => projectStreamRows({
+    table, leaderTable: table, resource: "Reports",
+    records: [{ ReportName: "1099 Report" }],
+    recordIdField: "",
+    synthetics: { reportYear: year },
+  })[0]!;
+  const a = of("2025");
+  const b = of("2024");
+  assert.equal(a.normalized?.fields.report_year, "2025");
+  assert.equal(b.normalized?.fields.report_year, "2024");
+  assert.notEqual(a.sourceRecordId, b.sourceRecordId,
+    "two filing years must not collapse onto one identity");
 });

@@ -1,0 +1,29 @@
+views:
+  - name: stripe_connect_analytics
+    title: Stripe Connect analytics
+    description: Stripe Connect application fees and transfers to connected accounts.
+    meta:
+      ai_context: >
+        Platform / Connect grain. Application fees are what the platform kept.
+        Transfers are money sent to connected accounts. Not the same as
+        merchant charges on a Standard account.
+    cubes:
+      - join_path: stripe_application_fees
+        includes:
+          - tenant_id
+          - currency
+          - created
+          - fee_count
+          - application_fee_amount
+          - application_fee_refunded
+      - join_path: stripe_transfers
+        prefix: true
+        includes:
+          - destination
+          - reversed
+          - created
+          - transfer_count
+          - transfer_amount
+      - join_path: stripe_accounts
+        prefix: true
+        includes: [business_profile_name, country, charges_enabled, payouts_enabled]

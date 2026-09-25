@@ -11,7 +11,7 @@ const vendorRelayClaimSchema = z.object({
   challengeId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
   challengeNonce: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   challengeNonceDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-  provider: z.enum(["lightspeed-r", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]),
+  provider: z.enum(["lightspeed-r", "lightspeed-x", "xero", "deputy", "square", "shopify", "stripe", "momence", "meta-ads", "google-ads"]),
   tenantId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
   connectionId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/u),
   connectionGeneration: z.coerce.number().int().positive().safe(),
@@ -277,6 +277,7 @@ function selectedAccount(
 ): string | null {
   const value = provider === "xero" ? metadata.xeroTenantId
     : provider === "lightspeed-r" ? metadata.lightspeedAccountId
+    : provider === "lightspeed-x" ? metadata.retailerId
     : metadata.endpoint;
   return typeof value === "string" ? value : null;
 }

@@ -6,14 +6,14 @@ Primary tables: `ls_employees` (+ roles/rights) · `ls_registers` ·
 
 ## Employee rules
 
-- **Names:** `first_name` + `last_name` (no `full_name` column). 9 active employees at
-  this shop, 15 rows including departed staff — filter `archived = false` for the
-  current roster, keep archived rows for historical attribution.
+- **Names:** `first_name` + `last_name` (no `full_name` column). Filter
+  `archived = false` for the current roster, but keep archived rows for historical
+  attribution.
 - **"Who sold the most"** is `ls_sales.employee_id` (who rang the ticket). Exclude
   `employee_id = 0` (unattributed), never invent a "House" employee.
-- **Wages, pay rates, hours cost do not exist** anywhere in this data.
-  `ls_employee_hours` is empty (no time clock at this shop), and there is no pay rate
-  field in the API at all. Say so; never approximate from `ls_shops.service_rate`.
+- **Wages and pay rates do not exist** in these Lightspeed tables. Hours may exist in
+  `ls_employee_hours`; first verify tenant coverage. Even when hours exist, labour cost
+  does not. Say so; never approximate it from `ls_shops.service_rate`.
 - **Void-abuse check:** `ls_sale_voids` records who voided what — compare its
   `employee_id` against the voided sale's own `employee_id`.
 
@@ -26,8 +26,8 @@ Primary tables: `ls_employees` (+ roles/rights) · `ls_registers` ·
   against a large expected figure — a huge apparent card shortage almost always means
   "not counted". Filter `actual <> 0` before ranking variances.
 - **Floats and payouts:** `ls_register_withdraws`.
-- **`ls_register_calculated`** (live drawer) is empty here — drawer questions use the
-  counts tables.
+- **`ls_register_calculated`** is a live drawer view. Verify tenant coverage; historical
+  drawer questions use the register-count tables.
 
 ## Worked shape
 
@@ -44,10 +44,12 @@ SELECT e.first_name || ' ' || e.last_name AS employee,
 FROM source_lightspeed.ls_sales s
 JOIN source_lightspeed.ls_employees e ON e.employee_id = s.employee_id
   AND e.mapping_version = (SELECT mv FROM pack) AND NOT e.tombstone
+JOIN source_lightspeed.ls_shops sh ON sh.shop_id = s.shop_id
+  AND sh.mapping_version = (SELECT mv FROM pack) AND NOT sh.tombstone
 WHERE s.mapping_version = (SELECT mv FROM pack) AND NOT s.tombstone
   AND s.completed AND NOT s.voided
   AND s.employee_id <> 0
-  AND s.complete_time >= date_trunc('month', now() AT TIME ZONE 'Australia/Sydney')
+  AND s.complete_time AT TIME ZONE sh.time_zone >= date_trunc('month', now() AT TIME ZONE sh.time_zone)
 GROUP BY 1
 ORDER BY sales_inc_gst DESC;
 ```

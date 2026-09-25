@@ -1,0 +1,1313 @@
+{
+ "Account": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Account": [
+   {
+    "accountID": 1,
+    "name": "name-2",
+    "link": "link-3",
+    "systemCustomerID": 4,
+    "status": "status-5",
+    "employeeCount": 6,
+    "employeeLimit": 7,
+    "uniqueSubscriptionIdentifier": "uniqueSubscriptionIdentifier-8",
+    "code": "code-9",
+    "symbol": "symbol-10",
+    "purchasingCurrencies": {
+     "purchasingCurrency": {
+      "accountID": 1,
+      "code": "code-2",
+      "symbol": "symbol-3",
+      "rate": "0.00"
+     }
+    }
+   }
+  ]
+ },
+ "CatalogVendorItem": {
+  "@attributes": {
+   "count": "1"
+  },
+  "CatalogVendorItem": [
+   {
+    "catalogVendorItemID": 1,
+    "catalogVendorID": 2,
+    "vendorNumber": "vendorNumber-3",
+    "manufacturerNumber": "manufacturerNumber-4",
+    "description": "description-5",
+    "category": "category-6",
+    "brand": "brand-7",
+    "model": "model-8",
+    "year": "year-9",
+    "upc": "upc-10",
+    "ean": "ean-11",
+    "ean2": "ean2-12",
+    "colorName": "colorName-13",
+    "sizeName": "sizeName-14",
+    "retailUnit": 15,
+    "unitOfMeasurement": "unitOfMeasurement-16",
+    "cost": "0.00",
+    "costLevel2": "0.00",
+    "costLevel3": "0.00",
+    "costLevel4": "0.00",
+    "msrp": "0.00",
+    "breakQty": 22,
+    "breakPrice": "0.00",
+    "breakQty2": 24,
+    "breakPrice2": "0.00",
+    "breakQty3": 26,
+    "breakPrice3": "0.00",
+    "status": "status-28",
+    "replacement": "replacement-29",
+    "replacementDescription": "replacementDescription-30",
+    "lastPriceChange": "2026-01-01T00:00:00+00:00",
+    "lastQoh": 32,
+    "archived": "false",
+    "CatalogVendor": {}
+   }
+  ]
+ },
+ "Category": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Category": [
+   {
+    "categoryID": "301",
+    "name": "Bikes",
+    "parentID": "0",
+    "nodeDepth": "1",
+    "timeStamp": "2026-07-31T03:00:00+00:00",
+    "fullPathName": "Bikes",
+    "leftNode": "1",
+    "rightNode": "2"
+   }
+  ]
+ },
+ "CCCharge": {
+  "@attributes": {
+   "count": "1"
+  },
+  "CCCharge": [
+   {
+    "ccChargeID": 1,
+    "gatewayTransID": "gatewayTransID-2",
+    "xnum": "xnum-3",
+    "response": "response-4",
+    "voided": "false",
+    "refunded": "0.00",
+    "amount": "0.00",
+    "exp": "exp-8",
+    "authOnly": "false",
+    "authCode": "authCode-10",
+    "timeStamp": "2026-01-01T00:00:00+00:00",
+    "declined": "false",
+    "saleID": 13,
+    "entryMethod": "entryMethod-14",
+    "cardholderName": "cardholderName-15",
+    "communicationKey": "communicationKey-16"
+   }
+  ]
+ },
+ "CreditAccount": {
+  "@attributes": {
+   "count": "1"
+  },
+  "CreditAccount": [
+   {
+    "creditAccountID": 1,
+    "name": "name-2",
+    "code": "code-3",
+    "description": "description-4",
+    "giftCard": "false",
+    "archived": "false",
+    "customerID": 7,
+    "balance": "0.00",
+    "contactID": 9,
+    "timeStamp": "2026-01-01T00:00:00+00:00",
+    "Contact": {
+     "contactID": 1,
+     "Contact": "Contact-2",
+     "shipToID": 3,
+     "address1": "address1-4",
+     "address2": "address2-5",
+     "city": "city-6",
+     "state": "state-7",
+     "stateCode": "stateCode-8",
+     "zip": "zip-9",
+     "country": "country-10",
+     "countryCode": "countryCode-11",
+     "noEmail": "false",
+     "noMail": "false",
+     "noPhone": "false",
+     "timeStamp": "2026-01-01T00:00:00+00:00"
+    }
+   }
+  ]
+ },
+ "CurrencyRate": {
+  "@attributes": {
+   "count": "1"
+  },
+  "CurrencyRate": [
+   {
+    "currencyRateID": 1,
+    "currencyCode": "currencyCode-2",
+    "rate": "0.00",
+    "createTime": "2026-01-01T00:00:00+00:00",
+    "timeStamp": "2026-01-01T00:00:00+00:00"
+   }
+  ]
+ },
+ "Customer": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Customer": [
+   {
+    "customerID": "701",
+    "firstName": "Taylor",
+    "lastName": "Sample",
+    "archived": "false",
+    "timeStamp": "2026-07-31T07:00:00+00:00",
+    "company": "Example Customer",
+    "customerTypeID": "1",
+    "Contact": {
+     "Emails": {
+      "ContactEmail": {
+       "address": "taylor@example.invalid",
+       "useType": "Primary"
+      }
+     }
+    },
+    "CustomFieldValues": {
+     "CustomFieldValue": {
+      "customFieldValueID": 1,
+      "customerID": 2,
+      "customFieldID": 3,
+      "name": "name-4",
+      "type": "type-5",
+      "value": {},
+      "customFieldChoiceID": 7,
+      "deleted": "false",
+      "timeStamp": "2026-01-01T00:00:00+00:00"
+     }
+    },
+    "Note": {
+     "noteID": 1,
+     "customerID": 2,
+     "note": "note-3",
+     "isPublic": "false",
+     "timeStamp": "2026-01-01T00:00:00+00:00"
+    }
+   }
+  ]
+ },
+ "CustomerType": {
+  "@attributes": {
+   "count": "1"
+  },
+  "CustomerType": [
+   {
+    "customerTypeID": 1,
+    "name": "name-2",
+    "taxCategoryID": 3,
+    "discountID": 4
+   }
+  ]
+ },
+ "CustomField": {
+  "@attributes": {
+   "count": "1"
+  },
+  "CustomField": [
+   {
+    "customFieldID": 1,
+    "type": "type-2",
+    "name": "name-3",
+    "uom": "uom-4",
+    "decimalPrecision": 5,
+    "archived": "false",
+    "default": {}
+   }
+  ]
+ },
+ "Discount": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Discount": [
+   {
+    "discountID": 1,
+    "name": "name-2",
+    "discountAmount": "0.00",
+    "discountPercent": "0.00",
+    "requireCustomer": "false",
+    "archived": "false",
+    "sourceID": 7,
+    "timeStamp": "2026-01-01T00:00:00+00:00"
+   }
+  ]
+ },
+ "DiscountsByDay": {
+  "@attributes": {
+   "count": "1"
+  },
+  "DiscountsByDay": [
+   {
+    "date": "2026-01-01",
+    "shopID": 2,
+    "discount": "0.00"
+   }
+  ]
+ },
+ "Employee": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Employee": [
+   {
+    "employeeID": "201",
+    "firstName": "Jamie",
+    "lastName": "Example",
+    "lockOut": "false",
+    "archived": "false",
+    "timeStamp": "2026-07-31T02:00:00+00:00",
+    "contactID": "211",
+    "clockInEmployeeHoursID": "0",
+    "employeeRoleID": "4",
+    "limitToShopID": "0",
+    "lastShopID": "101",
+    "lastSaleID": "601",
+    "lastRegisterID": "102",
+    "Contact": {
+     "Emails": {
+      "ContactEmail": {
+       "address": "jamie@example.invalid",
+       "useType": "Work"
+      }
+     }
+    },
+    "EmployeeRole": {
+     "employeeRoleID": 1,
+     "name": "name-2"
+    },
+    "EmployeeRights": {
+     "EmployeeRight": {
+      "employeeID": 1,
+      "employeeRightID": 2,
+      "name": "name-3"
+     }
+    }
+   }
+  ]
+ },
+ "EmployeeHours": {
+  "@attributes": {
+   "count": "1"
+  },
+  "EmployeeHours": [
+   {
+    "employeeHoursID": 1,
+    "checkIn": "2026-01-01T00:00:00+00:00",
+    "checkOut": "2026-01-01T00:00:00+00:00",
+    "employeeID": 4,
+    "shopID": 5
+   }
+  ]
+ },
+ "Image": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Image": [
+   {
+    "imageID": 1,
+    "itemID": 2,
+    "itemMatrixID": 3,
+    "description": "description-4",
+    "filename": "filename-5",
+    "ordering": 6,
+    "publicID": "publicID-7"
+   }
+  ]
+ },
+ "Industry": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Industry": [
+   {
+    "industryID": 1,
+    "name": "name-2",
+    "enabled": "false"
+   }
+  ]
+ },
+ "InventoryCountCalc": {
+  "@attributes": {
+   "count": "1"
+  },
+  "InventoryCountCalc": [
+   {
+    "inventoryCountCalcID": 1,
+    "timeStamp": "2026-01-01T00:00:00+00:00",
+    "calcQoh": 3,
+    "countedQoh": 4,
+    "inventoryCountID": 5,
+    "itemID": 6
+   }
+  ]
+ },
+ "InventoryCountItem": {
+  "@attributes": {
+   "count": "1"
+  },
+  "InventoryCountItem": [
+   {
+    "inventoryCountItemID": 1,
+    "qty": 2,
+    "timeStamp": "2026-01-01T00:00:00+00:00",
+    "inventoryCountID": 4,
+    "itemID": 5,
+    "employeeID": 6
+   }
+  ]
+ },
+ "InventoryCountReconcile": {
+  "@attributes": {
+   "count": "1"
+  },
+  "InventoryCountReconcile": [
+   {
+    "inventoryCountReconcileID": 1,
+    "createTime": "2026-01-01T00:00:00+00:00",
+    "costChange": "0.00",
+    "qohChange": 4,
+    "inventoryCountID": 5,
+    "itemID": 6
+   }
+  ]
+ },
+ "InventoryLog": {
+  "@attributes": {
+   "count": "1"
+  },
+  "InventoryLog": [
+   {
+    "inventoryLogID": "1101",
+    "itemID": "401",
+    "shopID": "101",
+    "qohChange": "1.0000",
+    "costChange": "800.0000",
+    "createTime": "2026-07-10T01:00:00+00:00",
+    "automated": "true",
+    "reason": "OrderReceived",
+    "causedNegative": "false",
+    "employeeID": "201",
+    "orderID": "801",
+    "transferID": "0",
+    "saleID": "0",
+    "inventoryCountID": "0",
+    "customerID": "0",
+    "vendorReturnID": "0",
+    "itemImportID": "0"
+   }
+  ]
+ },
+ "Item": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Item": [
+   {
+    "itemID": "401",
+    "systemSku": "210000000401",
+    "description": "Demo commuter bike",
+    "categoryID": "301",
+    "defaultCost": "800.0000",
+    "archived": "false",
+    "timeStamp": "2026-07-31T04:00:00+00:00",
+    "customSku": "DEMO-401",
+    "manufacturerSku": "MFG-401",
+    "upc": "000000000401",
+    "ean": "0000000000401",
+    "tax": "true",
+    "ItemShops": {
+     "ItemShop": {
+      "itemShopID": "501",
+      "itemID": "401",
+      "shopID": "101",
+      "qoh": "4.0000",
+      "timeStamp": "2026-07-31T05:00:00+00:00",
+      "backorder": "0.0000",
+      "componentQoh": "0.0000",
+      "componentBackorder": "0.0000",
+      "reorderPoint": "2.0000",
+      "reorderLevel": "4.0000"
+     }
+    },
+    "ItemPrices": {
+     "ItemPrice": {
+      "itemID": 1,
+      "useTypeID": 2,
+      "useType": "useType-3",
+      "amount": "0.00",
+      "description": "description-5",
+      "archived": "false"
+     }
+    },
+    "ItemComponents": {
+     "ItemComponent": {
+      "itemComponentID": 1,
+      "assemblyItemID": 2,
+      "componentItemID": 3,
+      "quantity": 4,
+      "componentGroup": 5
+     }
+    },
+    "ItemVendorNums": {
+     "ItemVendorNum": {
+      "itemVendorNumID": 1,
+      "itemID": 2,
+      "vendorID": 3,
+      "value": "value-4",
+      "cost": "0.00",
+      "timeStamp": "2026-01-01T00:00:00+00:00"
+     }
+    }
+   }
+  ]
+ },
+ "ItemAttributeSet": {
+  "@attributes": {
+   "count": "1"
+  },
+  "ItemAttributeSet": [
+   {
+    "itemAttributeSetID": 1,
+    "name": "name-2",
+    "attributeName1": "attributeName1-3",
+    "attributeName2": "attributeName2-4",
+    "attributeName3": "attributeName3-5"
+   }
+  ]
+ },
+ "ItemFee": {
+  "@attributes": {
+   "count": "1"
+  },
+  "ItemFee": [
+   {
+    "itemFeeID": 1,
+    "name": "name-2",
+    "calculationMethod": "calculationMethod-3",
+    "feeValue": "0.00",
+    "taxable": "false",
+    "discountable": "false",
+    "nonRefundable": "false",
+    "archived": "false",
+    "createTime": "2026-01-01T00:00:00+00:00",
+    "timestamp": "2026-01-01T00:00:00+00:00",
+    "ItemFeeCategories": {}
+   }
+  ]
+ },
+ "ItemMatrix": {
+  "@attributes": {
+   "count": "1"
+  },
+  "ItemMatrix": [
+   {
+    "itemMatrixID": 1,
+    "description": "description-2",
+    "itemType": "itemType-3",
+    "serialized": "false",
+    "tax": "false",
+    "defaultCost": "0.00",
+    "modelYear": 7,
+    "archived": "false",
+    "categoryID": 9,
+    "taxClassID": 10,
+    "departmentID": 11,
+    "manufacturerID": 12,
+    "seasonID": 13,
+    "defaultVendorID": 14,
+    "itemAttributeSetID": 15,
+    "timeStamp": "2026-01-01T00:00:00+00:00",
+    "name": "name-17",
+    "fullPathName": "fullPathName-18",
+    "attributeName1": "attributeName1-19",
+    "attributeName2": "attributeName2-20",
+    "attributeName3": "attributeName3-21",
+    "TaxClass": {},
+    "Department": {},
+    "CustomFieldValues": {}
+   }
+  ]
+ },
+ "Locale": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Locale": [
+   {
+    "name": "name-1",
+    "country": "country-2",
+    "states": "states-3",
+    "currencySymbol": "currencySymbol-4",
+    "currencyCode": "currencyCode-5",
+    "currencyPrecision": "0.00",
+    "cashRoundingPrecision": "0.00",
+    "includeTaxOnLabels": "false",
+    "languageTag": "languageTag-9",
+    "dateFormat": "dateFormat-10",
+    "datetimeFormat": "datetimeFormat-11",
+    "taxName1": "taxName1-12",
+    "taxName2": "taxName2-13",
+    "CurrencyDenominations": {
+     "CurrencyDenomination": {
+      "localeID": 1,
+      "CurrencyDenominations": "0.00"
+     }
+    }
+   }
+  ]
+ },
+ "Manufacturer": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Manufacturer": [
+   {
+    "manufacturerID": 1,
+    "name": "name-2",
+    "createTime": "2026-01-01T00:00:00+00:00",
+    "timeStamp": "2026-01-01T00:00:00+00:00"
+   }
+  ]
+ },
+ "Option": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Option": [
+   {
+    "name": "name-1",
+    "value": "value-2"
+   }
+  ]
+ },
+ "Order": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Order": [
+   {
+    "orderID": "801",
+    "shopID": "101",
+    "vendorID": "802",
+    "createdByEmployeeID": "201",
+    "orderedDate": "2026-07-01T00:00:00+00:00",
+    "receivedDate": "2026-07-10T00:00:00+00:00",
+    "totalQuantity": "1.0000",
+    "timeStamp": "2026-07-10T01:00:00+00:00",
+    "createTime": "2026-07-01T00:00:00+00:00",
+    "archived": "false",
+    "complete": "true",
+    "refNum": "DEMO-PO-1",
+    "OrderLines": {
+     "orderLineID": "811",
+     "orderID": "801",
+     "itemID": "401",
+     "quantity": "1.0000",
+     "price": "800.0000",
+     "originalPrice": "800.0000",
+     "vendorCost": "800.0000",
+     "checkedIn": "1.0000",
+     "numReceived": "0.0000",
+     "total": "800.0000",
+     "createTime": "2026-07-01T00:00:00+00:00",
+     "timeStamp": "2026-07-10T01:00:00+00:00",
+     "shippingCost": "0.0000",
+     "shippingVendorCost": "0.0000",
+     "discountMoneyValue": "0.0000",
+     "discountMoneyVendorValue": "0.0000",
+     "discountPercentValue": "0.0000"
+    }
+   }
+  ]
+ },
+ "OrdersByTaxClass": {
+  "@attributes": {
+   "count": "0"
+  },
+  "OrdersByTaxClass": []
+ },
+ "OrderShipmentItem": {
+  "@attributes": {
+   "count": "0"
+  },
+  "OrderShipmentItem": []
+ },
+ "PaymentsByDay": {
+  "@attributes": {
+   "count": "1"
+  },
+  "PaymentsByDay": [
+   {
+    "date": "2026-01-01",
+    "shopID": 2,
+    "layaway": "false",
+    "amount": "0.00",
+    "paymentTypeName": "paymentTypeName-5",
+    "paymentTypeID": 6
+   }
+  ]
+ },
+ "PaymentType": {
+  "@attributes": {
+   "count": "1"
+  },
+  "PaymentType": [
+   {
+    "paymentTypeID": "901",
+    "name": "Card",
+    "requireCustomer": "false",
+    "archived": "false",
+    "internalReserved": "false",
+    "type": "credit card",
+    "refundAsPaymentTypeID": "901"
+   }
+  ]
+ },
+ "PriceLevel": {
+  "@attributes": {
+   "count": "1"
+  },
+  "PriceLevel": [
+   {
+    "priceLevelID": 1,
+    "name": "name-2",
+    "archived": "false",
+    "canBeArchived": "false",
+    "type": "type-5",
+    "Calculation": {}
+   }
+  ]
+ },
+ "ProcessingFee": {
+  "@attributes": {
+   "count": "1"
+  },
+  "ProcessingFee": [
+   {
+    "salePaymentProcessingFeeID": 1,
+    "salePaymentID": 2,
+    "processingFeeRef": "processingFeeRef-3",
+    "processor": "processor-4",
+    "amount": "0.00",
+    "fixedFee": "0.00",
+    "variableFee": "0.00",
+    "variablePct": "0.00",
+    "interchangeFeesFixedFee": "0.00",
+    "interchangeFeesVariableFee": "0.00",
+    "interchangeFeesVariablePct": "0.00",
+    "schemeFeesFixedFee": "0.00",
+    "schemeFeesVariableFee": "0.00",
+    "schemeFeesVariablePct": "0.00",
+    "processingTime": "2026-01-01T00:00:00+00:00",
+    "createTime": "2026-01-01T00:00:00+00:00",
+    "updateTime": "2026-01-01T00:00:00+00:00"
+   }
+  ]
+ },
+ "Quote": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Quote": [
+   {
+    "quoteID": 1,
+    "issueDate": "2026-01-01T00:00:00+00:00",
+    "notes": "notes-3",
+    "archived": "false",
+    "employeeID": 5,
+    "saleID": 6
+   }
+  ]
+ },
+ "Register": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Register": [
+   {
+    "registerID": 1,
+    "name": "name-2",
+    "open": "false",
+    "openTime": "2026-01-01T00:00:00+00:00",
+    "tipEnabled": "false",
+    "openEmployeeID": 6,
+    "shopID": 7
+   }
+  ]
+ },
+ "RegisterCount": {
+  "@attributes": {
+   "count": "1"
+  },
+  "RegisterCount": [
+   {
+    "registerCountID": 1,
+    "createTime": "2026-01-01T00:00:00+00:00",
+    "openTime": "2026-01-01T00:00:00+00:00",
+    "notes": "notes-4",
+    "registerID": 5,
+    "openEmployeeID": 6,
+    "closeEmployeeID": 7,
+    "RegisterCountAmounts": {
+     "RegisterCountAmount": {
+      "registerCountAmountID": 1,
+      "registerCountID": 2,
+      "paymentTypeID": 3,
+      "calculated": "0.00",
+      "actual": "0.00"
+     }
+    }
+   }
+  ]
+ },
+ "RegisterWithdraw": {
+  "@attributes": {
+   "count": "1"
+  },
+  "RegisterWithdraw": [
+   {
+    "registerWithdrawID": 1,
+    "amount": "0.00",
+    "createTime": "2026-01-01T00:00:00+00:00",
+    "notes": "notes-4",
+    "employeeID": 5,
+    "paymentTypeID": 6,
+    "registerID": 7
+   }
+  ]
+ },
+ "Sale": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Sale": [
+   {
+    "saleID": "601",
+    "shopID": "101",
+    "employeeID": "201",
+    "registerID": "102",
+    "customerID": "701",
+    "completed": "true",
+    "voided": "false",
+    "archived": "false",
+    "completeTime": "2026-07-31T06:15:00+00:00",
+    "timeStamp": "2026-07-31T06:16:00+00:00",
+    "total": "1499.0000",
+    "calcTotal": "1499.0000",
+    "calcSubtotal": "1362.7273",
+    "calcTax1": "136.2727",
+    "calcTax2": "0.0000",
+    "createTime": "2026-07-31T06:00:00+00:00",
+    "discountID": "0",
+    "taxCategoryID": "1",
+    "referenceNumber": "DEMO-ORDER-1",
+    "SaleLines": {
+     "SaleLine": {
+      "saleLineID": "611",
+      "saleID": "601",
+      "itemID": "401",
+      "employeeID": "201",
+      "unitQuantity": "1.0000",
+      "unitPrice": "1499.0000",
+      "normalUnitPrice": "1499.0000",
+      "discountAmount": "0.0000",
+      "tax": "true",
+      "avgCost": "800.0000",
+      "calcTotal": "1499.0000",
+      "timeStamp": "2026-07-31T06:16:00+00:00",
+      "completed": "true",
+      "voided": "false",
+      "completeTime": "2026-07-31T06:15:00+00:00",
+      "shopID": "101",
+      "InventorySales": {
+       "InventorySale": {
+        "inventorySaleID": 1,
+        "quantity": 2,
+        "createTime": "2026-01-01T00:00:00+00:00",
+        "inventoryID": 4,
+        "saleLineID": 5,
+        "saleID": 6
+       }
+      }
+     }
+    },
+    "SalePayments": {
+     "SalePayment": {
+      "salePaymentID": "621",
+      "saleID": "601",
+      "paymentTypeID": "901",
+      "amount": "1499.0000",
+      "createTime": "2026-07-31T06:15:00+00:00",
+      "completed": "true",
+      "voided": "false",
+      "completeTime": "2026-07-31T06:15:00+00:00",
+      "shopID": "101",
+      "SaleAccounts": {
+       "SaleAccount": {
+        "saleAccountID": 1,
+        "creditAccountID": 2,
+        "salePaymentID": 3,
+        "saleLineID": 4
+       }
+      },
+      "Signatures": {
+       "SalePaymentSignature": {
+        "salePaymentSignatureID": 1,
+        "filePath": "filePath-2",
+        "createTime": "2026-01-01T00:00:00+00:00",
+        "salePaymentID": 4
+       }
+      }
+     }
+    }
+   }
+  ]
+ },
+ "SaleVoid": {
+  "@attributes": {
+   "count": "1"
+  },
+  "SaleVoid": [
+   {
+    "saleVoidID": 1,
+    "createTime": "2026-01-01T00:00:00+00:00",
+    "reason": "reason-3",
+    "saleID": 4,
+    "employeeID": 5,
+    "shopID": 6
+   }
+  ]
+ },
+ "Season": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Season": [
+   {
+    "seasonID": 1,
+    "name": "name-2"
+   }
+  ]
+ },
+ "Serialized": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Serialized": [
+   {
+    "serializedID": 1,
+    "serial": "serial-2",
+    "description": "description-3",
+    "colorName": "colorName-4",
+    "sizeName": "sizeName-5",
+    "itemID": 6,
+    "saleLineID": 7,
+    "customerID": 8,
+    "timeStamp": "2026-01-01T00:00:00+00:00"
+   }
+  ]
+ },
+ "Session": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Session": [
+   {
+    "sessionID": 1,
+    "sessionCookie": "sessionCookie-2",
+    "employeeID": 3,
+    "systemCustomerID": 4,
+    "systemUserID": 5,
+    "systemAPIClientID": 6,
+    "systemAPIKeyID": 7,
+    "ecomUrl": "ecomUrl-8",
+    "shopCount": 9
+   }
+  ]
+ },
+ "Shipment": {
+  "@attributes": {
+   "count": "0"
+  },
+  "Shipment": []
+ },
+ "ShipTo": {
+  "@attributes": {
+   "count": "1"
+  },
+  "ShipTo": [
+   {
+    "shipToID": 1,
+    "shipped": "false",
+    "shipNote": "shipNote-3",
+    "firstName": "firstName-4",
+    "lastName": "lastName-5",
+    "customerID": 6,
+    "saleID": 7,
+    "timeStamp": "2026-01-01T00:00:00+00:00",
+    "Contact": {},
+    "contactID": 10
+   }
+  ]
+ },
+ "Shop": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Shop": [
+   {
+    "shopID": "101",
+    "name": "Melbourne Demo",
+    "serviceRate": "0.0000",
+    "timeZone": "Australia/Melbourne",
+    "taxLabor": "false",
+    "labelTitle": "Shop Name",
+    "labelMsrp": "false",
+    "archived": "false",
+    "contactID": "111",
+    "taxCategoryID": "1001",
+    "receiptSetupID": "1",
+    "ccGatewayID": "1",
+    "priceLevelID": "1",
+    "Contact": {
+     "contactID": "111",
+     "Addresses": {
+      "ContactAddress": {
+       "address1": "1 Example Lane",
+       "city": "Melbourne",
+       "state": "VIC",
+       "zip": "3000",
+       "country": "Australia"
+      }
+     }
+    },
+    "CCGateway": {
+     "ccGatewayID": 1,
+     "gateway": "gateway-2",
+     "enabled": "false",
+     "testMode": "false",
+     "allowCredits": "false",
+     "marketType": "marketType-6",
+     "deviceType": 7,
+     "terminalNum": "terminalNum-8",
+     "login": "login-9",
+     "transKey": "transKey-10",
+     "accountNum": "accountNum-11",
+     "hashValue": "hashValue-12",
+     "otherCredentials1": "otherCredentials1-13",
+     "otherCredentials2": "otherCredentials2-14",
+     "visaPaymentTypeID": 15,
+     "masterPaymentTypeID": 16,
+     "discoverPaymentTypeID": 17,
+     "americanPaymentTypeID": 18,
+     "debitPaymentTypeID": 19
+    },
+    "ReceiptSetup": {
+     "receiptSetupID": 1,
+     "header": "header-2",
+     "generalMsg": "generalMsg-3",
+     "workorderAgree": "workorderAgree-4",
+     "creditcardAgree": "creditcardAgree-5",
+     "logo": "logo-6",
+     "logoHeight": 7,
+     "logoWidth": 8
+    }
+   }
+  ]
+ },
+ "SpecialOrder": {
+  "@attributes": {
+   "count": "1"
+  },
+  "SpecialOrder": [
+   {
+    "specialOrderID": 1,
+    "unitQuantity": 2,
+    "contacted": "false",
+    "completed": "false",
+    "customerID": 5,
+    "shopID": 6,
+    "saleLineID": 7,
+    "orderLineID": 8,
+    "transferItemID": 9
+   }
+  ]
+ },
+ "Tag": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Tag": [
+   {
+    "tagID": 1,
+    "name": "name-2"
+   }
+  ]
+ },
+ "TagGroup": {
+  "@attributes": {
+   "count": "1"
+  },
+  "TagGroup": [
+   {
+    "name": "name-1"
+   }
+  ]
+ },
+ "TaxCategory": {
+  "@attributes": {
+   "count": "1"
+  },
+  "TaxCategory": [
+   {
+    "taxCategoryID": "1001",
+    "isTaxInclusive": "true",
+    "tax1Name": "GST",
+    "tax2Name": "",
+    "timeStamp": "2026-07-01T01:00:00+00:00",
+    "tax1Rate": "0.1000",
+    "tax2Rate": "0.0000",
+    "TaxCategoryClasses": {
+     "TaxCategoryClass": {
+      "taxCategoryID": 1,
+      "taxCategoryClassID": 2,
+      "taxClassID": 3,
+      "tax1Rate": "0.00",
+      "tax2Rate": "0.00"
+     }
+    }
+   }
+  ]
+ },
+ "TaxClass": {
+  "@attributes": {
+   "count": "1"
+  },
+  "TaxClass": [
+   {
+    "taxClassID": 1,
+    "name": "name-2",
+    "timeStamp": "2026-01-01T00:00:00+00:00"
+   }
+  ]
+ },
+ "TaxClassSalesByDay": {
+  "@attributes": {
+   "count": "0"
+  },
+  "TaxClassSalesByDay": []
+ },
+ "TaxesByDay": {
+  "@attributes": {
+   "count": "1"
+  },
+  "TaxesByDay": [
+   {
+    "date": "2026-01-01",
+    "shopID": 2,
+    "taxCategoryID": 3,
+    "taxCategoryName": "taxCategoryName-4",
+    "tax": "0.00"
+   }
+  ]
+ },
+ "Transfer": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Transfer": [
+   {
+    "transferID": 1,
+    "sent": "false",
+    "received": "false",
+    "note": "note-4",
+    "archived": "false",
+    "transferFromID": 6,
+    "transferToID": 7,
+    "orderID": 8,
+    "sentOn": "2026-01-01T00:00:00+00:00",
+    "employeeID": 10,
+    "shopID": 11,
+    "needBy": "2026-01-01T00:00:00+00:00",
+    "timeStamp": "2026-01-01T00:00:00+00:00",
+    "TransferItems": {
+     "TransferItem": {
+      "transferItemID": 1,
+      "transferID": 2,
+      "itemID": 3,
+      "toSend": 4,
+      "toReceive": 5,
+      "sent": 6,
+      "received": 7,
+      "sentValue": "0.00",
+      "receivedValue": "0.00",
+      "comment": "comment-10",
+      "timeStamp": "2026-01-01T00:00:00+00:00"
+     }
+    }
+   }
+  ]
+ },
+ "Vendor": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Vendor": [
+   {
+    "vendorID": "802",
+    "name": "Example Cycle Supply",
+    "archived": "false",
+    "accountNumber": "DEMO-SUPPLIER-802",
+    "priceLevel": "1",
+    "updatePrice": "false",
+    "updateCost": "true",
+    "updateDescription": "false",
+    "shareSellThrough": "false",
+    "timeStamp": "2026-07-01T00:00:00+00:00",
+    "b2bSellerUID": "demo-b2b-802",
+    "Contact": {
+     "Emails": {
+      "ContactEmail": {
+       "address": "purchasing@example.invalid",
+       "useType": "Work"
+      }
+     }
+    }
+   }
+  ]
+ },
+ "VendorReturn": {
+  "@attributes": {
+   "count": "1"
+  },
+  "VendorReturn": [
+   {
+    "vendorReturnID": 1,
+    "vendorID": 2,
+    "shopID": 3,
+    "refNum": "refNum-4",
+    "status": "status-5",
+    "sentDate": "2026-01-01T00:00:00+00:00",
+    "shipCost": "0.00",
+    "otherCost": "0.00",
+    "hideVendorDetails": "false",
+    "archived": "false",
+    "subtotal": "0.00",
+    "total": "0.00",
+    "name": "name-13",
+    "timeStamp": "2026-01-01T00:00:00+00:00"
+   }
+  ]
+ },
+ "Workorder": {
+  "@attributes": {
+   "count": "1"
+  },
+  "Workorder": [
+   {
+    "workorderID": 1,
+    "timeIn": "2026-01-01T00:00:00+00:00",
+    "etaOut": "2026-01-01T00:00:00+00:00",
+    "note": "note-4",
+    "internalNote": "internalNote-5",
+    "warranty": "false",
+    "tax": "false",
+    "archived": "false",
+    "hookIn": "hookIn-9",
+    "hookOut": "hookOut-10",
+    "saveParts": "false",
+    "assignEmployeeToAll": "false",
+    "customerID": 13,
+    "discountID": 14,
+    "employeeID": 15,
+    "serializedID": 16,
+    "shopID": 17,
+    "saleID": 18,
+    "saleLineID": 19,
+    "workorderStatusID": 20,
+    "Customer": "Customer-21",
+    "name": "name-22",
+    "systemValue": "systemValue-23",
+    "description": "description-24",
+    "serial": "serial-25",
+    "timeStamp": "2026-01-01T00:00:00+00:00",
+    "WorkorderLines": {
+     "WorkorderLine": {
+      "workorderLineID": 1,
+      "workorderID": 2,
+      "note": "note-3",
+      "hours": 4,
+      "minutes": 5,
+      "unitPriceOverride": "0.00",
+      "unitQuantity": "0.00",
+      "unitCost": "0.00",
+      "done": "false",
+      "approved": "false",
+      "warranty": "false",
+      "tax": "false",
+      "employeeID": 13,
+      "saleLineID": 14,
+      "saleID": 15,
+      "itemID": 16,
+      "discountID": 17,
+      "taxClassID": 18,
+      "timeStamp": "2026-01-01T00:00:00+00:00"
+     }
+    },
+    "WorkorderItems": {
+     "WorkorderItem": {
+      "workorderItemID": 1,
+      "workorderID": 2,
+      "approved": "false",
+      "unitPrice": "0.00",
+      "unitQuantity": "0.00",
+      "warranty": "false",
+      "tax": "false",
+      "isSpecialOrder": "false",
+      "note": "note-9",
+      "employeeID": 10,
+      "saleLineID": 11,
+      "saleID": 12,
+      "itemID": 13,
+      "discountID": 14,
+      "timeStamp": "2026-01-01T00:00:00+00:00"
+     }
+    }
+   }
+  ]
+ },
+ "WorkorderStatus": {
+  "@attributes": {
+   "count": "1"
+  },
+  "WorkorderStatus": [
+   {
+    "workorderStatusID": 1,
+    "name": "name-2",
+    "sortOrder": 3,
+    "htmlColor": "htmlColor-4",
+    "systemValue": "systemValue-5"
+   }
+  ]
+ }
+}
